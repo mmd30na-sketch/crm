@@ -1,0 +1,156 @@
+/* StudentsList.css - Clean & Minimalist Dashboard Layout for Carla CRM */
+
+.students-split-container {
+  direction: rtl;
+  font-family: 'Vazirmatn', system-ui, -apple-system, sans-serif;
+  color: #1e293b;
+}
+
+/* Minimalist Clean Panel */
+.glass-panel {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  border-radius: 1rem;
+}
+
+.glass-panel-interactive {
+  transition: all 0.2s ease;
+}
+
+.glass-panel-interactive:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03);
+}
+
+/* Master-Detail Profile Card */
+.profile-card-header {
+  background: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+/* Photo Frames & Subtle Hover */
+.photo-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid #e2e8f0;
+  background-color: #f8fafc;
+  transition: all 0.2s ease;
+}
+
+.photo-frame:hover {
+  border-color: #cbd5e1;
+}
+
+.photo-overlay-btn {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-frame:hover .photo-overlay-btn {
+  opacity: 1;
+}
+
+/* Simplified Badges */
+.badge-debtor {
+  background: #fff1f2;
+  color: #be123c;
+  border: 1px solid #ffe4e6;
+}
+
+.badge-settled {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #dcfce7;
+}
+
+/* Table Datasheet View */
+.datasheet-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.datasheet-table th {
+  background: #ffffff;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.75rem 1rem;
+  text-align: right;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.datasheet-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  font-size: 0.8125rem;
+  transition: background-color 0.15s ease;
+}
+
+/* Table Row States */
+.datasheet-row {
+  cursor: pointer;
+}
+
+.datasheet-row:hover {
+  background: #f8fafc;
+}
+
+.datasheet-row.active-row {
+  background: #f8fafc;
+}
+
+.datasheet-row.active-row td {
+  color: #0f172a;
+}
+
+/* Custom Scrollbars */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Print Receipt Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-receipt, #printable-receipt * {
+    visibility: visible;
+  }
+  #printable-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    color: #000000;
+    background: #ffffff;
+    padding: 20px;
+  }
+}

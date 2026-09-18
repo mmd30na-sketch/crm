@@ -1,0 +1,516 @@
+{
+  "settings": {
+    "academy_name": "آموزشگاه رانندگی کارلا (Carla)",
+    "logo_url": "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&q=80&w=200",
+    "phone_number": "۰۸۳-۳۸۲۳۰۰۰۰",
+    "address": "کرمانشاه، ۲۲ بهمن، کوچه ۳۱۴، مجتمع امیریان",
+    "header_text": "رسید رسمی ثبت‌نام کارآموز - سیستم جامع مدیریت رانندگی کارلا",
+    "footer_text": "خواهشمند است جهت هماهنگی کلاس‌ها و آزمون‌ها ۲۴ ساعت قبل با آموزشگاه تماس بگیرید."
+  },
+  "courses": [
+    {
+      "id": 1,
+      "title": "حمل و نقل جاده ای",
+      "code": "C-ROAD",
+      "tuition": 4700000,
+      "duration_weeks": 8,
+      "active": true
+    },
+    {
+      "id": 2,
+      "title": "محموله خطرناک",
+      "code": "HAZMAT",
+      "tuition": 3300000,
+      "duration_weeks": 4,
+      "active": true
+    },
+    {
+      "id": 3,
+      "title": "اتوبوس برون شهری",
+      "code": "BUS-INTER",
+      "tuition": 4700000,
+      "duration_weeks": 8,
+      "active": true
+    },
+    {
+      "id": 4,
+      "title": "مدیر شرکت حمل و نقل",
+      "code": "TRANS-MGR",
+      "tuition": 4000000,
+      "duration_weeks": 10,
+      "active": true
+    },
+    {
+      "id": 5,
+      "title": "مدیر شرکت مسافر برون شهری",
+      "code": "PASS-MGR",
+      "tuition": 5700000,
+      "duration_weeks": 12,
+      "active": true
+    },
+    {
+      "id": 6,
+      "title": "مسئول فنی",
+      "code": "TECH-SUP",
+      "tuition": 4000000,
+      "duration_weeks": 6,
+      "active": true
+    }
+  ],
+  "students": [
+    {
+      "id": 118,
+      "first_name": "علی",
+      "last_name": "دلیری",
+      "national_code": "3241913562",
+      "phone_number": "09398606919",
+      "address": "حافظیه ، 17 متری دوم لاله 62 ، پلاک 20",
+      "status": "active",
+      "created_at": "2026-02-14"
+    },
+    {
+      "id": 120,
+      "first_name": "آرمین",
+      "last_name": "بهرامی نجوبرانی",
+      "national_code": "3242293908",
+      "phone_number": "09185915152",
+      "address": "فاقد",
+      "status": "active",
+      "created_at": "2026-01-13"
+    },
+    {
+      "id": 121,
+      "first_name": "بهنام",
+      "last_name": "ملک خطابی",
+      "national_code": "3256398073",
+      "phone_number": "09358960630",
+      "address": "فاقد",
+      "status": "active",
+      "created_at": "2026-02-16"
+    },
+    {
+      "id": 122,
+      "first_name": "مجتبی",
+      "last_name": "کرمی",
+      "national_code": "3411554238",
+      "phone_number": "09188327001",
+      "address": "فاقد",
+      "status": "active",
+      "created_at": "2026-02-16"
+    },
+    {
+      "id": 124,
+      "first_name": "سعید",
+      "last_name": "حشمتیان",
+      "national_code": "3259046976",
+      "phone_number": "09181307237",
+      "address": "کارمندان ، ایستگاه 7 ، بن بست اندیشه",
+      "status": "active",
+      "created_at": "2026-02-16"
+    },
+    {
+      "id": 127,
+      "first_name": "علیرضا",
+      "last_name": "امینی",
+      "national_code": "3341554238",
+      "phone_number": "09189252804",
+      "address": "کرمانشاه",
+      "status": "active",
+      "created_at": "2026-02-17"
+    },
+    {
+      "id": 128,
+      "first_name": "محمدرضا",
+      "last_name": "سیفی",
+      "national_code": "3242056523",
+      "phone_number": "09182066448",
+      "address": "کرمانشاه",
+      "status": "active",
+      "created_at": "2026-02-17"
+    },
+    {
+      "id": 131,
+      "first_name": "تست",
+      "last_name": "تصست",
+      "national_code": "3250000000",
+      "phone_number": "09180000001",
+      "address": "کرمانشاه",
+      "status": "pending",
+      "created_at": "2026-02-18"
+    },
+    {
+      "id": 132,
+      "first_name": "مهران",
+      "last_name": "عباسی ظلانی",
+      "national_code": "3242008243",
+      "phone_number": "09391816162",
+      "address": "میدان جمهوری اسلامی ، چهارده متری امینی ، کوچه نهم پلاک 16",
+      "status": "active",
+      "created_at": "2026-02-20"
+    },
+    {
+      "id": 134,
+      "first_name": "طیب",
+      "last_name": "پارسیان طیب",
+      "national_code": "3257549539",
+      "phone_number": "09189213002",
+      "address": "کرمانشاه ، خیابان دانشجو ، تپه فتحلی خان ، پلاک 179",
+      "status": "active",
+      "created_at": "2026-03-27"
+    },
+    {
+      "id": 135,
+      "first_name": "امیر",
+      "last_name": "کریمی علی گرزانی",
+      "national_code": "4969696284",
+      "phone_number": "09185526457",
+      "address": "صحنه ، روستای علی گرزان سوفا",
+      "status": "active",
+      "created_at": "2026-04-05"
+    },
+    {
+      "id": 137,
+      "first_name": "تست جدید",
+      "last_name": "تست",
+      "national_code": "1223333332",
+      "phone_number": "09888888888",
+      "address": "کرمانشاه",
+      "status": "pending",
+      "created_at": "2026-04-06"
+    },
+    {
+      "id": 143,
+      "first_name": "یزدان",
+      "last_name": "خانی",
+      "national_code": "3258363862",
+      "phone_number": "09389278110",
+      "address": "کرمانشاه",
+      "status": "active",
+      "created_at": "2026-04-09"
+    },
+    {
+      "id": 144,
+      "first_name": "فرشاد",
+      "last_name": "قاسمی (ثبت ۱)",
+      "national_code": "3257514840",
+      "phone_number": "09188855878",
+      "address": "کرمانشاه",
+      "status": "active",
+      "created_at": "2026-04-09"
+    },
+    {
+      "id": 145,
+      "first_name": "فرشاد",
+      "last_name": "قاسمی (ثبت ۲)",
+      "national_code": "3257514840",
+      "phone_number": "09188855878",
+      "address": "کرمانشاه",
+      "status": "active",
+      "created_at": "2026-04-09"
+    },
+    {
+      "id": 146,
+      "first_name": "فرشاد",
+      "last_name": "قاسمی (ثبت ۳)",
+      "national_code": "3257514840",
+      "phone_number": "09188855878",
+      "address": "کرمانشاه",
+      "status": "active",
+      "created_at": "2026-04-09"
+    },
+    {
+      "id": 147,
+      "first_name": "مسعود",
+      "last_name": "شمس‌زاده",
+      "national_code": "3255942276",
+      "phone_number": "09183300481",
+      "address": "22بهمن کوی 314 پ 21 مجتمع امیریان",
+      "status": "active",
+      "created_at": "2026-04-13"
+    }
+  ],
+  "enrollments": [
+    {
+      "id": 127,
+      "student_id": 118,
+      "course_id": 1,
+      "course_number": 1,
+      "signup_date_jalali": "1404/11/25",
+      "final_price": 4700000
+    },
+    {
+      "id": 128,
+      "student_id": 120,
+      "course_id": 1,
+      "course_number": 1,
+      "signup_date_jalali": "1404/10/23",
+      "final_price": 4700000
+    },
+    {
+      "id": 129,
+      "student_id": 121,
+      "course_id": 1,
+      "course_number": 1,
+      "signup_date_jalali": "1404/11/27",
+      "final_price": 4700000
+    },
+    {
+      "id": 130,
+      "student_id": 122,
+      "course_id": 2,
+      "course_number": 1,
+      "signup_date_jalali": "1404/11/27",
+      "final_price": 3300000
+    },
+    {
+      "id": 131,
+      "student_id": 124,
+      "course_id": 1,
+      "course_number": 1,
+      "signup_date_jalali": "1404/11/27",
+      "final_price": 4700000
+    },
+    {
+      "id": 133,
+      "student_id": 127,
+      "course_id": 2,
+      "course_number": 1,
+      "signup_date_jalali": "1404/11/28",
+      "final_price": 3300000
+    },
+    {
+      "id": 134,
+      "student_id": 128,
+      "course_id": 1,
+      "course_number": 1,
+      "signup_date_jalali": "1404/11/28",
+      "final_price": 4700000
+    },
+    {
+      "id": 136,
+      "student_id": 132,
+      "course_id": 1,
+      "course_number": 2,
+      "signup_date_jalali": "1404/12/01",
+      "final_price": 4700000
+    },
+    {
+      "id": 138,
+      "student_id": 134,
+      "course_id": 1,
+      "course_number": 2,
+      "signup_date_jalali": "1405/01/07",
+      "final_price": 4700000
+    },
+    {
+      "id": 139,
+      "student_id": 135,
+      "course_id": 1,
+      "course_number": 2,
+      "signup_date_jalali": "1405/01/16",
+      "final_price": 4700000
+    },
+    {
+      "id": 145,
+      "student_id": 143,
+      "course_id": 1,
+      "course_number": 2,
+      "signup_date_jalali": "1405/01/20",
+      "final_price": 4700000
+    },
+    {
+      "id": 146,
+      "student_id": 145,
+      "course_id": 4,
+      "course_number": 2,
+      "signup_date_jalali": "1405/01/20",
+      "final_price": 4000000
+    },
+    {
+      "id": 147,
+      "student_id": 146,
+      "course_id": 5,
+      "course_number": 2,
+      "signup_date_jalali": "1405/01/20",
+      "final_price": 5700000
+    },
+    {
+      "id": 148,
+      "student_id": 147,
+      "course_id": 1,
+      "course_number": 2,
+      "signup_date_jalali": "1405/01/24",
+      "final_price": 4700000
+    }
+  ],
+  "payments": [
+    {
+      "id": 53,
+      "enrollment_id": 127,
+      "student_id": 118,
+      "pay_date_jalali": "1404/11/25",
+      "amount": 4700000,
+      "pay_method": "کارتخوان",
+      "payment_kind": "تسویه کامل",
+      "description": "علی دلیری"
+    },
+    {
+      "id": 54,
+      "enrollment_id": 128,
+      "student_id": 120,
+      "pay_date_jalali": "1404/10/23",
+      "amount": 4700000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "آرمین بهرامی"
+    },
+    {
+      "id": 55,
+      "enrollment_id": 129,
+      "student_id": 121,
+      "pay_date_jalali": "1404/11/27",
+      "amount": 4700000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "بهنام ملک خطابی"
+    },
+    {
+      "id": 56,
+      "enrollment_id": 130,
+      "student_id": 122,
+      "pay_date_jalali": "1404/11/27",
+      "amount": 3300000,
+      "pay_method": "کارتخوان",
+      "payment_kind": "تسویه کامل",
+      "description": "مجتبی کریمی"
+    },
+    {
+      "id": 57,
+      "enrollment_id": 131,
+      "student_id": 124,
+      "pay_date_jalali": "1404/11/27",
+      "amount": 4700000,
+      "pay_method": "کارتخوان",
+      "payment_kind": "تسویه کامل",
+      "description": "سعید حشمتیان"
+    },
+    {
+      "id": 59,
+      "enrollment_id": 133,
+      "student_id": 127,
+      "pay_date_jalali": "1404/11/28",
+      "amount": 3300000,
+      "pay_method": "کارتخوان",
+      "payment_kind": "تسویه کامل",
+      "description": "علیرضا امینی"
+    },
+    {
+      "id": 60,
+      "enrollment_id": 134,
+      "student_id": 128,
+      "pay_date_jalali": "1404/11/28",
+      "amount": 4700000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "محمدرضا سیفی"
+    },
+    {
+      "id": 62,
+      "enrollment_id": 136,
+      "student_id": 132,
+      "pay_date_jalali": "1404/12/01",
+      "amount": 4700000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "مهران عباسی"
+    },
+    {
+      "id": 67,
+      "enrollment_id": 138,
+      "student_id": 134,
+      "pay_date_jalali": "1405/01/07",
+      "amount": 4700000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "طیب پارسیان"
+    },
+    {
+      "id": 68,
+      "enrollment_id": 139,
+      "student_id": 135,
+      "pay_date_jalali": "1405/01/16",
+      "amount": 1500000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "پیش پرداخت",
+      "description": "امیر کریمی"
+    },
+    {
+      "id": 73,
+      "enrollment_id": 145,
+      "student_id": 143,
+      "pay_date_jalali": "1405/01/20",
+      "amount": 4700000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "یزدان خانی"
+    },
+    {
+      "id": 74,
+      "enrollment_id": 146,
+      "student_id": 145,
+      "pay_date_jalali": "1405/01/20",
+      "amount": 4000000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "فرشاد قاسمی"
+    },
+    {
+      "id": 75,
+      "enrollment_id": 147,
+      "student_id": 146,
+      "pay_date_jalali": "1405/01/20",
+      "amount": 5700000,
+      "pay_method": "کارت به کارت",
+      "payment_kind": "تسویه کامل",
+      "description": "فرشاد قاسمی"
+    },
+    {
+      "id": 76,
+      "enrollment_id": 148,
+      "student_id": 147,
+      "pay_date_jalali": "1405/01/24",
+      "amount": 4700000,
+      "pay_method": "کارتخوان",
+      "payment_kind": "تسویه کامل",
+      "description": "مسعود شمس‌زاده"
+    }
+  ],
+  "expenses": [
+    {
+      "id": 1,
+      "title": "اجاره دفتر آموزشگاه",
+      "amount": 8000000,
+      "pay_method": "کارت به کارت",
+      "pay_date_jalali": "1405/01/01",
+      "description": "اجاره ماهانه"
+    },
+    {
+      "id": 2,
+      "title": "حقوق مدرس آقای حسینی",
+      "amount": 12000000,
+      "pay_method": "کارت به کارت",
+      "pay_date_jalali": "1405/01/15",
+      "description": "حقوق تئوری و عملی"
+    }
+  ],
+  "reportTemplates": [],
+  "messages": [
+    {
+      "id": 1785341056204,
+      "sender": "محمد رضایی",
+      "channel": "rubika",
+      "message": "سلام /start",
+      "received_at": "2026-07-29T16:04:16.204Z"
+    }
+  ]
+}

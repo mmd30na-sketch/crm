@@ -1,0 +1,652 @@
+Private Sub Command250_Click()
+  
+  Me.PersonalPht.SetFocus
+        DoCmd.RunCommand acCmdManageAttachments
+End Sub
+Private Sub Command330_Click()
+    DoCmd.OpenForm "frmscource"
+        DoCmd.GoToRecord acDataForm, "frmscource", acLast
+            DoCmd.Close acForm, Me.Name
+End Sub
+Private Sub Command361_Click()
+  On Error Resume Next
+    Me.Undo
+        MsgBox "فرم خالي شد"
+End Sub
+
+Private Sub Form_BeforeUpdate(Cancel As Integer)
+    Dim strMissing As String
+    strMissing = ""
+    
+    ' بررسي فيلدها
+    If IsNull(Me.firstName) Or Me.firstName = "" Then strMissing = strMissing & "- نام" & vbCrLf
+    If IsNull(Me.lastName) Or Me.lastName = "" Then strMissing = strMissing & "- نام خانوادگي" & vbCrLf
+    If IsNull(Me.Ncode) Or Me.Ncode = "" Then strMissing = strMissing & "- کدملي" & vbCrLf
+    If IsNull(Me.phoneNumber) Or Me.phoneNumber = "" Then strMissing = strMissing & "-شماره تماس" & vbCrLf
+    ' اگر ناقص بود
+    If strMissing <> "" Then
+        If MsgBox("فيلدهاي زير خالي هستند:" & vbCrLf & strMissing & vbCrLf & _
+                  "آيا ذخيره انجام شود؟ (اگر No بزنيد ذخيره نمي‌شود)", _
+                  vbQuestion + vbYesNo + vbDefaultButton2) = vbNo Then
+            
+            Cancel = True ' اين دستور خيلي مهم است: جلوي ذخيره را مي‌گيرد
+            ' Me.Undo ' (اختياري) اگر بخواهي تغييرات تايپ شده هم پاک شود اين را فعال کن
+           MsgBox "رکورد ذخيره نشد ، اطلاعات را کامل کنيد"
+        End If
+    End If
+End Sub
+
+
+Private Sub Form_Load()
+    On Error Resume Next
+          DoCmd.GoToRecord , , acNewRec
+             Me.firstName.SetFocus
+        DoCmd.MoveSize , , 17010, 11340
+End Sub
+
+Private Sub IDcartselectorBtn_Click()
+
+     If Me.NewRecord And Me.Dirty = False Then
+        MsgBox "ابتدا اطلاعات شخص را وارد کنيد.", vbExclamation
+        Exit Sub
+    End If
+    
+    Dim fDialog As Object
+    Dim strFilePath As String
+    Dim rsParent As DAO.Recordset
+    Dim rsChild As DAO.Recordset2
+    Set fDialog = Application.FileDialog(3)
+    With fDialog
+        .Title = "انتخاب عکس شناسنامه"
+        .Filters.Clear
+        .Filters.Add "Images", "*.jpg;*.jpeg;*.png"
+        .AllowMultiSelect = False
+        If .Show = -1 Then
+            strFilePath = .SelectedItems(1)
+        Else
+            Exit Sub
+        End If
+    End With
+              If Me.Dirty Then Me.Dirty = False
+                  Set rsParent = Me.RecordsetClone
+                    rsParent.Bookmark = Me.Bookmark
+                                                  rsParent.Edit
+                 Set rsChild = rsParent.Fields("IdCartPht").Value
+    rsChild.AddNew
+    rsChild.Fields("FileData").LoadFromFile strFilePath
+    rsChild.Update
+    rsChild.Close
+    rsParent.Update
+                      Me.Refresh
+                      MsgBox "عکس کارت ملي با موفقيت ثبت شد"
+    Me.IDcartselectorBtn.BackColor = RGB(76, 175, 80)
+    Me.IDcartselectorBtn.Caption = "عکس دارد"
+End Sub
+Private Sub MenueSignupBtn_Click()
+    DoCmd.OpenForm "frmmenu"
+    DoCmd.Close acForm, Me.Name
+End Sub
+
+Private Sub opnClenderBtn_Click()
+    On Error Resume Next ' ???? ??????? ?? ??????? ???????
+    
+    ' ?. ??? ????? ?? ??? ?? (?? ???? Dialog ?? ?? ????? ?????)
+    DoCmd.OpenForm "frmcalendar", acNormal, , , , acDialog
+    
+    ' ?. ???? ?? ????? ?????? ??? ? ????? ???? ??:
+    ' ?? ?? ??? STRDATE ???? ????? ????? ??? ????
+    If STRDATE <> "" Then
+        ' ???? ???: ???? ?????? ?? ???? ???? ??????? ???? .Form ????? ???
+        Me.TblEnrollsubform.Form!detaSignUp = STRDATE
+    End If
+    
+End Sub
+
+Private Sub personalcartselectorBtn_Click()
+     
+     On Error Resume Next
+    
+        If Me.NewRecord And Me.Dirty = False Then
+        MsgBox "ابتدا اطلاعات شخص را وارد کنيد.", vbExclamation
+        Exit Sub
+    End If
+    
+    
+    Dim fDialog As Object
+    Dim strFilePath As String
+    Dim rsParent As DAO.Recordset
+    Dim rsChild As DAO.Recordset2
+    
+    ' ?. انتخاب فايل
+    Set fDialog = Application.FileDialog(3)
+    With fDialog
+        .Title = "انتخاب عکس پرسنلي"
+        .Filters.Clear
+        .Filters.Add "Images", "*.jpg;*.jpeg;*.png"
+        .AllowMultiSelect = False
+        If .Show = -1 Then
+            strFilePath = .SelectedItems(1)
+        Else
+            Exit Sub
+        End If
+    End With
+
+    ' ?. ذخيره فرم (کليد طلايي براي رفع ارور)
+    If Me.Dirty Then Me.Dirty = False
+
+    ' ?. شروع ويرايش
+    Set rsParent = Me.RecordsetClone
+    rsParent.Bookmark = Me.Bookmark
+    rsParent.Edit
+    
+    ' اتصال به فيلد عکس پرسنلي
+    Set rsChild = rsParent.Fields("PersonalPht").Value
+    
+    ' ?. پاک کردن عکس‌هاي قديمي (تا فقط ? عکس باقي بماند)
+    Do While Not rsChild.EOF
+        rsChild.Delete
+        rsChild.MoveNext
+    Loop
+    
+    ' ?. اضافه کردن عکس جديد
+    rsChild.AddNew
+    rsChild.Fields("FileData").LoadFromFile strFilePath
+    rsChild.Update
+    
+    ' ?. ذخيره نهايي
+    rsChild.Close
+    rsParent.Update
+    
+    ' ?. نمايش و تغيير رنگ دکمه
+    Me.Refresh
+    Me.personalcartselectorBtn.BackColor = RGB(76, 175, 80) ' سبز
+    Me.personalcartselectorBtn.Caption = "عکس دارد"
+    
+    MsgBox "عکس پرسنلي با موفقيت ثبت شد"
+
+End Sub
+
+Private Sub saveNewBtn_Click()
+    On Error GoTo ErrorHandler
+
+    ' 1. بررسي نام و شماره پرونده
+    If IsNull(Me.lastName) Or IsNull(Me.StudentID) Then
+        MsgBox "لطفا اطلاعات را کامل وارد کنيد", vbExclamation
+        Exit Sub
+    End If
+    
+    ' 2. بررسي انتخاب شدن شماره دوره در ساب فرم
+    If IsNull(Me.TblEnrollsubform.Form!courseNumber) Or Trim(Me.TblEnrollsubform.Form!courseNumber & "") = "" Then
+        MsgBox "لطفاً ابتدا شماره دوره را انتخاب کنيد!", vbExclamation
+        Exit Sub
+    End If
+    ' 2. ????? ?????? ?? ???????
+    If Me.Dirty Then Me.Dirty = False
+    DoCmd.RunCommand acCmdSaveRecord
+    DoEvents ' ??? ???? ????? ???????
+
+    ' 3. ????? ???? ???? ??
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    Dim strMainFolder As String
+    Dim strCourseFolder As String
+    Dim strUserFolder As String
+    Dim FilePath1 As String, FilePath2 As String, FilePath3 As String
+    
+    ' الف) ساخت پوشه اصلي StudentFiles
+    strMainFolder = CurrentProject.Path & "\StudentFiles\"
+    If Not fso.FolderExists(strMainFolder) Then fso.CreateFolder strMainFolder
+
+    ' ب) ساخت پوشه شماره دوره (داخل پوشه اصلي)
+    strCourseFolder = strMainFolder & Me.TblEnrollsubform.Form!courseNumber & "\"
+    If Not fso.FolderExists(Left(strCourseFolder, Len(strCourseFolder) - 1)) Then
+        fso.CreateFolder Left(strCourseFolder, Len(strCourseFolder) - 1)
+    End If
+
+    ' ج) ساخت پوشه اختصاصي کارآموز (داخل پوشه دوره)
+    strUserFolder = strCourseFolder & Me.lastName & "_" & Me.StudentID & "\"
+    If Not fso.FolderExists(Left(strUserFolder, Len(strUserFolder) - 1)) Then
+        fso.CreateFolder Left(strUserFolder, Len(strUserFolder) - 1)
+    End If
+
+    ' ========================================================
+    ' ???? ????? ???? ? ???? ???????
+    ' ========================================================
+
+    ' --- ???? ???: ??????? (Report2) ---
+    ' ??? ???? ????: Raisi_101_Contract.pdf
+    FilePath1 = strUserFolder & Me.lastName & "_" & Me.StudentID & "_Contract.pdf"
+    
+    If fso.FileExists(FilePath1) Then fso.DeleteFile FilePath1
+    
+    DoCmd.OpenReport "Report2", acViewPreview, , "StudentID=" & Me.StudentID, acHidden
+    DoCmd.OutputTo acOutputReport, "Report2", acFormatPDF, FilePath1
+    DoCmd.Close acReport, "Report2"
+
+
+    ' --- ???? ???: ???? ???? (Report3) ---
+    ' ??? ???? ????: Raisi_101_Receipt.pdf
+    FilePath2 = strUserFolder & Me.lastName & "_" & Me.StudentID & "_Receipt.pdf"
+    
+    If fso.FileExists(FilePath2) Then fso.DeleteFile FilePath2
+    
+    DoCmd.OpenReport "Report3", acViewPreview, , "StudentID=" & Me.StudentID, acHidden
+    DoCmd.OutputTo acOutputReport, "Report3", acFormatPDF, FilePath2
+    DoCmd.Close acReport, "Report3"
+
+
+    ' --- ???? ???: ???? ???? (Report4) ---
+    ' ??? ???? ????: Raisi_101_IDCard.pdf
+    FilePath3 = strUserFolder & Me.lastName & "_" & Me.StudentID & "_IDCard.pdf"
+    
+    If fso.FileExists(FilePath3) Then fso.DeleteFile FilePath3
+    
+    DoCmd.OpenReport "Report4", acViewPreview, , "StudentID=" & Me.StudentID, acHidden
+    DoCmd.OutputTo acOutputReport, "Report4", acFormatPDF, FilePath3
+    DoCmd.Close acReport, "Report4"
+
+    ' ========================================================
+
+    MsgBox "مدارک در ديتابيس ذخيره شدند", vbInformation
+
+    ' 4. ??? ???? ??? ???? ??? ????
+    DoCmd.SelectObject acForm, Me.Name
+    DoCmd.GoToRecord , , acNewRec
+    Me.firstName.SetFocus
+
+    Exit Sub
+
+ErrorHandler:
+    If Err.Number = 2501 Then
+        Resume Next ' ??? ???? ?? ??? ????
+    ElseIf Err.Number = 3022 Then
+         MsgBox "?? ??? ?????? ???!", vbCritical
+    Else
+        MsgBox "Error: " & Err.description
+    End If
+    ' ???? ????? ?? ?? ???? ???? ???
+    On Error Resume Next
+    DoCmd.Close acReport, "Report2"
+    DoCmd.Close acReport, "Report3"
+    DoCmd.Close acReport, "Report4"
+    
+    
+End Sub
+
+
+
+
+
+Private Sub savePrintBtn_Click()
+    On Error GoTo ErrorHandler
+
+    ' 1. ????? ???? ????? ???
+    If IsNull(Me.lastName) Or IsNull(Me.StudentID) Then
+        MsgBox "اطلاعات را کامل وارد کنيد", vbExclamation
+        Exit Sub
+    End If
+    
+            If IsNull(Me.TblEnrollsubform.Form!courseNumber) Or Trim(Me.TblEnrollsubform.Form!courseNumber & "") = "" Then
+        MsgBox "لطفاً ابتدا شماره دوره را انتخاب کنيد!", vbExclamation
+        Exit Sub
+    End If
+
+    ' 2. ????? ?????? ??????? (???? ??? ???? ????? ????? ???? ????)
+    If Me.Dirty Then Me.Dirty = False
+    DoCmd.RunCommand acCmdSaveRecord
+    DoEvents ' ?? ??????? ?? ????? ????? ?? ??????? ?????
+
+    ' 3. ??????? ???? (?? ??? FSO ???? ?? ???? ?????)
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    Dim strMainFolder As String
+    Dim strCourseFolder As String
+    Dim strUserFolder As String
+    Dim FilePath1 As String, FilePath2 As String, FilePath3 As String
+    
+    ' الف) ساخت پوشه اصلي StudentFiles
+    strMainFolder = CurrentProject.Path & "\StudentFiles\"
+    If Not fso.FolderExists(strMainFolder) Then fso.CreateFolder strMainFolder
+
+    ' ب) ساخت پوشه شماره دوره (داخل پوشه اصلي)
+    strCourseFolder = strMainFolder & Me.TblEnrollsubform.Form!courseNumber & "\"
+    If Not fso.FolderExists(Left(strCourseFolder, Len(strCourseFolder) - 1)) Then
+        fso.CreateFolder Left(strCourseFolder, Len(strCourseFolder) - 1)
+    End If
+
+    ' ج) ساخت پوشه اختصاصي کارآموز (داخل پوشه دوره)
+    strUserFolder = strCourseFolder & Me.lastName & "_" & Me.StudentID & "\"
+    If Not fso.FolderExists(Left(strUserFolder, Len(strUserFolder) - 1)) Then
+        fso.CreateFolder Left(strUserFolder, Len(strUserFolder) - 1)
+    End If
+    ' ==================================================================
+    ' ???? ?????? ??? ? ????? ???? ? ?????
+    ' ==================================================================
+
+    ' --- ????? ???: Report2 (????? ???????) ---
+    rptName = "Report2"
+    strFilePath = strUserFolder & Me.lastName & "_" & Me.StudentID & "_Contract.pdf"
+    
+    ' ???) ???? PDF
+    If fso.FileExists(strFilePath) Then fso.DeleteFile strFilePath
+    DoCmd.OpenReport rptName, acViewPreview, , "StudentID=" & Me.StudentID, acHidden
+    DoCmd.OutputTo acOutputReport, rptName, acFormatPDF, strFilePath
+    DoCmd.Close acReport, rptName
+    
+    ' ?) ????? ?? ??????
+    DoCmd.OpenReport rptName, acViewNormal, , "StudentID=" & Me.StudentID
+
+
+    ' --- ????? ???: Report3 (????? ???? ????) ---
+    rptName = "Report3"
+    strFilePath = strUserFolder & Me.lastName & "_" & Me.StudentID & "_Receipt.pdf"
+    
+    ' ???) ???? PDF
+    If fso.FileExists(strFilePath) Then fso.DeleteFile strFilePath
+    DoCmd.OpenReport rptName, acViewPreview, , "StudentID=" & Me.StudentID, acHidden
+    DoCmd.OutputTo acOutputReport, rptName, acFormatPDF, strFilePath
+    DoCmd.Close acReport, rptName
+    
+    ' ?) ????? ?? ??????
+    DoCmd.OpenReport rptName, acViewNormal, , "StudentID=" & Me.StudentID
+
+
+    ' --- ????? ???: Report4 (????? ???? ????) ---
+    rptName = "Report4"
+    strFilePath = strUserFolder & Me.lastName & "_" & Me.StudentID & "_IDCard.pdf"
+    
+    ' ???) ???? PDF
+    If fso.FileExists(strFilePath) Then fso.DeleteFile strFilePath
+    DoCmd.OpenReport rptName, acViewPreview, , "StudentID=" & Me.StudentID, acHidden
+    DoCmd.OutputTo acOutputReport, rptName, acFormatPDF, strFilePath
+    DoCmd.Close acReport, rptName
+    
+    ' ?) ????? ?? ??????
+    DoCmd.OpenReport rptName, acViewNormal, , "StudentID=" & Me.StudentID
+
+    ' ==================================================================
+
+    ' ???? ??????
+    MsgBox "مدارک ذخيره شدند و براي چاپگر ارسال شدند" & vbCrLf & _
+           "????: " & strUserFolder, vbInformation
+           
+    ' ????? ????? ?? ???
+    DoCmd.SelectObject acForm, Me.Name
+
+    Exit Sub
+
+ErrorHandler:
+    ' ???? 2501 ???? ????? ???? ??? (??? ????)
+    If Err.Number = 2501 Then
+        Resume Next
+    Else
+        MsgBox "خطا: " & Err.description
+    End If
+    ' ??? ?????? ????? ?? ?????? ??? ??? ????? ????
+    On Error Resume Next
+    DoCmd.Close acReport, "Report2"
+    DoCmd.Close acReport, "Report3"
+    DoCmd.Close acReport, "Report4"
+End Sub
+
+
+Private Sub scnIdcartBtn_Click()
+    On Error GoTo ErrorHandler
+
+    ' 1. Check for Last Name and ID
+    If IsNull(Me.lastName) Or IsNull(Me.StudentID) Then
+        MsgBox "ابتدا نام و نام خانوادگي را وارد کنيد", vbExclamation
+        Exit Sub
+    End If
+        
+            If IsNull(Me.TblEnrollsubform.Form!courseNumber) Or Me.TblEnrollsubform.Form!courseNumber = "" Then
+        MsgBox "لطفاً ابتدا شماره دوره را انتخاب کنيد!", vbExclamation
+        Exit Sub
+    End If
+            Dim strCourseFolder As String
+    Dim Manager As Object
+    Dim ImageFile As Object
+    Dim Dialog As Object
+    Dim IP As Object
+    Dim strMainFolder As String
+    Dim strUserFolder As String
+    Dim strFilePath As String
+    Dim rsParent As DAO.Recordset
+    Dim rsChild As DAO.Recordset2
+    
+    ' Variables for Cropping
+    Dim TotalWidth As Long
+    Dim TotalHeight As Long
+    Dim TargetWidth As Long
+    Dim TargetHeight As Long
+    
+    ' --- SETTINGS: TARGET SIZE ---
+    TargetWidth = 1100
+    TargetHeight = 750
+    ' -----------------------------
+
+    
+    ' 2. Create Folders
+    ' الف) پوشه اصلي
+    strMainFolder = CurrentProject.Path & "\StudentFiles\"
+    If Dir(strMainFolder, vbDirectory) = "" Then MkDir strMainFolder
+    
+    ' ب) پوشه شماره دوره
+    strCourseFolder = strMainFolder & Me.TblEnrollsubform.Form!courseNumber & "\"
+    If Dir(Left(strCourseFolder, Len(strCourseFolder) - 1), vbDirectory) = "" Then
+        MkDir Left(strCourseFolder, Len(strCourseFolder) - 1)
+    End If
+    
+    ' ج) پوشه کارآموز بر اساس نام و کد
+    strUserFolder = strCourseFolder & Me.lastName & "_" & Me.StudentID & "\"
+    If Dir(Left(strUserFolder, Len(strUserFolder) - 1), vbDirectory) = "" Then
+        MkDir Left(strUserFolder, Len(strUserFolder) - 1)
+    End If
+
+    ' 3. Setup Scanner
+    Set Manager = CreateObject("WIA.DeviceManager")
+    If Manager.DeviceInfos.Count = 0 Then
+        MsgBox "اسکنر يافت نشد", vbCritical
+        Exit Sub
+    End If
+    
+    ' 4. Scan
+    Set Dialog = CreateObject("WIA.CommonDialog")
+    Set ImageFile = Dialog.ShowAcquireImage(1, 1, 65536, "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}", False, True, False)
+    
+    If ImageFile Is Nothing Then Exit Sub
+    
+    ' 5. CROP LOGIC
+    Set IP = CreateObject("WIA.ImageProcess")
+    IP.Filters.Add IP.FilterInfos("Crop").FilterID
+    
+    TotalWidth = ImageFile.Width
+    TotalHeight = ImageFile.Height
+    
+    If TotalWidth > TargetWidth Then
+        IP.Filters(1).Properties("Right") = TotalWidth - TargetWidth
+    End If
+    
+    If TotalHeight > TargetHeight Then
+        IP.Filters(1).Properties("Bottom") = TotalHeight - TargetHeight
+    End If
+    
+    IP.Filters(1).Properties("Left") = 0
+    IP.Filters(1).Properties("Top") = 0
+    
+    Set ImageFile = IP.Apply(ImageFile)
+    
+    ' 6. Save File (THE FIX IS HERE)
+    ' Now strUserFolder already has "\" at the end
+    strFilePath = strUserFolder & Me.lastName & "_" & Me.StudentID & "_ID.jpg"
+    
+    If Dir(strFilePath) <> "" Then Kill strFilePath
+    ImageFile.SaveFile strFilePath
+    
+    ' 7. Save to Database
+    If Me.Dirty Then Me.Dirty = False
+
+    Set rsParent = Me.RecordsetClone
+    rsParent.Bookmark = Me.Bookmark
+    rsParent.Edit
+    
+    Set rsChild = rsParent.Fields("IdCartPht").Value
+    
+    Do While Not rsChild.EOF
+        rsChild.Delete
+        rsChild.MoveNext
+    Loop
+    
+    rsChild.AddNew
+    rsChild.Fields("FileData").LoadFromFile strFilePath
+    rsChild.Update
+    
+    rsChild.Close
+    rsParent.Update
+    
+    ' 8. Finish
+    Me.Refresh
+    MsgBox "عکس ذخيره شد " & strUserFolder, vbInformation
+
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "خطا " & Err.description
+End Sub
+Private Sub scnpersonalBtn_Click()
+    On Error GoTo ErrorHandler
+
+    ' 1. بررسي نام خانوادگي و شماره پرونده
+    If IsNull(Me.lastName) Or IsNull(Me.StudentID) Then
+        MsgBox "ابتدا اطلاعات (نام خانوادگي و شماره پرونده) را کامل کنيد", vbExclamation
+        Exit Sub
+    End If
+            
+    ' بررسي شماره دوره در ساب فرم
+    If IsNull(Me.TblEnrollsubform.Form!courseNumber) Or Trim(Me.TblEnrollsubform.Form!courseNumber & "") = "" Then
+        MsgBox "لطفاً ابتدا در بخش ثبت‌نام، شماره دوره را انتخاب کنيد!", vbExclamation
+        Exit Sub
+    End If
+    
+    Dim strCourseFolder As String
+    Dim Manager As Object
+    Dim ImageFile As Object
+    Dim Dialog As Object
+    Dim IP As Object
+    Dim strMainFolder As String
+    Dim strUserFolder As String
+    Dim strFilePath As String
+    Dim rsParent As DAO.Recordset
+    Dim rsChild As DAO.Recordset2
+    
+    ' Variables for Cropping
+    Dim TotalWidth As Long
+    Dim TotalHeight As Long
+    Dim TargetWidth As Long
+    Dim TargetHeight As Long
+    
+    ' --- SETTINGS: TARGET SIZE FOR PERSONAL PHOTO (3x4) ---
+    ' Portrait Mode (Taller than wide)
+    ' 600x800 is good for 3x4 ratio
+    TargetWidth = 700
+    TargetHeight = 600
+    ' ------------------------------------------------------
+
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    Dim FilePath1 As String, FilePath2 As String, FilePath3 As String
+    
+    ' الف) ساخت پوشه اصلي StudentFiles
+    strMainFolder = CurrentProject.Path & "\StudentFiles\"
+    If Not fso.FolderExists(strMainFolder) Then fso.CreateFolder strMainFolder
+
+    ' ب) ساخت پوشه شماره دوره (گرفتن شماره از ساب فرم)
+    strCourseFolder = strMainFolder & Me.TblEnrollsubform.Form!courseNumber & "\"
+    If Not fso.FolderExists(Left(strCourseFolder, Len(strCourseFolder) - 1)) Then
+        fso.CreateFolder Left(strCourseFolder, Len(strCourseFolder) - 1)
+    End If
+
+    ' ج) ساخت پوشه کارآموز بر اساس نام و کد (داخل پوشه دوره)
+    strUserFolder = strCourseFolder & Me.lastName & "_" & Me.StudentID & "\"
+    If Not fso.FolderExists(Left(strUserFolder, Len(strUserFolder) - 1)) Then
+        fso.CreateFolder Left(strUserFolder, Len(strUserFolder) - 1)
+    End If
+    
+    ' 3. Setup Scanner
+    Set Manager = CreateObject("WIA.DeviceManager")
+    If Manager.DeviceInfos.Count = 0 Then
+        MsgBox "اسکنر يافت نشد!", vbCritical
+        Exit Sub
+    End If
+    
+    ' 4. Scan
+    Set Dialog = CreateObject("WIA.CommonDialog")
+    Set ImageFile = Dialog.ShowAcquireImage(1, 1, 65536, "{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}", False, True, False)
+    
+    If ImageFile Is Nothing Then Exit Sub
+    
+    ' 5. CROP LOGIC (Top-Left Corner)
+    Set IP = CreateObject("WIA.ImageProcess")
+    IP.Filters.Add IP.FilterInfos("Crop").FilterID
+    
+    TotalWidth = ImageFile.Width
+    TotalHeight = ImageFile.Height
+    
+    ' Crop logic for Portrait orientation
+    If TotalWidth > TargetWidth Then
+        IP.Filters(1).Properties("Right") = TotalWidth - TargetWidth
+    End If
+    
+    If TotalHeight > TargetHeight Then
+        IP.Filters(1).Properties("Bottom") = TotalHeight - TargetHeight
+    End If
+    
+    IP.Filters(1).Properties("Left") = 0
+    IP.Filters(1).Properties("Top") = 0
+    
+    ' Apply Crop
+    Set ImageFile = IP.Apply(ImageFile)
+    
+    ' 6. Save File
+    ' Name: LastName_StudentID_Photo.jpg
+    strFilePath = strUserFolder & Me.lastName & "_" & Me.StudentID & "_Photo.jpg"
+    
+    If Dir(strFilePath) <> "" Then Kill strFilePath
+    ImageFile.SaveFile strFilePath
+    
+    ' 7. Save to Database (Attachment: PersonalPht)
+    If Me.Dirty Then Me.Dirty = False
+
+    Set rsParent = Me.RecordsetClone
+    rsParent.Bookmark = Me.Bookmark
+    rsParent.Edit
+    
+    ' *** Target Field: PersonalPht ***
+    Set rsChild = rsParent.Fields("PersonalPht").Value
+    
+    ' Clean old
+    Do While Not rsChild.EOF
+        rsChild.Delete
+        rsChild.MoveNext
+    Loop
+    
+    ' Add new
+    rsChild.AddNew
+    rsChild.Fields("FileData").LoadFromFile strFilePath
+    rsChild.Update
+    
+    rsChild.Close
+    rsParent.Update
+    
+    ' 8. Finish
+    Me.Refresh
+    MsgBox "عکس با موفقيت اسکن و ذخيره شد. " & vbCrLf & strUserFolder, vbInformation
+
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error: " & Err.description
+End Sub

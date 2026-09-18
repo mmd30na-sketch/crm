@@ -1,0 +1,180 @@
+Option Compare Database
+Option Explicit
+Dim intFirst As Integer, intLast As Integer, intLastDay As Integer
+Dim intMonth As Integer, intYear As Integer, intDay As Integer
+Dim varDate As Variant
+
+Private Sub cmbMonth_AfterUpdate()
+
+    SetDays
+    varDate = Me.cmbYear & Format(Me.cmbMonth, "00") & Format(optCalendar.Value, "00")
+    Me.ctlCalendar = varDate
+    
+End Sub
+
+Private Sub cmbYear_AfterUpdate()
+    SetDays
+    varDate = Me.cmbYear & Format(Me.cmbMonth, "00") & Format(optCalendar.Value, "00")
+    Me.ctlCalendar = varDate
+End Sub
+
+
+Private Sub cmbYear_GotFocus()
+cmbYear.Dropdown
+End Sub
+
+Public Sub cmdCancel_Click()
+ DoCmd.Close acForm, Me.Name
+End Sub
+
+Private Sub CmdGoToday_Click()
+    Form_Load
+End Sub
+
+Private Sub cmdNext_Click()
+
+If Me!cmbMonth = 12 Then
+    If Me!cmbYear = 99 Then
+        Me!cmbMonth.Value = 1
+        Me!cmbYear = 81
+    Else
+        Me!cmbYear.Value = Me!cmbYear.Value + 1
+        Me!cmbMonth.Value = 1
+    End If
+Else
+    Me!cmbMonth.Value = Me!cmbMonth.Value + 1
+End If
+
+    SetDays
+    varDate = Format(Me.cmbYear, "0000") & Format(Me.cmbMonth, "00") & Format(optCalendar.Value, "00")
+    Me.ctlCalendar = varDate
+    
+End Sub
+
+Private Sub cmdPrevious_Click()
+
+If Me!cmbMonth = 1 Then
+    If Me!cmbYear = 81 Then
+        Me!cmbMonth = 12
+        Me!cmbYear = 99
+    Else
+        Me!cmbYear.Value = Me!cmbYear.Value - 1
+        Me!cmbMonth.Value = 12
+    End If
+Else
+    Me!cmbMonth.Value = Me!cmbMonth.Value - 1
+End If
+
+    SetDays
+    varDate = Format(Me.cmbYear, "0000") & Format(Me.cmbMonth, "00") & Format(optCalendar.Value, "00")
+    Me.ctlCalendar = varDate
+    
+End Sub
+
+Public Sub cmdSAVE_Click()
+    Me.Visible = False
+End Sub
+
+
+Private Sub Command73_Click()
+STRDATE = Slash(Shamsi())
+DoCmd.Close
+End Sub
+
+Private Sub Form_KeyDown(KeyCode As Integer, Shift As Integer)
+Select Case KeyCode
+    Case vbKeyEscape
+        DoCmd.Close acForm, Me.Name
+    End Select
+End Sub
+
+Private Sub optCalendar_AfterUpdate()
+    varDate = Me.cmbYear & Format(Me.cmbMonth, "00") & Format(optCalendar.Value, "00")
+    Me.ctlCalendar = varDate
+    'Form.Caption = "امروز " & Format(Me.ctlCalendar, "00/00/00")
+End Sub
+
+Private Sub Form_Load()
+    Me.cmbMonth = Ay(Shamsi)
+    Me.cmbYear = IL(Shamsi())
+    SetDays
+    Me.ctlCalendar = Shamsi()
+    Form.Caption = "  امروز " & Dat()
+End Sub
+Private Sub SetDays()
+Dim inti As Integer, intj As Integer, strNum As String, ctl As Control
+
+    Me.cmbMonth.SetFocus
+    
+
+    For inti = 1 To 42
+        strNum = Format(inti, "00")
+        Set ctl = Me("tgl" & strNum)
+        ctl.Caption = ""
+        ctl.OptionValue = 0
+        ctl.ForeColor = 0
+        ctl.Visible = False
+    Next inti
+
+    intMonth = Me!cmbMonth
+    intYear = Me!cmbYear
+    intFirst = Firstday(Me!cmbYear, Me!cmbMonth) + 1 'اولين روؤ ماه
+    intLastDay = ayDays(Me!cmbYear, Me!cmbMonth) 'تعداد روزهاي ماه
+    intLast = intFirst + intLastDay - 1 ' آخرين روز ماه
+
+
+    intj = 1
+    For inti = intFirst To intLast
+        strNum = Format(inti, "00")
+
+        Set ctl = Me("tgl" & strNum)
+        ctl.Caption = intj
+        ctl.OptionValue = intj
+        ctl.ForeColor = 16711680
+        
+        If (intFirst + intj - 1) Mod 7 = 0 Then
+            ctl.ForeColor = 0
+        End If
+        ctl.Visible = True
+        intj = intj + 1
+    Next inti
+    
+    Set ctl = Nothing
+    
+
+    If intLast <> 42 Then
+        intj = 1
+        For inti = intLast + 1 To 42
+            strNum = Format(inti, "00")
+
+            Me("tgl" & strNum).Caption = intj
+            intj = intj + 1
+        Next inti
+    End If
+    
+
+    If intFirst <> 1 Then
+        If Me!cmbMonth = 1 Then
+            intMonth = 12
+            intYear = Me!cmbYear - 1
+        Else
+            intMonth = Me!cmbMonth - 1
+            intYear = Me!cmbYear
+        End If
+        intj = ayDays(intYear, intMonth)
+        For inti = intFirst - 1 To 1 Step -1
+            strNum = Format(inti, "00")
+
+            Me("tgl" & strNum).Caption = intj
+            intj = intj - 1
+        Next inti
+    End If
+
+    Me.optCalendar.SetFocus
+    Form.Caption = Me.cmbYear & "/" & Format(Me.cmbMonth, "00") & "/" & Format(optCalendar.Value, "00")
+End Sub
+
+Private Sub optCalendar_Click()
+STRDATE = Me.cmbYear & "/" & Format(Me.cmbMonth, "00") & "/" & Format(optCalendar.Value, "00")
+DoCmd.Close
+End Sub

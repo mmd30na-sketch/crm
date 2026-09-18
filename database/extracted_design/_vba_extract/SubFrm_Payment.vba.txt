@@ -1,0 +1,58 @@
+Option Compare Database
+Private Sub btnFull_Click()
+    On Error Resume Next
+    
+    ' ?. تعيين نوع پرداخت
+    Me![type] = "تسويه کامل"
+
+    
+    ' ?. تلاش براي گرفتن قيمت (با اسم tblenrollSubform)
+    Dim Mablagh As Currency
+    
+    ' اينجا سعي ميکنيم مقدار رو بخونيم
+    Mablagh = Nz(Me.Parent!TblEnrollsubform.Form!finalpriceCombo, 0)
+    
+    ' ?. تست زنده: اگر مبلغ صفر بود، يعني آدرس اشتباهه!
+    If Mablagh = 0 Then
+        
+        MsgBox "اول دوره را انتخاب کنيد"
+            
+    Else
+        ' اگر مبلغ رو پيدا کرد، ميشينه سر جاش
+        Me.finalCoursePrice = Mablagh
+        Me.finalCoursePrice.Locked = True
+        Me.finalCoursePrice.BackColor = RGB(230, 230, 230)
+    End If
+    
+End Sub
+
+
+Private Sub btnPre_Click()
+
+    On Error Resume Next
+    
+        Me![type] = "پيش پرداخت"
+          Me.finalCoursePrice = 0
+         
+                    Me.finalCoursePrice.BackColor = vbWhite
+                    
+                    Me.finalCoursePrice.SetFocus
+                    
+          
+    
+End Sub
+
+Private Sub grpPaySelector_AfterUpdate()
+    ' ?. اول متن رو تنظيم کن
+    Select Case Me.grpPaySelector
+        Case 1: Me.paytype = "کارتخوان"
+        Case 2: Me.paytype = "کارت به کارت"
+        Case 3: Me.paytype = "نقدي"
+    End Select
+    
+End Sub
+
+Private Sub Toggle49_KeyPress(KeyAscii As Integer)
+  Me.paytype = "نقدي"
+  
+End Sub

@@ -1,0 +1,246 @@
+﻿========================================================
+Database Schema and Sample Data for StudentFiles/finaL.accde
+========================================================
+
+--------------------------------------------------------
+Table: TblStudents
+--------------------------------------------------------
+Columns & Types:
+  - Address (Text/VarChar)
+  - firstName (Text/VarChar)
+  - IdCartPht (Text/VarChar)
+  - lastName (Text/VarChar)
+  - Ncode (Text/VarChar)
+  - PersonalPht (Text/VarChar)
+  - phoneNumber (Text/VarChar)
+  - StudentID (Integer)
+
+Sample Data (Top 5 rows):
+  Row 1:
+    Address : حافظیه ، 17 متری دوم لاله 62 ، پلاک 20
+    firstName : علی
+    IdCartPht : دلیری.png
+    lastName : دلیری
+    Ncode : 3241913562
+    PersonalPht : دلیری118_Photo.jpg
+    phoneNumber : 09398606919
+    StudentID : 118
+
+  Row 2:
+    Address : فاقد
+    firstName : آرمین
+    IdCartPht : -2147483648_-210108.jpg
+    lastName : بهرامی نجوبرانی
+    Ncode : 3242293908
+    PersonalPht : photo23662835641.jpg
+    phoneNumber : 09185915152
+    StudentID : 120
+
+  Row 3:
+    Address : فاقد
+    firstName : بهنام
+    IdCartPht : photo23658127592.jpg
+    lastName : ملک خطابی
+    Ncode : 3256398073
+    PersonalPht : ۲۰۲۶۰۱۰۷_۱۱۲۶۳۷.jpg
+    phoneNumber : 09358960630
+    StudentID : 121
+
+  Row 4:
+    Address : فاقد
+    firstName : مجتبی
+    IdCartPht : کرمی ملی.jpg
+    lastName : کرمی
+    Ncode : 3411554238
+    PersonalPht : 775d23ae-5b3f-480e-9b8f-4a848c387302.jpg
+    phoneNumber : 09188327001
+    StudentID : 122
+
+  Row 5:
+    Address : کارمندان ، ایستگاه 7 ، بن بست اندیشه
+    firstName : سعید
+    IdCartPht : حشمتیان.jpg
+    lastName : حشمتیان
+    Ncode : 3259046976
+    PersonalPht : 
+    phoneNumber : 09181307237
+    StudentID : 124
+
+========================================================
+
+--------------------------------------------------------
+Table: TblCourse
+--------------------------------------------------------
+Columns & Types:
+  - course (Text/VarChar)
+  - course ID (Integer)
+  - price (Currency)
+
+Sample Data (Top 5 rows):
+  Row 1:
+    course :  حمل و نقل جاده ای
+    course ID : 1
+    price : 4700000
+
+  Row 2:
+    course : محموله خطرناک
+    course ID : 2
+    price : 3300000
+
+  Row 3:
+    course : اتوبوس برون شهری
+    course ID : 3
+    price : 4700000
+
+  Row 4:
+    course : مدیر شرکت حمل و نقل
+    course ID : 4
+    price : 4000000
+
+  Row 5:
+    course : مدیر شرکت مسافر برون شهری
+    course ID : 5
+    price : 5700000
+
+========================================================
+
+--------------------------------------------------------
+Table: TblEnroll
+--------------------------------------------------------
+Columns & Types:
+  - courseNumber (Integer)
+  - courseRef (Integer)
+  - detaSignUp (Text/VarChar)
+  - finalCoursePrice (Currency)
+  - ID (Integer)
+  - payment (Currency)
+  - studentRef (Integer)
+
+Sample Data (Top 5 rows):
+  Row 1:
+    courseNumber : 1
+    courseRef : 1
+    detaSignUp : 1404/11/25
+    finalCoursePrice : 4700000
+    ID : 127
+    payment : 0.0000
+    studentRef : 118
+
+  Row 2:
+    courseNumber : 1
+    courseRef : 1
+    detaSignUp : 1404/10/23
+    finalCoursePrice : 4700000
+    ID : 128
+    payment : 0.0000
+    studentRef : 120
+
+  Row 3:
+    courseNumber : 1
+    courseRef : 1
+    detaSignUp : 1404/11/27
+    finalCoursePrice : 4700000
+    ID : 129
+    payment : 0.0000
+    studentRef : 121
+
+  Row 4:
+    courseNumber : 1
+    courseRef : 2
+    detaSignUp : 1404/11/27
+    finalCoursePrice : 3300000
+    ID : 130
+    payment : 0.0000
+    studentRef : 122
+
+  Row 5:
+    courseNumber : 1
+    courseRef : 1
+    detaSignUp : 1404/11/27
+    finalCoursePrice : 4700000
+    ID : 131
+    payment : 0.0000
+    studentRef : 124
+
+========================================================
+
+--------------------------------------------------------
+Table: TblPeyment
+--------------------------------------------------------
+Columns & Types:
+  - amount (Currency)
+  - description (Text/VarChar)
+  - EnrollRef (Integer)
+  - ID (Integer)
+  - Paydate (Text/VarChar)
+  - paytype (Text/VarChar)
+  - RefStudentID (Integer)
+  - type (Text/VarChar)
+
+Sample Data (Top 5 rows):
+  Row 1:
+    amount : 4700000
+    description : 
+    EnrollRef : 0
+    ID : 67
+    Paydate : 1405/01/07
+    paytype : کارت به کارت
+    RefStudentID : 134
+    type : تسويه کامل
+
+  Row 2:
+    amount : 1000
+    description : 
+    EnrollRef : 0
+    ID : 68
+    Paydate : 1405/01/16
+    paytype : کارت به کارت
+    RefStudentID : 135
+    type : پيش پرداخت
+
+  Row 3:
+    amount : 4700000
+    description : 
+    EnrollRef : 0
+    ID : 73
+    Paydate : 1405/01/20
+    paytype : کارت به کارت
+    RefStudentID : 143
+    type : تسويه کامل
+
+  Row 4:
+    amount : 4000000
+    description : 
+    EnrollRef : 0
+    ID : 74
+    Paydate : 1405/01/20
+    paytype : کارت به کارت
+    RefStudentID : 145
+    type : تسويه کامل
+
+  Row 5:
+    amount : 5700000
+    description : 
+    EnrollRef : 0
+    ID : 75
+    Paydate : 1405/01/20
+    paytype : کارت به کارت
+    RefStudentID : 146
+    type : تسويه کامل
+
+========================================================
+
+--------------------------------------------------------
+Table: Tblexpenses
+--------------------------------------------------------
+Columns & Types:
+  - description (Text/VarChar)
+  - expenseAmount (Currency)
+  - expensedate (Text/VarChar)
+  - expenseTitle (Text/VarChar)
+  - expnseID (Integer)
+
+Sample Data (Top 5 rows):
+  (No rows found)
+========================================================
+

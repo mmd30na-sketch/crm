@@ -1,0 +1,712 @@
+Option Compare Database
+Public STRDATE As String
+
+'\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+'                            «'   „«éÊ·  ò„Ì· ‘œÂ Ã‰«» ¬“«œÌ  Ê”ÿ —”Ê· €·«„Ì œ—  «—ÌŒ 1394/09/10
+'                                                                                            '«
+'                      . ⁄—Ì› ﬂ‰Ìœ Number(Long) «”  —« »’Ê—  Date «'   1 - ›Ì·œÂ«ÌÌ ﬂÂ ‰Ê⁄ ¬‰Â«
+'                         .«Ì‰ ›Ì·œÂ« —« »’Ê—  -,0000/00/0,0  ‰ŸÌ„ ﬂ‰Ìœ InputMask «'   2- Œ«’Ì 
+'             .«'   3- »œ·Ì· 8 —ﬁ„Ì œ— ‰Ÿ— ê—› ‰ ›Ì·œ  «—ÌŒ ° «Ì‰ „«éÊ·  « ”«· 9999 ﬂ«—«ÌÌ œ«—œ
+'                          . «—ÌŒ Ã«—Ì ”Ì” „ —« »Â ÂÃ—Ì ‘„”Ì  »œÌ· „Ì ﬂ‰œ Shamsi() «'   5-  «»⁄
+'                        .»ﬂ«— »»—Ìœ Now() —« „Ì  Ê«‰Ìœ œ— ê“«—‘«  »Ã«Ì  «»⁄ Dat() «'   6-  «»⁄
+'                   .—« „Ì Ê«‰Ìœ ÃÂ  œ—Ã / œ— »Ì‰ «⁄œ«œ  «—ÌŒ «” ›«œÂ ﬂ‰Ìœ Slash() «'   7-  «»⁄
+'              " «” ›«œÂ ﬂ‰Ìœ Slash(Shamsi()) «'   "ÃÂ  «ÌÃ«œ / œ— »Ì‰ «⁄œ«œ  «—ÌŒ  «»⁄ —« »‘ﬂ·
+'                     : «'   8- »—«Ì Ã·ÊêÌ—Ì «“ Ê—Êœ  «—ÌŒ €·ÿ œ—Ê‰ Ìﬂ ›Ì·œ » — Ì» “Ì— ⁄„· ﬂ‰Ìœ
+'   "›Ì·œ „Ê—œ ‰Ÿ— ﬁ—«— œÂÌœ ValidationRule —« œ— Œ«’Ì  ValidDate([Field Name])=True «'   " «»⁄
+'/////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+Public Static Function Shamsi() As Long
+'«Ì‰  «»⁄  «—ÌŒ Ã«—Ì ”Ì” „ —« »Â  «—ÌŒ ÂÃ—Ì ‘„”Ì  »œÌ· „Ì ﬂ‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Dim Shamsi_Mabna As Long
+Dim Miladi_mabna As Date
+Dim Dif As Long
+'œ— «Ì‰Ã« 78/10/11 »« 2000/01/01 „⁄«œ· ﬁ—«—œ«œÂ ‘œÂ
+Shamsi_Mabna = 13781011
+Miladi_mabna = #1/1/2000#
+Dif = DateDiff("d", Miladi_mabna, Date)
+If Dif < 0 Then
+MsgBox " «—ÌŒ Ã«—Ì ”Ì” „ ‘„« ‰«œ—”  «”  , ¬‰—« «’·«Õ ﬂ‰Ìœ."
+Else
+Shamsi = AddDay(Shamsi_Mabna, Dif)
+End If
+End Function
+
+Public Function Dat() As String
+' »ﬂ«— »»—Ìœ Now() —« „Ì  Ê«‰Ìœ œ— ê“«—‘«  »Ã«Ì  «»⁄ Dat()  «»⁄
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Dat = DayWeek(Shamsi) & " - " & Slash(Shamsi)
+End Function
+
+Public Function Slash(F_Date As Variant) As String
+' «Ì‰  «»⁄ Ìﬂ  «—ÌŒ —« œ—Ì«›  Ê »’Ê—  Ìﬂ —‘ Â 10 —ﬁ„Ì ‘«„· / Ê çÂ«— —ﬁ„ »—«Ì ”«· »«“„Ìê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+F_Date = Replace(F_Date, "/", "")
+Dim A As Long
+A = CLng(F_Date)
+Slash = Format(IL(A), "0000") & "/" & Format(Ay(A), "00") & "/" & Format(Guon(A), "00")
+End Function
+
+Function Make_Date(ByVal F_Date As Long) As String
+'«Ì‰  «»⁄ Ìﬂ  «—ÌŒ —« »’Ê—  Ìﬂ —‘ Â 10 —ﬁ„Ì »« –ﬂ— çÂ«— —ﬁ„ »—«Ì ”«· «—«∆Â „Ì ﬂ‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Dim D As String
+D = Trim(Str(F_Date))
+If IsNull(F_Date) = True Or F_Date = 0 Then
+Make_Date = ""
+Else
+Make_Date = Mid(D, 1, 4) & "/" & Mid(D, 5, 2) & "/" & Mid(D, 7, 2)
+End If
+End Function
+
+Function ValidDate(F_Date As Variant) As Boolean
+' «Ì‰  «»⁄ «⁄ »«— Ìﬂ ⁄œœ Ê—ÊœÌ —« «“ ‰Ÿ—  «—ÌŒ ÂÃ—Ì ‘„”Ì »——”Ì „Ì ﬂ‰œ
+' —« »—„Ì ê—œ«‰œ False Ê«ê— ‰«„⁄ »— »«‘œ True «ê—  «—ÌŒ „⁄ »— »«‘œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+On Error GoTo Err_ValidDate
+Dim M, S, R As Byte
+F_Date = Replace(F_Date, "/", "")
+R = Guon(CLng(F_Date))
+M = Ay(CLng(F_Date))
+S = IL(CLng(F_Date))
+If F_Date < 10000101 Then Exit Function
+If M > 12 Or M = 0 Or R = 0 Then Exit Function
+If R > ayDays(S, M) Then Exit Function
+ValidDate = True
+
+Exit_ValidDate:
+    On Error Resume Next
+    Exit Function
+Err_ValidDate:
+    Select Case Err.Number
+        Case 0
+            Resume Exit_ValidDate:
+        Case 94
+            ValidDate = True
+        Case Else
+            MsgBox Err.Number & " " & Err.description, vbExclamation, "Error in module Module2 - function ValidDate"
+            Resume Exit_ValidDate:
+    End Select
+End Function
+
+Public Function AddDay(ByVal F_Date As Variant, ByVal Add As Long) As Long
+'«Ì‰  «»⁄  ⁄œ«œ —Ê“ œ·ŒÊ«Â —« »Â  «—ÌŒ —Ê“ «÷«›Â „Ìﬂ‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+On Error GoTo Err_AddDay
+F_Date = Replace(F_Date, "/", "")
+Dim k, M, R, Days As Byte
+Dim S As Integer
+R = Guon(CLng(F_Date))
+M = Ay(CLng(F_Date))
+S = IL(CLng(F_Date))
+k = Kabiseh(S)
+' »œÌ· —Ê“ »Â ⁄œœ 1 ÃÂ  «œ«„Â „Õ«”»«  Ê Ì« « „«„ „Õ«”»Â
+Days = ayDays(S, M)
+If Add > Days - R Then
+Add = Add - (Days - R + 1)
+R = 1
+If M < 12 Then
+M = M + 1
+Else
+M = 1
+S = S + 1
+End If
+Else
+R = R + Add
+Add = 0
+End If
+While Add > 0
+k = Kabiseh(S) 'ﬂ»Ì”Â: 1 Ê €Ì— ﬂ»Ì”Â: 0
+Days = ayDays(S, M) ' ⁄œ«œ —Ê“Â«Ì „«Â ›⁄·Ì
+Select Case Add
+Case Is < Days
+'«ê—  ⁄œ«œ —Ê“Â«Ì «›“Êœ‰Ì ﬂ„ — «“ Ìﬂ „«Â »«‘œ
+R = R + Add
+Add = 0
+Case Days To IIf(k = 0, 365, 366) - 1
+'«ê—  ⁄œ«œ —Ê“Â«Ì «›“Êœ‰Ì »Ì‘ — «“ Ìﬂ „«Â Ê ﬂ„ — «“ Ìﬂ ”«· »«‘œ
+Add = Add - Days
+If M < 12 Then
+M = M + 1
+Else
+S = S + 1
+M = 1
+End If
+Case Else
+'«ê—  ⁄œ«œ —Ê“Â«Ì «›“Êœ‰Ì »Ì‘ — «“ Ìﬂ ”«· »«‘œ
+S = S + 1
+Add = Add - IIf(k = 0, 365, 366)
+End Select
+Wend
+AddDay = CLng(S & Format(M, "00") & Format(R, "00"))
+
+Exit_AddDay:
+    On Error Resume Next
+    Exit Function
+Err_AddDay:
+    Select Case Err.Number
+        Case 0
+            Resume Exit_AddDay:
+        Case 94
+            AddDay = 0
+        Case Else
+            MsgBox Err.Number & " " & Err.description, vbExclamation, "Error in module Module2 - function AddDay"
+            Resume Exit_AddDay:
+    End Select
+End Function
+
+Function SubDay(ByVal F_Date As Variant, ByVal Subtract As Long) As Long
+'»Â  ⁄œ«œ —Ê“ „⁄Ì‰Ì «“ Ìﬂ  «—ÌŒ ﬂ„ ﬂ—œÂ Ê  «—ÌŒ Õ«’·Â —« «—«∆Â „Ìﬂ‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+On Error GoTo Err_SubDay
+F_Date = Replace(F_Date, "/", "")
+Dim k, M, S, R, Days As Byte
+R = Guon(CLng(F_Date))
+M = Ay((CLng(F_Date)))
+S = IL((CLng(F_Date)))
+k = Kabiseh(S)
+' »œÌ· —Ê“ »Â ⁄œœ 1 ÃÂ  «œ«„Â „Õ«”»«  Ê Ì« « „«„ „Õ«”»Â
+If Subtract >= R - 1 Then
+Subtract = Subtract - (R - 1)
+R = 1
+Else
+R = R - Subtract
+Subtract = 0
+End If
+While Subtract > 0
+k = Kabiseh(S - 1) 'ﬂ»Ì”Â: 1 Ê €Ì— ﬂ»Ì”Â: 0
+Days = ayDays(IIf(M >= 2, S, S - 1), IIf(M >= 2, M - 1, 12)) ' ⁄œ«œ —Ê“Â«Ì „«Â ﬁ»·Ì
+Select Case Subtract
+Case Is < Days
+'«ê—  ⁄œ«œ —Ê“Â«Ì ﬂ«Â‘ ﬂ„ — «“ Ìﬂ „«Â »«‘œ
+R = Days - Subtract + 1
+Subtract = 0
+If M >= 2 Then
+M = M - 1
+Else
+S = S - 1
+M = 12
+End If
+Case Days To IIf(k = 0, 365, 366) - 1
+'«ê—  ⁄œ«œ —Ê“Â«Ì ﬂ«Â‘ »Ì‘ — «“ Ìﬂ „«Â Ê ﬂ„ — «“ Ìﬂ ”«· »«‘œ
+Subtract = Subtract - Days
+If M >= 2 Then
+M = M - 1
+Else
+S = S - 1
+M = 12
+End If
+Case Else
+'«ê—  ⁄œ«œ —Ê“Â«Ì ﬂ«Â‘ »Ì‘ — «“ Ìﬂ ”«· »«‘œ
+S = S - 1
+Subtract = Subtract - IIf(k = 0, 365, 366)
+End Select
+Wend
+SubDay = (S * 10000) + (M * 100) + (R)
+
+Exit_SubDay:
+    On Error Resume Next
+    Exit Function
+Err_SubDay:
+    Select Case Err.Number
+        Case 0
+            Resume Exit_SubDay:
+        Case 94
+            SubDay = 0
+        Case Else
+            MsgBox Err.Number & " " & Err.description, vbExclamation, "Error in module Module2 - function SubDay"
+            Resume Exit_SubDay:
+    End Select
+End Function
+
+Public Function DayWeekNo(F_Date As Variant) As Byte
+'«Ì‰  «»⁄ Ìﬂ  «—ÌŒ —« œ—Ì«›  ﬂ—œÂ Ê ‘„«—Â —Ê“ Â› Â —« „‘Œ’ „Ì ﬂ‰œ
+'«ê— ‘‰»Â »«‘œ ⁄œœ 0
+'«ê— 1‘‰»Â »«‘œ ⁄œœ 1
+'......
+'«ê— Ã„⁄Â »«‘œ ⁄œœ 6
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+F_Date = Replace(F_Date, "/", "")
+Dim day As String
+Dim Shmsi_Mabna As Long
+Dim Dif As Long
+'„»‰« 80/10/11
+Shmsi_Mabna = 13801011
+Dif = Diff(Shmsi_Mabna, CLng(F_Date))
+If Shmsi_Mabna > CLng(F_Date) Then
+Dif = -Dif
+End If
+'»«  ÊÃÂ »Â «Ì‰ﬂÂ 80/10/11 3‘‰»Â «”  „Õ«”»Â „Ì‘Êœ day „ €Ì—
+day = (Dif + 3) Mod 7
+If day < 0 Then
+DayWeekNo = day + 7
+Else
+DayWeekNo = day
+End If
+End Function
+
+Public Function DayWeek(F_Date As Variant) As String
+'«Ì‰  «»⁄ Ìﬂ  «—ÌŒ —« œ—Ì«›  ﬂ—œÂ Ê „‘Œ’ „Ì ﬂ‰œ çÂ —Ê“Ì «“ Â› Â «” 
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Dim A As String
+Dim n As Byte
+n = DayWeekNo(F_Date)
+Select Case n
+Case 0
+A = "‘‰»Â"
+Case 1
+A = "Ìﬂ ‘‰»Â"
+Case 2
+A = "œÊ ‘‰»Â"
+Case 3
+A = "”Â ù‘‰»Â"
+Case 4
+A = "çÂ«— ‘‰»Â"
+Case 5
+A = "Å‰Ã ù‘‰»Â"
+Case 6
+A = "Ã„⁄Â"
+End Select
+DayWeek = A
+End Function
+
+Function MahName(F_Date As Variant) As String
+'«Ì‰  «»⁄ Ìﬂ  «—ÌŒ —« œ—Ì«›  ﬂ—œÂ Ê „‘Œ’ „Ì ﬂ‰œ çÂ „«ÂÌ «“ ”«· «” 
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+F_Date = Replace(F_Date, "/", "")
+ay_no = Ay(CLng(F_Date))
+Select Case ay_no
+Case 1
+MahName = "›—Ê—œÌ‰"
+Case 2
+MahName = "«—œÌ»Â‘ "
+Case 3
+MahName = "Œ—œ«œ"
+Case 4
+MahName = " Ì—"
+Case 5
+MahName = "„—œ«œ"
+Case 6
+MahName = "‘Â—ÌÊ—"
+Case 7
+MahName = "„Â—"
+Case 8
+MahName = "¬»«‰"
+Case 9
+MahName = "¬–—"
+Case 10
+MahName = "œÌ"
+Case 11
+MahName = "»Â„‰"
+Case 12
+MahName = "«”›‰œ"
+End Select
+End Function
+
+Public Function FirstDate(F_Date As Variant) As String
+'«Ì‰  «»⁄  «—ÌŒ «Ê· ”«· —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+F_Date = Replace(F_Date, "/", "")
+Dim S As Integer
+S = IL(CLng(F_Date))
+FirstDate = SubDay(S & "/01/01", 1)
+End Function
+
+Public Function RozeSal(F_Date As Variant) As String
+'«Ì‰  «»⁄  «—ÌŒ «Ê· ”«· —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+RozeSal = Diff(FirstDate(F_Date), F_Date)
+End Function
+
+Public Function HafteSal(F_Date As Variant) As String
+'«Ì‰  «»⁄  «—ÌŒ «Ê· ”«· —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Dim Tmp As Integer
+Tmp = RozeSal(F_Date)
+HafteSal = Int(Tmp / 7) + 1
+End Function
+
+Public Function Diff(ByVal Date1 As Variant, ByVal Date2 As Variant) As Long
+'«Ì‰  «»⁄  ⁄œ«œ —Ê“Â«Ì »Ì‰ œÊ  «—ÌŒ —« «—«∆Â „Ì ﬂ‰œ
+On Error GoTo Err_Diff
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Date1 = Replace(Date1, "/", "")
+Date2 = Replace(Date2, "/", "")
+Dim Tmp As Long
+Dim S1, M1, R1, S2, M2, R2 As Integer
+Dim Sumation As Single
+Dim Flag As Boolean
+Flag = False
+If CLng(Date1) = 0 Or IsNull(CLng(Date1)) = True Or CLng(Date2) = 0 Or IsNull(CLng(Date2)) = True Then
+Diff = 0
+Exit Function
+End If
+'«ê—  «—ÌŒ ‘—Ê⁄ «“  «—ÌŒ Å«Ì«‰ »“—ê — »«‘œ ¬‰Â« „Êﬁ « Ã«»Ã« „Ì ‘Ê‰œ
+If CLng(Date1) > CLng(Date2) Then
+Flag = True
+Tmp = CLng(Date1)
+Date1 = CLng(Date2)
+Date2 = Tmp
+End If
+R1 = Guon(CLng(Date1))
+M1 = Ay(CLng(Date1))
+S1 = IL(CLng(Date1))
+R2 = Guon(CLng(Date2))
+M2 = Ay(CLng(Date2))
+S2 = IL(CLng(Date2))
+Sumation = 0
+Do While S1 < S2 - 1 Or (S1 = S2 - 1 And (M1 < M2 Or (M1 = M2 And R1 <= R2)))
+'«ê— Ìﬂ ”«· Ì« »Ì‘ — «Œ ·«› »Êœ
+If Kabiseh((S1)) = 1 Then
+If M1 = 12 And R1 = 30 Then
+Sumation = Sumation + 365
+R1 = 29
+Else
+Sumation = Sumation + 366
+End If
+Else
+Sumation = Sumation + 365
+End If
+S1 = S1 + 1
+Loop
+Do While S1 < S2 Or M1 < M2 - 1 Or (M1 = M2 - 1 And R1 < R2)
+'«ê— Ìﬂ „«Â Ì« »Ì‘ — «Œ ·«› »Êœ
+Select Case M1
+Case 1 To 6
+If M1 = 6 And R1 = 31 Then
+Sumation = Sumation + 30
+R1 = 30
+Else
+Sumation = Sumation + 31
+End If
+M1 = M1 + 1
+Case 7 To 11
+If M1 = 11 And R1 = 30 And Kabiseh(S1) = 0 Then
+Sumation = Sumation + 29
+R1 = 29
+Else
+Sumation = Sumation + 30
+End If
+M1 = M1 + 1
+Case 12
+If Kabiseh(S1) = 1 Then
+Sumation = Sumation + 30
+Else
+Sumation = Sumation + 29
+End If
+S1 = S1 + 1
+M1 = 1
+End Select
+Loop
+If M1 = M2 Then
+Sumation = Sumation + (R2 - R1)
+Else
+Select Case M1
+Case 1 To 6
+Sumation = Sumation + (31 - R1) + R2
+Case 7 To 11
+Sumation = Sumation + (30 - R1) + R2
+Case 12
+If Kabiseh(S1) = 1 Then
+Sumation = Sumation + (30 - R1) + R2
+Else
+Sumation = Sumation + (29 - R1) + R2
+End If
+End Select
+End If
+If Flag = True Then
+Sumation = -Sumation
+End If
+Diff = Sumation
+
+Exit_Diff:
+    On Error Resume Next
+    Exit Function
+Err_Diff:
+    Select Case Err.Number
+        Case 0
+            Resume Exit_Diff:
+        Case 94
+            Diff = 0
+        Case Else
+            MsgBox Err.Number & " " & Err.description, vbExclamation, "Error in module Module2 - function Diff"
+            Resume Exit_Diff:
+    End Select
+End Function
+
+Public Function TotalDiff(ByVal Date1 As Variant, ByVal Date2 As Variant) As String
+'«Ì‰  «»⁄  ⁄œ«œ —Ê“Â«Ì »Ì‰ œÊ  «—ÌŒ —« «—«∆Â „Ì ﬂ‰œ
+On Error GoTo Err_TotalDiff
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Date1 = Replace(Date1, "/", "")
+Date2 = Replace(Date2, "/", "")
+Dim Tmp As Long
+Dim S1, M1, R1, S2, M2, R2, RozeSal, RozeMah, roz, SalNo, MahNo, RozNo As Integer
+Dim Sumation As Single
+Dim Flag As Boolean
+Flag = False
+If CLng(Date1) = 0 Or IsNull(CLng(Date1)) = True Or CLng(Date2) = 0 Or IsNull(CLng(Date2)) = True Then
+TotalDiff = 0
+Exit Function
+End If
+'«ê—  «—ÌŒ ‘—Ê⁄ «“  «—ÌŒ Å«Ì«‰ »“—ê — »«‘œ ¬‰Â« „Êﬁ « Ã«»Ã« „Ì ‘Ê‰œ
+If CLng(Date1) > CLng(Date2) Then
+Flag = True
+Tmp = CLng(Date1)
+Date1 = CLng(Date2)
+Date2 = Tmp
+End If
+R1 = Guon(CLng(Date1))
+M1 = Ay(CLng(Date1))
+S1 = IL(CLng(Date1))
+R2 = Guon(CLng(Date2))
+M2 = Ay(CLng(Date2))
+S2 = IL(CLng(Date2))
+RozeSal = 0
+RozeMah = 0
+roz = 0
+SalNo = 0
+MahNo = 0
+RozNo = 0
+Sumation = 0
+Do While S1 < S2 - 1 Or (S1 = S2 - 1 And (M1 < M2 Or (M1 = M2 And R1 <= R2)))
+'«ê— Ìﬂ ”«· Ì« »Ì‘ — «Œ ·«› »Êœ
+If Kabiseh((S1)) = 1 Then
+If M1 = 12 And R1 = 30 Then
+Sumation = Sumation + 365
+R1 = 29
+'#################
+SalNo = SalNo + 1
+'#################
+Else
+Sumation = Sumation + 366
+'#################
+SalNo = SalNo + 1
+'#################
+End If
+Else
+Sumation = Sumation + 365
+'#################
+SalNo = SalNo + 1
+'#################
+End If
+S1 = S1 + 1
+Loop
+'##################
+RozeSal = Sumation
+'##################
+Do While S1 < S2 Or M1 < M2 - 1 Or (M1 = M2 - 1 And R1 < R2)
+'«ê— Ìﬂ „«Â Ì« »Ì‘ — «Œ ·«› »Êœ
+Select Case M1
+Case 1 To 6
+If M1 = 6 And R1 = 31 Then
+Sumation = Sumation + 30
+R1 = 30
+'#################
+MahNo = MahNo + 1
+'#################
+Else
+Sumation = Sumation + 31
+'#################
+MahNo = MahNo + 1
+'#################
+End If
+M1 = M1 + 1
+Case 7 To 11
+If M1 = 11 And R1 = 30 And Kabiseh(S1) = 0 Then
+Sumation = Sumation + 29
+'#################
+MahNo = MahNo + 1
+'#################
+R1 = 29
+Else
+Sumation = Sumation + 30
+'#################
+MahNo = MahNo + 1
+'#################
+End If
+M1 = M1 + 1
+Case 12
+If Kabiseh(S1) = 1 Then
+Sumation = Sumation + 30
+'#################
+MahNo = MahNo + 1
+'#################
+Else
+Sumation = Sumation + 29
+'#################
+MahNo = MahNo + 1
+'#################
+End If
+S1 = S1 + 1
+M1 = 1
+End Select
+Loop
+'##################
+RozeMah = Sumation - RozeSal
+'##################
+If M1 = M2 Then
+Sumation = Sumation + (R2 - R1)
+'#####################
+RozNo = RozNo + (R2 - R1)
+If RozNo < 0 Then
+If Kabiseh(S1 - 1) = 1 Then
+RozNo = 30 + RozNo
+Else
+RozNo = 29 + RozNo
+End If
+MahNo = MahNo - 1
+End If
+'#####################
+Else
+Select Case M1
+Case 1 To 6
+Sumation = Sumation + (31 - R1) + R2
+'#####################
+RozNo = RozNo + (31 - R1) + R2
+'#####################
+Case 7 To 11
+Sumation = Sumation + (30 - R1) + R2
+'#####################
+RozNo = RozNo + (30 - R1) + R2
+'#####################
+Case 12
+If Kabiseh(S1) = 1 Then
+Sumation = Sumation + (30 - R1) + R2
+'#####################
+RozNo = RozNo + (30 - R1) + R2
+'#####################
+Else
+Sumation = Sumation + (29 - R1) + R2
+'#####################
+RozNo = RozNo + (29 - R1) + R2
+'#####################
+End If
+End Select
+End If
+'##################
+roz = Sumation - (RozeSal + RozeMah)
+'##################
+If Flag = True Then
+RozeSal = -RozeSal
+End If
+TotalDiff = SalNo & "/" & MahNo & "/" & RozNo
+
+Exit_TotalDiff:
+    On Error Resume Next
+    Exit Function
+Err_TotalDiff:
+    Select Case Err.Number
+        Case 0
+            Resume Exit_TotalDiff:
+        Case 94
+            TotalDiff = 0
+        Case Else
+            MsgBox Err.Number & " " & Err.description, vbExclamation, "Error in module Date Shamsi - function TotalDiff"
+            Resume Exit_TotalDiff:
+    End Select
+End Function
+
+Function ayDays(ByVal IL As Integer, ByVal Ay As Byte) As Byte
+'«Ì‰  «»⁄  ⁄œ«œ —Ê“Â«Ì Ìﬂ „«Â —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Select Case Ay
+Case 1 To 6
+ayDays = 31
+Case 7 To 11
+ayDays = 30
+Case 12
+If Kabiseh(IL) = 1 Then
+ayDays = 30
+Else
+ayDays = 29
+End If
+End Select
+End Function
+
+
+'<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+'«Ì‰  Ê«»⁄ œ«Œ·Ì Â” ‰œ Ê »—«Ì «” ›«œÂ ò«—»— ÿ—«ÕÌ ‰‘œÂ «‰œ   €ÌÌ— œ— «Ì‰  Ê«»⁄ „Ã«“ ‰„Ì»«‘œ
+'<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+Function ILay(ByVal F_Date As Long) As Long
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'‘‘ —ﬁ„ «Ê·  «—ÌŒ ﬂÂ „⁄—› ”«· Ê „«Â «”  —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+ILay = val(Left$(F_Date, 6))
+End Function
+
+Public Function Guon(F_Date As Long) As Byte
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'«Ì‰  «»⁄ ⁄œœ „—»Êÿ »Â —Ê“ Ìﬂ  «—ÌŒ —« »—„ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Guon = F_Date Mod 100
+End Function
+
+Function Ay(F_Date As Long) As Byte
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'«Ì‰  «»⁄ ⁄œœ „—»Êÿ »Â „«Â Ìﬂ  «—ÌŒ —« »—„ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Ay = Int((F_Date Mod 10000) / 100)
+End Function
+
+Public Function IL(F_Date As Long) As Integer
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'«Ì‰  «»⁄ ⁄œœ „—»Êÿ »Â ”«· Ìﬂ  «—ÌŒ —« »—„ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+IL = Int(F_Date / 10000)
+End Function
+
+Public Function Kabiseh(ByVal OnlyIL As Variant) As Byte
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'Ê—ÊœÌ  «»⁄ ⁄œœ œÊ—ﬁ„Ì «” 
+'«Ì‰  «»⁄ ﬂ»Ì”Â »Êœ‰ ”«· —« »—„Ìê—œ«‰œ
+'«ê— ”«· ﬂ»Ì”Â »«‘œ ⁄œœ Ìﬂ Ê œ—€Ì— «Ì‰’Ê—  ’›— —« »— „Ìê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Kabiseh = 0
+If OnlyIL >= 1375 Then
+If (OnlyIL - 1375) Mod 4 = 0 Then
+Kabiseh = 1
+Exit Function
+End If
+ElseIf OnlyIL <= 1370 Then
+If (1370 - OnlyIL) Mod 4 = 0 Then
+Kabiseh = 1
+Exit Function
+End If
+End If
+End Function
+
+Function Nextay(ByVal IL_ay As Long) As Long
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'«Ì‰  «»⁄ ⁄œœ „«Â »⁄œÌ  «—ÌŒ —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+If (IL_ay Mod 100) = 12 Then
+Nextay = (Int(IL_ay / 100) + 1) * 100 + 1
+Else
+Nextay = IL_ay + 1
+End If
+End Function
+
+Function Previousay(ByVal IL_ay As Long) As Long
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'«Ì‰  «»⁄ ⁄œœ „«Â ﬁ»·Ì  «—ÌŒ —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+If (IL_ay Mod 100) = 1 Then
+Previousay = (Int(IL_ay / 100) - 1) * 100 + 12
+Else
+Previousay = IL_ay - 1
+End If
+End Function
+
+Public Function Firstday(IL As Integer, Ay As Integer) As Long
+'«Ì‰  «»⁄ œ«Œ·Ì «” 
+'«Ì‰  «»⁄ ‘„«—Â «Ê·Ì‰ —Ê“ „«Â —« »—„Ì ê—œ«‰œ
+'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+Dim strfd As Long
+strfd = IL & Format(Ay, "00") & Format(1, "00")
+Firstday = DayWeekNo(strfd)
+End Function

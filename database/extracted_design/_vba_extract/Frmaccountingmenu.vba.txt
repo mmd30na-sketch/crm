@@ -1,0 +1,18 @@
+Option Compare Database
+Private Sub btnBack_Click()
+    DoCmd.OpenForm "frmmenu"
+    DoCmd.Close acForm, Me.Name
+End Sub
+
+Private Sub btnListExpense_Click()
+
+    ' ??? ???? ???? ????????
+    DoCmd.OpenForm "frmExpenseList"
+
+End Sub
+
+Private Sub Command8_Click()
+
+   DoCmd.OpenForm "frmincomelist"
+    DoCmd.Close acForm, Me.Name
+End Sub

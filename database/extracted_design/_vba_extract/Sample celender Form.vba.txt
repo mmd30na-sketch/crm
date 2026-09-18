@@ -1,0 +1,25 @@
+Option Compare Database
+
+Private Sub Command30_Click()
+tDRoz = Diff(t6, t8)
+tDSalMah = TotalDiff(t6, t8)
+End Sub
+
+Private Sub Command51_Click()
+Tmp = TotalDiff(t6, t8)
+If Tmp <> "" And Tmp > 0 Then
+tSal = Split(Tmp, "/")(0)
+tMah = Split(Tmp, "/")(1)
+tRoz = Split(Tmp, "/")(2)
+End If
+End Sub
+
+Private Sub Command65_Click()
+tRozeSal = RozeSal(t6)
+tHafteSal = HafteSal(t6)
+tRozeHafte = DayWeekNo(t6)
+tShanbe = DayWeek(t6)
+tMahNam = MahName(t6)
+tAdd = Slash(AddDay(t6, tno))
+tSub = Slash(SubDay(t6, tno))
+End Sub

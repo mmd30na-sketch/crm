@@ -1,0 +1,70 @@
+Option Compare Database
+
+Private Sub btnCoursePrice_Click()
+
+    On Error Resume Next
+    
+    ' ?. ??? ???? ???????? ?? ??? ??
+    DoCmd.OpenForm "frmAccountingMenu"
+    
+    ' ?. ???? ???? ???? (???? ??? ????) ?? ????
+    ' Me.Name ???? ??? ???? ???? ?? ??? ????
+    DoCmd.Close acForm, Me.Name
+    
+End Sub
+
+Private Sub Command13_Click()
+DoCmd.Minimize
+End Sub
+
+Private Sub Command27_Click()
+    ' ??? ???? ??? ????????
+    DoCmd.OpenForm "frmExpenses", , , , acFormAdd
+    
+     DoCmd.Close acForm, Me.Name
+End Sub
+
+Private Sub Command37_Click()
+         
+          DoCmd.OpenForm "frmincome", , , , acFormAdd
+                
+                DoCmd.Close acForm, Me.Name
+End Sub
+
+Private Sub Form_Load()
+    DoCmd.MoveSize , , 14175, 10773
+End Sub
+
+Private Sub LoginSignupBtn_Click()
+DoCmd.OpenForm "Frmsignup2", acNormal
+      
+      DoCmd.Close acForm, Me.Name
+       
+       
+       
+
+
+End Sub
+
+Private Sub LoginSoucreBTn_Click()
+        DoCmd.OpenForm "frmscource"
+        
+           DoCmd.Close acForm, Me.Name
+End Sub
+
+Private Sub priceChangeBtn_Click()
+
+    On Error Resume Next
+    
+    ' باز کردن فرم قيمت‌ها به صورت ديالوگ (يعني تا نبنديش نميتوني برگردي به منو)
+    ' acFormDS: يعني به صورت اکسلي (Datasheet) باز شود
+    ' acDialog: يعني پنجره رو نگه دار روي صفحه
+    DoCmd.OpenForm "frmCourseSettings"
+    
+    
+    
+    
+    ' (اختياري) رفرش کردن فرم منو بعد از بستن قيمت‌ها
+    ' اين براي وقتيه که شايد قيمت رو توي ليست اصلي هم نشون ميدي
+    Me.Requery
+End Sub
