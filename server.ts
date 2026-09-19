@@ -309,7 +309,55 @@ if (!fs.existsSync(DB_PATH)) {
   writeDb(initialDb);
 }
 
-app.use(express.json());
+
+app.use(express.json({ limit: '2mb' }));
+
+const ALLOWED_ORIGINS = [
+  'https://mmd30na-sketch.github.io',
+  'https://crm.mmd30na.cloud',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin as string | undefined;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-crm-api-key');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  }
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+app.use('/api/', (req, res, next) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const bucket = rateBuckets.get(ip);
+  if (!bucket || now > bucket.resetAt) {
+    rateBuckets.set(ip, { count: 1, resetAt: now + 60_000 });
+    return next();
+  }
+  bucket.count += 1;
+  if (bucket.count > 180) {
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  next();
+});
+
+function sanitizeString(val: unknown, maxLen = 500): string {
+  if (typeof val !== 'string') return '';
+  return val.trim().slice(0, maxLen);
+}
+
 // Serve uploads statically
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -378,7 +426,8 @@ app.get('/api/messenger/messages', (req, res) => {
 
 // ── POST: ارسال پیام از طریق روبیکا یا پیامک ──
 app.post('/api/messenger/send', async (req, res) => {
-  const { recipient, message, channel, student_id } = req.body;
+  const { recipient, channel, student_id } = req.body;
+  const message = req.body.message || req.body.messageText;
   if (!recipient || !message) {
     return res.status(400).json({ error: 'گیرنده و متن پیام الزامی است.' });
   }
@@ -523,6 +572,28 @@ app.post('/api/students', (req, res) => {
   res.json({ status: 'success', student: newStudent });
 });
 
+
+app.put('/api/students/:id', (req, res) => {
+  const db = readDb();
+  const studentId = parseInt(req.params.id, 10);
+  const index = db.students.findIndex(s => s.id === studentId);
+  if (index === -1) return res.status(404).json({ error: 'Student not found' });
+  const body = req.body || {};
+  db.students[index] = {
+    ...db.students[index],
+    first_name: sanitizeString(body.first_name, 80) || db.students[index].first_name,
+    last_name: sanitizeString(body.last_name, 80) || db.students[index].last_name,
+    father_name: sanitizeString(body.father_name, 80) || db.students[index].father_name,
+    national_code: sanitizeString(body.national_code, 20) || db.students[index].national_code,
+    phone_number: sanitizeString(body.phone_number, 20) || db.students[index].phone_number,
+    birth_date_jalali: sanitizeString(body.birth_date_jalali, 20) || db.students[index].birth_date_jalali,
+    address: sanitizeString(body.address, 400) || db.students[index].address,
+    status: body.status || db.students[index].status,
+  };
+  writeDb(db);
+  res.json({ status: 'success', student: db.students[index] });
+});
+
 // 4. CASCADE DELETE student
 app.delete('/api/students/:id', (req, res) => {
   const db = readDb();
@@ -590,15 +661,19 @@ app.get('/api/enrollments', (req, res) => {
 app.post('/api/payments', (req, res) => {
   const db = readDb();
   const paymentData = req.body;
+  const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
+  if (!studentId) return res.status(400).json({ error: 'student_id is required' });
+  const amount = parseFloat(paymentData.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount is required' });
   const newPayment = {
     id: db.payments.length > 0 ? Math.max(...db.payments.map(p => p.id)) + 1 : 1,
-    student_id: parseInt(paymentData.student_id),
-    enrollment_id: paymentData.enrollment_id ? parseInt(paymentData.enrollment_id) : null,
-    amount: parseFloat(paymentData.amount) || 0,
-    pay_date_jalali: paymentData.pay_date_jalali || '۱۴۰۵/۰۵/۰۱',
-    pay_method: paymentData.pay_method || 'pos',
-    payment_kind: paymentData.payment_kind || 'downpayment',
-    description: paymentData.description || '',
+    student_id: studentId,
+    enrollment_id: paymentData.enrollment_id ? parseInt(paymentData.enrollment_id, 10) : null,
+    amount,
+    pay_date_jalali: sanitizeString(paymentData.pay_date_jalali, 20) || new Date().toLocaleDateString('fa-IR'),
+    pay_method: sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos',
+    payment_kind: sanitizeString(paymentData.payment_kind, 40) || 'downpayment',
+    description: sanitizeString(paymentData.description ?? paymentData.notes, 400),
   };
   db.payments.push(newPayment);
   writeDb(db);
@@ -611,10 +686,13 @@ app.get('/api/payments', (req, res) => {
 });
 
 // 8. OCR National Card Scan using Gemini or highly detailed intelligent fallback
-app.post('/api/ocr', upload.single('card'), async (req, res) => {
-  if (!req.file) {
+app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nationalCard', maxCount: 1 }]), async (req, res) => {
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+  const uploaded = files?.card?.[0] || files?.nationalCard?.[0] || (req as any).file;
+  if (!uploaded) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
+  (req as any).file = uploaded;
 
   // Define structured fallbacks for mock cards or failed calls
   const fallbacks = [
@@ -768,17 +846,65 @@ app.get('/api/expenses', (req, res) => {
 app.post('/api/expenses', (req, res) => {
   const db = readDb();
   const expenseData = req.body;
+  const title = sanitizeString(expenseData.title ?? expenseData.expenseTitle, 160);
+  const amount = parseFloat(expenseData.amount ?? expenseData.expenseAmount);
+  if (!title || !Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'title and amount are required' });
+  }
   const newExpense = {
     id: db.expenses.length > 0 ? Math.max(...db.expenses.map(ex => ex.id)) + 1 : 1,
-    title: expenseData.title,
-    amount: parseFloat(expenseData.amount) || 0,
-    pay_method: expenseData.pay_method || 'کارت بانکی',
-    pay_date_jalali: expenseData.pay_date_jalali || '۱۴۰۵/۰۵/۰۱',
-    description: expenseData.description || '',
+    title,
+    amount,
+    pay_method: sanitizeString(expenseData.pay_method ?? expenseData.category, 80) || 'کارت بانکی',
+    pay_date_jalali: sanitizeString(expenseData.pay_date_jalali ?? expenseData.expenseDate ?? expenseData.expensedate, 20) || new Date().toLocaleDateString('fa-IR'),
+    description: sanitizeString(expenseData.description ?? expenseData.notes, 400),
   };
   db.expenses.push(newExpense);
   writeDb(db);
   res.json(newExpense);
+});
+
+
+app.get('/api/messenger/threads', (req, res) => {
+  const db = readDb();
+  res.json({ success: true, threads: (db as any).threads || [] });
+});
+
+app.get('/api/settings/academy', (req, res) => {
+  const db = readDb();
+  res.json(db.settings);
+});
+app.put('/api/settings/academy', (req, res) => {
+  const db = readDb();
+  db.settings = { ...db.settings, ...req.body };
+  writeDb(db);
+  res.json(db.settings);
+});
+app.post('/api/settings/courses', (req, res) => {
+  req.url = '/api/courses';
+  (app as any)._router.handle(req, res);
+});
+app.put('/api/settings/courses/:id', (req, res) => {
+  req.url = `/api/courses/${req.params.id}`;
+  (app as any)._router.handle(req, res);
+});
+app.post('/api/students/ocr/national-card', (req, res) => {
+  req.url = '/api/ocr';
+  (app as any)._router.handle(req, res);
+});
+app.get('/api/settings/gateways', (req, res) => {
+  res.json({
+    sms_provider: process.env.SMS_PROVIDER || 'ippanel',
+    sms_api_key: '',
+    sms_sender_line: process.env.SMS_SENDER_LINE || '',
+    sms_auto_register: true,
+    rubika_bot_token: '',
+    rubika_channel_id: '',
+    rubika_active: !!process.env.RUBIKA_BOT_TOKEN,
+  });
+});
+app.post('/api/settings/gateways', (req, res) => {
+  res.json({ success: true });
 });
 
 // Vite Integration middleware & SPA fallback

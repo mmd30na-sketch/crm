@@ -194,9 +194,17 @@ export default function StudentsList({
   /* ── Handlers ── */
   const handleSaveStudentEdit = async () => {
     if (!editingStudent) return;
-    setLocalStudents(prev => prev.map(s => s.id === editingStudent.id ? { ...editingStudent } : s));
+    try {
+      if (onRefresh) {
+        await api.updateStudent(editingStudent);
+        onRefresh();
+      } else {
+        setLocalStudents(prev => prev.map(s => s.id === editingStudent.id ? { ...editingStudent } : s));
+      }
+    } catch {
+      setLocalStudents(prev => prev.map(s => s.id === editingStudent.id ? { ...editingStudent } : s));
+    }
     setEditingStudent(null);
-    onRefresh?.();
   };
 
   const handleDeleteStudent = async (id: number) => {

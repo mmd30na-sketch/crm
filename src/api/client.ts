@@ -17,7 +17,23 @@ import {
   Expense,
 } from '../types';
 
-const API_BASE = '/api';
+function resolveApiOrigin(): string {
+  const envOrigin = (import.meta as any).env?.VITE_API_ORIGIN as string | undefined;
+  if (envOrigin) return envOrigin.replace(/\/$/, '');
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')) {
+    return 'https://crm.mmd30na.cloud';
+  }
+  return '';
+}
+
+const API_ORIGIN = resolveApiOrigin();
+const API_BASE = `${API_ORIGIN}/api`;
+
+function fileUrl(path?: string | null): string | undefined {
+  if (!path) return undefined;
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_ORIGIN}${path.startsWith('/') ? path : `/${path}`}`;
+}
 
 // ─────────────────────────────────────────────────────────
 // COURSES
@@ -42,8 +58,7 @@ export async function fetchCourses(): Promise<Course[]> {
 }
 
 export async function saveCourse(course: Course): Promise<Course> {
-  // backend PUT /api/settings/courses/:id
-  const res = await fetch(`${API_BASE}/settings/courses/${course.id}`, {
+  const res = await fetch(`${API_BASE}/courses/${course.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -58,7 +73,7 @@ export async function saveCourse(course: Course): Promise<Course> {
 }
 
 export async function addCourse(course: Omit<Course, 'id'>): Promise<Course> {
-  const res = await fetch(`${API_BASE}/settings/courses`, {
+  const res = await fetch(`${API_BASE}/courses`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -95,8 +110,8 @@ function normaliseStudent(s: any): Student {
     phone_number:       s.phone_number ?? '',
     birth_date_jalali:  s.birth_date_jalali ?? '',
     address:            s.address ?? '',
-    id_card_photo_url:  s.national_card_path   ? `http://localhost:3001${s.national_card_path}`   : (s.id_card_photo_url  ?? undefined),
-    personal_photo_url: s.personal_photo_path  ? `http://localhost:3001${s.personal_photo_path}`  : (s.personal_photo_url ?? undefined),
+    id_card_photo_url:  fileUrl(s.national_card_path || s.id_card_photo_url),
+    personal_photo_url: fileUrl(s.personal_photo_path || s.personal_photo_url),
     status:             (s.status ?? s.registration_status ?? 'active') as Student['status'],
     created_at:         s.created_at ?? new Date().toISOString(),
     // Extra fields from backend join (used in StudentsList)
@@ -128,6 +143,17 @@ export async function createStudent(body: {
   }
   const data = await res.json();
   return { status: 'success', student: normaliseStudent(data.student ?? data) };
+}
+
+export async function updateStudent(student: Student): Promise<Student> {
+  const res = await fetch(`${API_BASE}/students/${student.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(student),
+  });
+  if (!res.ok) throw new Error('Error updating student');
+  const data = await res.json();
+  return normaliseStudent(data.student ?? data);
 }
 
 export async function deleteStudentCascade(studentId: number): Promise<{ success: boolean }> {
@@ -248,11 +274,13 @@ export async function createPayment(body: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      studentId:      body.student_id,
+      student_id:     body.student_id,
+      enrollment_id:  body.enrollment_id ?? null,
       amount:         body.amount,
-      paymentMethod:  body.pay_method ?? 'cash',
-      trackingNumber: undefined,
-      notes:          body.description ?? '',
+      pay_date_jalali: body.pay_date_jalali,
+      pay_method:     body.pay_method ?? 'cash',
+      payment_kind:   body.payment_kind ?? 'installment',
+      description:    body.description ?? '',
     }),
   });
   if (!res.ok) {
@@ -305,11 +333,12 @@ export async function createExpense(body: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      title:       body.title,
-      amount:      body.amount,
-      expenseDate: body.pay_date_jalali ?? new Date().toISOString().slice(0, 10),
-      notes:       body.description ?? '',
-      category:    body.category ?? body.pay_method ?? 'عمومی',
+      title:            body.title,
+      amount:           body.amount,
+      pay_method:       body.pay_method ?? body.category ?? 'عمومی',
+      pay_date_jalali:  body.pay_date_jalali,
+      description:      body.description ?? '',
+      category:         body.category ?? body.pay_method ?? 'عمومی',
     }),
   });
   if (!res.ok) {
@@ -333,9 +362,10 @@ export async function createExpense(body: {
 /** POST /api/students/ocr/national-card */
 export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult> {
   const formData = new FormData();
-  formData.append('nationalCard', file);   // eco_v4 backend expects fieldname 'nationalCard'
+  formData.append('card', file);
+  formData.append('nationalCard', file);
 
-  const res = await fetch(`${API_BASE}/students/ocr/national-card`, {
+  const res = await fetch(`${API_BASE}/ocr`, {
     method: 'POST',
     body:   formData,
   });
@@ -356,7 +386,7 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
 // ─────────────────────────────────────────────────────────
 
 export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
-  const res = await fetch(`${API_BASE}/settings/academy`);
+  const res = await fetch(`${API_BASE}/receipt-settings`);
   if (!res.ok) throw new Error('Error fetching receipt settings');
   const body = await res.json();
   const d = body.data ?? body;
@@ -371,8 +401,8 @@ export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
 }
 
 export async function saveReceiptSettings(settings: ReceiptSettings): Promise<ReceiptSettings> {
-  const res = await fetch(`${API_BASE}/settings/academy`, {
-    method:  'PUT',
+  const res = await fetch(`${API_BASE}/receipt-settings`, {
+    method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       academy_name: settings.academy_name,
@@ -486,7 +516,13 @@ export async function sendMessengerMessage(body: {
   const res = await fetch(`${API_BASE}/messenger/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      channel: body.channel,
+      recipient: body.recipient,
+      message: body.messageText,
+      messageText: body.messageText,
+      templateTitle: body.templateTitle,
+    }),
   });
   if (!res.ok) throw new Error('Error sending messenger message');
   return res.json();

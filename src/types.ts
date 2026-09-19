@@ -32,6 +32,8 @@ export interface Student {
   remaining_debt?: number;
   category?: string;
   tracking_code?: string;
+  military_status?: string;
+  source?: 'crm' | 'website' | 'manual';
 }
 
 export interface Enrollment {

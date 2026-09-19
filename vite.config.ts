@@ -4,8 +4,10 @@ import path from 'path';
 import { defineConfig } from 'vite';
 
 export default defineConfig(({ mode }) => {
+  const isGitHubPages = process.env.GITHUB_PAGES === 'true';
   return {
-    base: './',
+    // Project site on GitHub Pages lives at /crm/; the live server uses root.
+    base: isGitHubPages ? '/crm/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

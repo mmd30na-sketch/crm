@@ -102,24 +102,28 @@ export default function AccountingDashboard({
   const totalOutstanding = Math.max(0, totalTuition - payments.reduce((sum, p) => sum + p.amount, 0));
   const netProfit        = totalPayments - totalExpenses;
 
-  /* ── 1. Area Chart Data (Monthly Trend) ── */
-  const monthlyMap: Record<string, { income: number; expense: number }> = {
-    'فروردین': { income: 12500000, expense: 3200000 },
-    'اردیبهشت': { income: 18000000, expense: 4500000 },
-    'خرداد':   { income: 14200000, expense: 2900000 },
-    'تیر':     { income: 21500000, expense: 5100000 },
-    'مرداد':   { income: Math.max(8000000, totalPayments), expense: Math.max(1500000, totalExpenses) },
-  };
+  /* ── 1. Area Chart Data from real ledger (no dummy padding) ── */
+  const monthNames = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+  const monthlyMap: Record<string, { income: number; expense: number }> = {};
+  monthNames.forEach(m => { monthlyMap[m] = { income: 0, expense: 0 }; });
 
-  // Populate actual data if available
+  const monthFromJalali = (raw?: string): string | null => {
+    const d = toEnglishDigits(raw || '');
+    const m = d.match(/\d{4}\/(\d{1,2})/);
+    if (!m) return null;
+    const idx = Math.max(1, Math.min(12, parseInt(m[1], 10))) - 1;
+    return monthNames[idx];
+  };
   filteredPayments.forEach(p => {
-    const d = p.pay_date_jalali || '';
-    if (d.includes('/05/')) monthlyMap['مرداد'].income += p.amount;
-    else if (d.includes('/04/')) monthlyMap['تیر'].income += p.amount;
-    else if (d.includes('/03/')) monthlyMap['خرداد'].income += p.amount;
+    const key = monthFromJalali(p.pay_date_jalali);
+    if (key) monthlyMap[key].income += p.amount;
+  });
+  expenses.forEach(ex => {
+    const key = monthFromJalali(ex.pay_date_jalali || ex.expense_date);
+    if (key) monthlyMap[key].expense += ex.amount;
   });
 
-  const areaChartData = Object.keys(monthlyMap).map(m => ({
+  const areaChartData = monthNames.filter(m => monthlyMap[m].income || monthlyMap[m].expense).map(m => ({
     month: m,
     'درآمد (واریزی)': monthlyMap[m].income,
     'هزینه (خروجی)': monthlyMap[m].expense,
@@ -135,8 +139,8 @@ export default function AccountingDashboard({
 
     return {
       name: course.title.length > 15 ? course.title.slice(0, 15) + '...' : course.title,
-      'شهریه کل': courseTuition || course.tuition,
-      'وصول شده': coursePayments || Math.round((course.tuition * 0.7)),
+      'شهریه کل': courseTuition,
+      'وصول شده': coursePayments,
     };
   });
 
