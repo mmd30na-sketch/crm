@@ -55,6 +55,33 @@ const toEnglishDigits = (str: string): string => {
   return out;
 };
 
+function gregorianToJalali(date: Date) {
+  const gy = date.getFullYear();
+  const gm = date.getMonth() + 1;
+  const gd = date.getDate();
+  const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+  let jy = gy <= 1600 ? 0 : 979;
+  let gy2 = gy <= 1600 ? gy - 621 : gy - 1600;
+  const gy2m = gm > 2 ? gy2 + 1 : gy2;
+  let days = 365 * gy2 + Math.floor((gy2m + 3) / 4) - Math.floor((gy2m + 99) / 100) + Math.floor((gy2m + 399) / 400) - 80 + gd + g_d_m[gm - 1];
+  jy += 33 * Math.floor(days / 12053);
+  days %= 12053;
+  jy += 4 * Math.floor(days / 1461);
+  days %= 1461;
+  if (days > 365) {
+    jy += Math.floor((days - 1) / 365);
+    days = (days - 1) % 365;
+  }
+  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
+  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
+  return { jy, jm, jd };
+}
+
+function currentJalaliYearMonth() {
+  const { jy, jm } = gregorianToJalali(new Date());
+  return `${jy}/${String(jm).padStart(2, '0')}`;
+}
+
 export default function AccountingDashboard({
   students,
   courses,
@@ -84,7 +111,7 @@ export default function AccountingDashboard({
       const pdate = toEnglishDigits(p.pay_date_jalali || '');
       if (!pdate) return true;
       if (dateFilterMode === 'this_month') {
-        return pdate.includes('1405/04') || pdate.includes('1405/05');
+        return pdate.startsWith(currentJalaliYearMonth());
       }
       if (dateFilterMode === 'custom' && customStartDate && customEndDate) {
         return pdate >= toEnglishDigits(customStartDate) && pdate <= toEnglishDigits(customEndDate);
@@ -94,11 +121,20 @@ export default function AccountingDashboard({
   };
 
   const filteredPayments = filterPaymentsByDate(payments);
+  const filteredExpenses = dateFilterMode === 'all' ? expenses : expenses.filter(ex => {
+    const pdate = toEnglishDigits(ex.pay_date_jalali || ex.expense_date || '');
+    if (!pdate) return false;
+    if (dateFilterMode === 'this_month') return pdate.startsWith(currentJalaliYearMonth());
+    if (dateFilterMode === 'custom' && customStartDate && customEndDate) {
+      return pdate >= toEnglishDigits(customStartDate) && pdate <= toEnglishDigits(customEndDate);
+    }
+    return true;
+  });
 
   /* Totals */
   const totalTuition     = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
   const totalPayments    = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
-  const totalExpenses    = expenses.reduce((sum, ex) => sum + ex.amount, 0);
+  const totalExpenses    = filteredExpenses.reduce((sum, ex) => sum + ex.amount, 0);
   const totalOutstanding = Math.max(0, totalTuition - payments.reduce((sum, p) => sum + p.amount, 0));
   const netProfit        = totalPayments - totalExpenses;
 
@@ -118,7 +154,7 @@ export default function AccountingDashboard({
     const key = monthFromJalali(p.pay_date_jalali);
     if (key) monthlyMap[key].income += p.amount;
   });
-  expenses.forEach(ex => {
+  filteredExpenses.forEach(ex => {
     const key = monthFromJalali(ex.pay_date_jalali || ex.expense_date);
     if (key) monthlyMap[key].expense += ex.amount;
   });

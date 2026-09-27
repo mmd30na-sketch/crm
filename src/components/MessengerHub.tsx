@@ -93,111 +93,8 @@ const QUICK_TEMPLATES = [
 export default function MessengerHub({ students, onRefresh }: MessengerHubProps) {
   const [activeTab, setActiveTab] = useState<'chat' | 'sms' | 'templates'>('chat');
 
-  /* ── Real Rubika Chat Threads ── */
-  const REAL_RUBIKA_THREADS: ChatThread[] = [
-    {
-      id: 1,
-      senderName: "آموزشگاه کرمانشاه (دوره تیر)",
-      avatar: "https://images.unsplash.com/photo-1577563908411-5077b6dc7624?w=100&auto=format&fit=crop&q=80",
-      courseTitle: "کانال عمومی",
-      phone: "c0DpoJd08a9a9c44d0acc2fb90659d52",
-      channel: "rubika",
-      lastMessage: "ساعت برگزاری کلاس دوره باری: پنجشنبه ساعت ۸:۰۰ محل برگزاری: پایانه باربری",
-      time: "دیروز",
-      unreadCount: 0,
-      messages: [
-        { id: 101, sender: "student", text: "ساعت برگزاری کلاس دوره باری: پنجشنبه ساعت ۸:۰۰ محل برگزاری: پایانه باربری", time: "دیروز", status: "read" }
-      ]
-    },
-    {
-      id: 2,
-      senderName: "ک۲ مسعود شمس زاد",
-      avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80",
-      courseTitle: "هنرجو ثبت‌نامی",
-      phone: "u0rbv70bbc813f8dc0cd84a4cb6b8035",
-      channel: "rubika",
-      lastMessage: "سلام اطلاع میدم",
-      time: "۱۴:۳۵",
-      unreadCount: 0,
-      messages: [
-        { id: 201, sender: "admin", text: "سلام آقای شمس زاد، مدارک کامل شد؟", time: "۱۴:۲۰", status: "read" },
-        { id: 202, sender: "student", text: "سلام اطلاع میدم", time: "۱۴:۳۵", status: "read" }
-      ]
-    },
-    {
-      id: 3,
-      senderName: "ک۲ پارسیان طیب",
-      avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&auto=format&fit=crop&q=80",
-      courseTitle: "هنرجو ثبت‌نامی",
-      phone: "u0HUIDu08ce0ccedf78aa6bb85b26c28",
-      channel: "rubika",
-      lastMessage: "تصویر مدارک ارسال شد",
-      time: "دیروز",
-      unreadCount: 0,
-      messages: [
-        { id: 301, sender: "student", text: "تصویر مدارک ارسال شد", time: "دیروز", status: "read" }
-      ]
-    },
-    {
-      id: 4,
-      senderName: "sina mhmdi 2",
-      avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&auto=format&fit=crop&q=80",
-      courseTitle: "کاربر روبیکا",
-      phone: "u0KPTf3065a6168bcd4df7c138eff0b7",
-      channel: "rubika",
-      lastMessage: "به روبیکا پیوست.",
-      time: "پریروز",
-      unreadCount: 0,
-      messages: [
-        { id: 401, sender: "system", text: "سینا محمدی به روبیکا پیوست.", time: "پریروز", status: "read" }
-      ]
-    },
-    {
-      id: 5,
-      senderName: "آموزشگاه کرمانشاه (دوره اردیبهشت)",
-      avatar: "https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=100&auto=format&fit=crop&q=80",
-      courseTitle: "کانال دوره اردیبهشت",
-      phone: "c0D59vX00cf41f209ab4a34faee18473",
-      channel: "rubika",
-      lastMessage: "آزمون عملی روز شنبه ساعت ۹ صبح هست. آدرس: سه راه حافظیه...",
-      time: "۱۴۰۳/۰۴/۱۲",
-      unreadCount: 0,
-      messages: [
-        { id: 501, sender: "student", text: "آزمون عملی روز شنبه ساعت ۹ صبح هست. آدرس: سه راه حافظیه دور برگردان دوم آموزش فنی وحرفه‌ای", time: "۱۴۰۳/۰۴/۱۲", status: "read" }
-      ]
-    },
-    {
-      id: 6,
-      senderName: "بات رهنورد",
-      avatar: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=100&auto=format&fit=crop&q=80",
-      courseTitle: "ربات هوشمند",
-      phone: "b09GZ026f219aa825226d95bb2b29e23",
-      channel: "rubika",
-      lastMessage: "سوال 10 از 52: شرکت‌ها و موسسات حمل و نقل جاده‌ای...",
-      time: "۱۴۰۳/۰۴/۱۰",
-      unreadCount: 0,
-      messages: [
-        { id: 601, sender: "student", text: "📊 ❓ سوال 10 از 52: شرکت‌ها و موسسات حمل و نقل جاده‌ای فقط جهت وسایل نقلیه‌ای باید بارنامه یا صورت وضعیت صادر نمایند؟", time: "۱۴۰۳/۰۴/۱۰", status: "read" }
-      ]
-    },
-    {
-      id: 7,
-      senderName: "نمونه سئوالات کارت هوشمند",
-      avatar: "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=100&auto=format&fit=crop&q=80",
-      courseTitle: "کانال آموزشی",
-      phone: "c0DJaY10a60405e14a73553430cf50f5",
-      channel: "rubika",
-      lastMessage: "با سلام و احترام آزمون عملی هنر جوها دوشنبه ۳۱ فروردین...",
-      time: "۱۴۰۳/۰۳/۲۵",
-      unreadCount: 0,
-      messages: [
-        { id: 701, sender: "student", text: "با سلام و احترام آزمون عملی هنر جوها دوشنبه ۳۱ فروردین ساعت ۱۰ صبح محل آزمون سازمان آموزش فنی و حرفه‌ای", time: "۱۴۰۳/۰۳/۲۵", status: "read" }
-      ]
-    }
-  ];
+  const [threads, setThreads] = useState<ChatThread[]>([]);
 
-  /* ── Initial Chat Threads State ── */
-  const [threads, setThreads] = useState<ChatThread[]>(() => REAL_RUBIKA_THREADS);
 
   // Sync real messages and threads from backend API
   useEffect(() => {
@@ -222,18 +119,18 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                   courseTitle: 'چت عمومی',
                   phone: rTh.external_id || '09120000000',
                   channel: (rTh.channel as any) || 'rubika',
-                  lastMessage: rTh.last_message_text || 'سلام، پیام دریافت شد.',
-                  time: rTh.updated_at ? new Date(rTh.updated_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : '۱۰:۰۰',
+                  lastMessage: rTh.last_message_text || '',
+                  time: rTh.updated_at ? new Date(rTh.updated_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : '',
                   unreadCount: rTh.unread_count || 0,
-                  messages: [
+                  messages: rTh.last_message_text ? [
                     {
                       id: Date.now() + Math.random(),
-                      sender: 'student',
-                      text: rTh.last_message_text || 'سلام، وضعیت پرونده من به چه صورت است؟',
-                      time: '۱۰:۰۰',
-                      status: 'read',
+                      sender: 'student' as const,
+                      text: rTh.last_message_text,
+                      time: '',
+                      status: 'read' as const,
                     },
-                  ],
+                  ] : [],
                 });
               }
             }
@@ -263,7 +160,7 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                   senderName: msg.sender || 'کاربر روبیکا',
                   avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
                   courseTitle: 'پیام ورودی',
-                  phone: phone || '09120000000',
+                  phone: phone || '',
                   channel: (msg.channel as any) || 'rubika',
                   lastMessage: msg.message,
                   time: 'هم‌اکنون',
@@ -291,7 +188,7 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
     return () => clearInterval(interval);
   }, []);
 
-  const [activeThreadId, setActiveThreadId] = useState<number>(1);
+  const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
   const [chatSearch, setChatSearch]         = useState('');
   const [messageInput, setMessageInput]     = useState('');
   const [channelFilter, setChannelFilter]   = useState<string>('all');
@@ -304,10 +201,8 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
   const [isSendingSms, setIsSendingSms]                   = useState(false);
   const [smsSuccessToast, setSmsSuccessToast]             = useState('');
 
-  const [smsLogs, setSmsLogs] = useState<SmsLog[]>(() => [
-    { id: 1, recipientName: 'امیرحسین رضایی', phoneNumber: '09123456789', text: 'هنرجوی گرامی امیرحسین رضایی؛ ثبت‌نام شما در دوره پایه سوم با موفقیت انجام شد.', templateTitle: 'خوش‌آمدگویی', time: '۱۴۰۵/۰۵/۲۸ - ۱۱:۱۵', status: 'delivered' },
-    { id: 2, recipientName: 'سارا احمدی', phoneNumber: '09198765432', text: 'کارآموز گرامی سارا احمدی؛ آزمون عملی شما برای شنبه ساعت ۱۰:۰۰ تنظیم گردید.', templateTitle: 'زمان‌بندی آزمون', time: '۱۴۰۵/۰۵/۲۷ - ۰۹:۳۰', status: 'delivered' },
-  ]);
+  const [smsLogs, setSmsLogs] = useState<SmsLog[]>([]);
+
 
   const activeThread = useMemo(() => threads.find(t => t.id === activeThreadId) ?? threads[0], [threads, activeThreadId]);
 
@@ -537,8 +432,11 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
 
             {/* Thread Cards Scroll List */}
             <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+              {filteredThreads.length === 0 && (
+                <div className="p-8 text-center text-sm text-slate-400">پیامی نیست</div>
+              )}
               {filteredThreads.map(thread => {
-                const isSelected = activeThread.id === thread.id;
+                const isSelected = activeThread?.id === thread.id;
                 return (
                   <button
                     key={thread.id}

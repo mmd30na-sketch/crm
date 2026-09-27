@@ -68,6 +68,24 @@ export interface Expense {
   expense_date?: string;    // raw from backend
 }
 
+export interface WebsiteRegistration {
+  id: number;
+  tracking_code: string;
+  national_code: string;
+  full_name: string;
+  phone_number: string;
+  category?: string;
+  academic_degree?: string;
+  military_status?: string;
+  has_temp_permit?: number | boolean;
+  national_card_path?: string;
+  personal_photo_path?: string;
+  status: 'pending' | 'approved' | 'rejected' | string;
+  source?: string;
+  student_id?: number | null;
+  created_at?: string;
+}
+
 export interface NationalCardOcrResult {
   first_name: string;
   last_name: string;

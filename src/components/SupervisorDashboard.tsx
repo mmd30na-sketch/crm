@@ -39,6 +39,36 @@ interface Task {
   priority: 'high' | 'medium' | 'low';
 }
 
+const JALALI_MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
+
+function gregorianToJalali(date: Date) {
+  const gy = date.getFullYear();
+  const gm = date.getMonth() + 1;
+  const gd = date.getDate();
+  const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+  let jy = gy <= 1600 ? 0 : 979;
+  let gy2 = gy <= 1600 ? gy - 621 : gy - 1600;
+  const gy2m = gm > 2 ? gy2 + 1 : gy2;
+  let days = 365 * gy2 + Math.floor((gy2m + 3) / 4) - Math.floor((gy2m + 99) / 100) + Math.floor((gy2m + 399) / 400) - 80 + gd + g_d_m[gm - 1];
+  jy += 33 * Math.floor(days / 12053);
+  days %= 12053;
+  jy += 4 * Math.floor(days / 1461);
+  days %= 1461;
+  if (days > 365) {
+    jy += Math.floor((days - 1) / 365);
+    days = (days - 1) % 365;
+  }
+  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
+  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
+  return { jy, jm, jd };
+}
+
+function jalaliMonthLength(jm: number) {
+  if (jm <= 6) return 31;
+  if (jm <= 11) return 30;
+  return 29;
+}
+
 export default function SupervisorDashboard({
   students,
   courses,
@@ -55,11 +85,7 @@ export default function SupervisorDashboard({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { /* ignore */ }
     }
-    return [
-      { id: 1, text: 'بررسی مدارک کاردکس پرونده‌های جدید پایه سوم', completed: false, priority: 'high' },
-      { id: 2, text: 'هماهنگی لیست آزمون آیین‌نامه شنبه با راهنمایی و رانندگی', completed: true, priority: 'medium' },
-      { id: 3, text: 'ارسال پیامک یادآوری بدهی به کارآموزان بدهکار بیش از ۲ میلیون', completed: false, priority: 'high' },
-    ];
+    return [];
   });
 
   const [newTaskText, setNewTaskText] = useState('');
@@ -70,19 +96,19 @@ export default function SupervisorDashboard({
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { /* ignore */ }
     }
-    return [
-      { day: 30, title: 'آزمون عملی پایه سوم (مکان: آموزشگاه)', time: '۰۹:۰۰' },
-      { day: 30, title: 'کلاس آیین‌نامه فنی استاد حسینی', time: '۱۱:۳۰' },
-      { day: 5, title: 'تحویل پرونده‌های کاردکس نهایی به راهور', time: '۰۸:۳۰' },
-    ];
+    return [];
   });
 
+  const todayJalali = gregorianToJalali(new Date());
+  const currentMonth = `${JALALI_MONTHS[todayJalali.jm - 1]} ${todayJalali.jy}`;
+  const daysInMonth = jalaliMonthLength(todayJalali.jm);
+  const weekdayLabel = new Date().toLocaleDateString('fa-IR', { weekday: 'long' });
+
   const [isCalendarOpen, setIsCalendarOpen]   = useState(false);
-  const [selectedDay, setSelectedDay]         = useState(30);
+  const [selectedDay, setSelectedDay]         = useState(todayJalali.jd);
   const [newEventTitle, setNewEventTitle]     = useState('');
   const [newEventTime, setNewEventTime]       = useState('10:00');
-  const [newEventDay, setNewEventDay]         = useState(30);
-  const [currentMonth]                       = useState('مرداد ۱۴۰۵');
+  const [newEventDay, setNewEventDay]         = useState(todayJalali.jd);
 
   useEffect(() => {
     localStorage.setItem('carla_tasks', JSON.stringify(tasks));
@@ -357,13 +383,17 @@ export default function SupervisorDashboard({
 
           <div className="flex items-center gap-4 py-1">
             <div className="w-16 h-16 bg-gradient-to-br from-sky-600 to-sky-500 text-white rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-md shadow-sky-200">
-              <span className="text-xl font-black font-mono leading-none">۳۰</span>
-              <span className="text-[10px] font-bold mt-1">تیر ۱۴۰۵</span>
+              <span className="text-xl font-black font-mono leading-none">{String(todayJalali.jd)}</span>
+              <span className="text-[10px] font-bold mt-1">{currentMonth}</span>
             </div>
             <div>
               <span className="text-[10px] font-bold text-slate-400 block">امروز:</span>
-              <h4 className="text-sm font-extrabold text-slate-900">سه‌شنبه، ۳۰ تیر ۱۴۰۵</h4>
-              <p className="text-[11px] text-slate-500 mt-0.5">آزمون پایه سوم و کلاس آیین‌نامه فنی</p>
+              <h4 className="text-sm font-extrabold text-slate-900">{weekdayLabel}، {todayJalali.jd} {currentMonth}</h4>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {calendarEvents.filter(e => e.day === todayJalali.jd).length
+                  ? calendarEvents.filter(e => e.day === todayJalali.jd).map(e => e.title).join('، ')
+                  : 'رویدادی ثبت نشده'}
+              </p>
             </div>
           </div>
         </div>
@@ -385,7 +415,7 @@ export default function SupervisorDashboard({
             {/* Grid Days */}
             <div className="grid grid-cols-7 text-center gap-1.5 text-xs">
               {['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'].map(d => <div key={d} className="font-bold text-slate-400 py-1 text-[10px]">{d}</div>)}
-              {Array.from({ length: 31 }).map((_, i) => {
+              {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1;
                 const hasEvt = calendarEvents.some(e => e.day === day);
                 const isSel = selectedDay === day;

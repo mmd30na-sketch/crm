@@ -15,6 +15,7 @@ import {
   ReportTemplate,
   ReportContextResponse,
   Expense,
+  WebsiteRegistration,
 } from '../types';
 
 function resolveApiOrigin(): string {
@@ -28,6 +29,55 @@ function resolveApiOrigin(): string {
 
 const API_ORIGIN = resolveApiOrigin();
 const API_BASE = `${API_ORIGIN}/api`;
+const TOKEN_KEY = 'carla_crm_token';
+
+export function getAuthToken(): string | null {
+  try { return sessionStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+export function setAuthToken(token: string | null) {
+  try {
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {}
+}
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers || {});
+  const token = getAuthToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    setAuthToken(null);
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('carla-auth-lost'));
+  }
+  return res;
+}
+
+export async function login(username: string, password: string): Promise<{ token: string; user: { username: string; role?: string } }> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'ورود ناموفق بود');
+  if (!data.token) throw new Error('توکن دریافت نشد');
+  setAuthToken(data.token);
+  return data;
+}
+
+export async function fetchMe(): Promise<{ user: any; db?: string }> {
+  const res = await apiFetch('/auth/me');
+  if (!res.ok) throw new Error('Unauthorized');
+  return res.json();
+}
+
+export function logout() {
+  setAuthToken(null);
+}
 
 function fileUrl(path?: string | null): string | undefined {
   if (!path) return undefined;
@@ -41,7 +91,7 @@ function fileUrl(path?: string | null): string | undefined {
 
 /** GET /api/courses  →  backend returns { success, courses } */
 export async function fetchCourses(): Promise<Course[]> {
-  const res = await fetch(`${API_BASE}/courses`);
+  const res = await apiFetch(`/courses`);
   if (!res.ok) throw new Error('Error fetching courses');
   const body = await res.json();
   // Backend wraps in { success, courses } OR returns array directly (legacy)
@@ -58,7 +108,7 @@ export async function fetchCourses(): Promise<Course[]> {
 }
 
 export async function saveCourse(course: Course): Promise<Course> {
-  const res = await fetch(`${API_BASE}/courses/${course.id}`, {
+  const res = await apiFetch(`/courses/${course.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -73,7 +123,7 @@ export async function saveCourse(course: Course): Promise<Course> {
 }
 
 export async function addCourse(course: Omit<Course, 'id'>): Promise<Course> {
-  const res = await fetch(`${API_BASE}/courses`, {
+  const res = await apiFetch(`/courses`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -93,7 +143,7 @@ export async function addCourse(course: Omit<Course, 'id'>): Promise<Course> {
 
 /** GET /api/students  →  { success, count, students } */
 export async function fetchStudents(): Promise<Student[]> {
-  const res = await fetch(`${API_BASE}/students`);
+  const res = await apiFetch(`/students`);
   if (!res.ok) throw new Error('Error fetching students');
   const body = await res.json();
   const raw: any[] = Array.isArray(body) ? body : (body.students ?? []);
@@ -132,7 +182,7 @@ export async function createStudent(body: {
   birth_date_jalali?: string | null;
   address?: string | null;
 }): Promise<{ status: string; student: Student }> {
-  const res = await fetch(`${API_BASE}/students`, {
+  const res = await apiFetch(`/students`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -146,7 +196,7 @@ export async function createStudent(body: {
 }
 
 export async function updateStudent(student: Student): Promise<Student> {
-  const res = await fetch(`${API_BASE}/students/${student.id}`, {
+  const res = await apiFetch(`/students/${student.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(student),
@@ -157,7 +207,7 @@ export async function updateStudent(student: Student): Promise<Student> {
 }
 
 export async function deleteStudentCascade(studentId: number): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/students/${studentId}`, { method: 'DELETE' });
+  const res = await apiFetch(`/students/${studentId}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Error deleting student');
   return res.json();
 }
@@ -171,24 +221,64 @@ export async function deleteStudentCascade(studentId: number): Promise<{ success
  */
 export async function uploadStudentPhotos(
   studentId: number,
-  files: { idCard?: File | null; personal?: File | null }
+  files: { idCard?: File | null; personal?: File | null },
+  meta?: { last_name?: string; course_number?: number | null }
 ): Promise<Student> {
-  // eco_v4 backend doesn't expose this endpoint yet → return a best-effort student
-  // We still try the legacy path in case the JSON db server is running alongside
   const formData = new FormData();
+  formData.append('student_id', String(studentId));
+  if (meta?.last_name) formData.append('last_name', meta.last_name);
+  if (meta?.course_number != null) formData.append('course_number', String(meta.course_number));
   if (files.idCard)   formData.append('idCard',    files.idCard);
   if (files.personal) formData.append('personal',  files.personal);
 
-  const res = await fetch(`${API_BASE}/students/${studentId}/photos`, {
+  const res = await apiFetch(`/students/${studentId}/photos`, {
     method: 'POST',
     body:   formData,
   });
   if (!res.ok) {
-    // Not a hard failure — just return a partial student object
-    return { id: studentId } as unknown as Student;
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? 'بارگذاری عکس ناموفق بود');
   }
   const data = await res.json();
   return normaliseStudent(data.student ?? data);
+}
+
+export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
+  const res = await apiFetch(`/registrations`);
+  if (!res.ok) throw new Error('Error fetching registrations');
+  const body = await res.json();
+  const raw: any[] = Array.isArray(body) ? body : (body.registrations ?? body.data ?? []);
+  return raw.map((r) => ({
+    id: r.registration_id ?? r.id,
+    tracking_code: r.tracking_code ?? '',
+    national_code: r.national_code ?? '',
+    full_name: r.full_name ?? '',
+    phone_number: r.phone_number ?? '',
+    category: r.category ?? '',
+    academic_degree: r.academic_degree ?? '',
+    military_status: r.military_status ?? '',
+    has_temp_permit: r.has_temp_permit,
+    national_card_path: fileUrl(r.national_card_path),
+    personal_photo_path: fileUrl(r.personal_photo_path),
+    status: r.status ?? 'pending',
+    source: r.source ?? 'website',
+    student_id: r.student_id ?? null,
+    created_at: r.created_at,
+  }));
+}
+
+export async function approveRegistration(registrationId: number, studentId: number): Promise<WebsiteRegistration> {
+  const res = await apiFetch(`/registrations/${registrationId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ student_id: studentId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? 'تایید ثبت‌نام وبسایت ناموفق بود');
+  }
+  const data = await res.json();
+  return data.registration ?? data;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -197,7 +287,7 @@ export async function uploadStudentPhotos(
 
 /** GET /api/enrollments  →  backend returns array */
 export async function fetchEnrollments(): Promise<Enrollment[]> {
-  const res = await fetch(`${API_BASE}/enrollments`);
+  const res = await apiFetch(`/enrollments`);
   if (!res.ok) throw new Error('Error fetching enrollments');
   const body = await res.json();
   const raw: any[] = Array.isArray(body) ? body : (body.enrollments ?? body.data ?? []);
@@ -219,7 +309,7 @@ export async function createEnrollment(body: {
   signup_date_jalali?: string;
   final_price?: number;
 }): Promise<Enrollment> {
-  const res = await fetch(`${API_BASE}/enrollments`, {
+  const res = await apiFetch(`/enrollments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -231,11 +321,11 @@ export async function createEnrollment(body: {
   const data = await res.json();
   return {
     id:                 data.enrollment_id ?? data.id ?? Date.now(),
-    student_id:         body.student_id,
-    course_id:          body.course_id,
-    course_number:      body.course_number ?? null,
-    signup_date_jalali: body.signup_date_jalali ?? '',
-    final_price:        body.final_price ?? 0,
+    student_id:         data.student_id ?? body.student_id,
+    course_id:          data.course_id ?? body.course_id,
+    course_number:      data.course_number ?? body.course_number ?? null,
+    signup_date_jalali: data.signup_date_jalali ?? body.signup_date_jalali ?? '',
+    final_price:        Number(data.final_price ?? body.final_price ?? 0),
   };
 }
 
@@ -245,7 +335,7 @@ export async function createEnrollment(body: {
 
 /** GET /api/payments  →  backend returns array or { success, payments } */
 export async function fetchPayments(): Promise<Payment[]> {
-  const res = await fetch(`${API_BASE}/payments`);
+  const res = await apiFetch(`/payments`);
   if (!res.ok) throw new Error('Error fetching payments');
   const body = await res.json();
   const raw: any[] = Array.isArray(body) ? body : (body.payments ?? body.data ?? []);
@@ -270,7 +360,7 @@ export async function createPayment(body: {
   payment_kind?: string | null;
   description?: string | null;
 }): Promise<Payment> {
-  const res = await fetch(`${API_BASE}/payments`, {
+  const res = await apiFetch(`/payments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -305,7 +395,7 @@ export async function createPayment(body: {
 
 /** GET /api/expenses  →  { success, count, expenses } */
 export async function fetchExpenses(): Promise<Expense[]> {
-  const res = await fetch(`${API_BASE}/expenses`);
+  const res = await apiFetch(`/expenses`);
   if (!res.ok) throw new Error('Error fetching expenses');
   const body = await res.json();
   const raw: any[] = Array.isArray(body) ? body : (body.expenses ?? body.data ?? []);
@@ -329,7 +419,7 @@ export async function createExpense(body: {
   description?: string;
   category?: string;
 }): Promise<Expense> {
-  const res = await fetch(`${API_BASE}/expenses`, {
+  const res = await apiFetch(`/expenses`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -365,12 +455,12 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
   formData.append('card', file);
   formData.append('nationalCard', file);
 
-  const res = await fetch(`${API_BASE}/ocr`, {
+  const res = await apiFetch(`/ocr`, {
     method: 'POST',
     body:   formData,
   });
-  if (!res.ok) throw new Error('Error performing OCR scan');
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'خطا در اسکن کارت ملی');
   return {
     first_name:        data.first_name ?? '',
     last_name:         data.last_name ?? '',
@@ -386,7 +476,7 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
 // ─────────────────────────────────────────────────────────
 
 export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
-  const res = await fetch(`${API_BASE}/receipt-settings`);
+  const res = await apiFetch(`/receipt-settings`);
   if (!res.ok) throw new Error('Error fetching receipt settings');
   const body = await res.json();
   const d = body.data ?? body;
@@ -401,7 +491,7 @@ export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
 }
 
 export async function saveReceiptSettings(settings: ReceiptSettings): Promise<ReceiptSettings> {
-  const res = await fetch(`${API_BASE}/receipt-settings`, {
+  const res = await apiFetch(`/receipt-settings`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -432,7 +522,7 @@ export async function fetchReportTemplates(opts?: {
   if (opts?.active !== undefined)   query.append('active',      String(opts.active));
   if (opts?.includeBody !== undefined) query.append('includeBody', String(opts.includeBody));
 
-  const res = await fetch(`${API_BASE}/report-templates?${query.toString()}`);
+  const res = await apiFetch(`/report-templates?${query.toString()}`);
   if (!res.ok) {
     // Graceful fallback
     return { templates: [], fallback: true };
@@ -444,7 +534,7 @@ export async function fetchReportTemplates(opts?: {
 export async function fetchEnrollmentReportContext(
   enrollmentId: number | string
 ): Promise<ReportContextResponse> {
-  const res = await fetch(`${API_BASE}/enrollments/${enrollmentId}/report-context`);
+  const res = await apiFetch(`/enrollments/${enrollmentId}/report-context`);
   if (!res.ok) throw new Error('Error fetching report context');
   return res.json();
 }
@@ -459,7 +549,7 @@ export async function uploadEnrollmentReceipt(
   if (opts?.template_key) formData.append('template_key', opts.template_key);
   if (opts?.paper_size)   formData.append('paper_size',   opts.paper_size);
 
-  const res = await fetch(`${API_BASE}/enrollments/${enrollmentId}/receipt`, {
+  const res = await apiFetch(`/enrollments/${enrollmentId}/receipt`, {
     method: 'POST',
     body:   formData,
   });
@@ -483,7 +573,7 @@ export async function fetchGatewaySettings(): Promise<{
   rubika_channel_id: string;
   rubika_active: boolean;
 }> {
-  const res = await fetch(`${API_BASE}/settings/gateways`);
+  const res = await apiFetch(`/settings/gateways`);
   if (!res.ok) throw new Error('Error fetching gateway settings');
   const body = await res.json();
   return body.data ?? body;
@@ -498,7 +588,7 @@ export async function saveGatewaySettings(settings: {
   rubika_channel_id?: string;
   rubika_active?: boolean;
 }): Promise<{ success: boolean }> {
-  const res = await fetch(`${API_BASE}/settings/gateways`, {
+  const res = await apiFetch(`/settings/gateways`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
@@ -513,7 +603,7 @@ export async function sendMessengerMessage(body: {
   messageText: string;
   templateTitle?: string;
 }): Promise<{ success: boolean; result: any }> {
-  const res = await fetch(`${API_BASE}/messenger/send`, {
+  const res = await apiFetch(`/messenger/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -529,7 +619,7 @@ export async function sendMessengerMessage(body: {
 }
 
 export async function fetchMessengerThreads(): Promise<any[]> {
-  const res = await fetch(`${API_BASE}/messenger/threads`);
+  const res = await apiFetch(`/messenger/threads`);
   if (!res.ok) return [];
   const body = await res.json();
   return body.threads ?? [];
@@ -537,7 +627,7 @@ export async function fetchMessengerThreads(): Promise<any[]> {
 
 export async function fetchMessengerMessages(): Promise<any[]> {
   try {
-    const res = await fetch(`${API_BASE}/messenger/messages`);
+    const res = await apiFetch(`/messenger/messages`);
     if (!res.ok) return [];
     const data = await res.json();
     return data.messages || [];

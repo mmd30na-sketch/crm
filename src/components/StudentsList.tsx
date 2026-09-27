@@ -126,10 +126,10 @@ export default function StudentsList({
   const [localEnrollments, setLocalEnrollments]= useState<Enrollment[]>(INITIAL_MOCK_ENROLLMENTS);
   const [localPayments, setLocalPayments]      = useState<Payment[]>(INITIAL_MOCK_PAYMENTS);
 
-  const studentsList    = propStudents    && propStudents.length    > 0 ? propStudents    : localStudents;
-  const coursesList     = propCourses     && propCourses.length     > 0 ? propCourses     : localCourses;
-  const enrollmentsList = propEnrollments && propEnrollments.length > 0 ? propEnrollments : localEnrollments;
-  const paymentsList    = propPayments    && propPayments.length    > 0 ? propPayments    : localPayments;
+  const studentsList    = propStudents    !== undefined ? propStudents    : localStudents;
+  const coursesList     = propCourses     !== undefined && propCourses.length     > 0 ? propCourses     : localCourses;
+  const enrollmentsList = propEnrollments !== undefined ? propEnrollments : localEnrollments;
+  const paymentsList    = propPayments    !== undefined ? propPayments    : localPayments;
 
   const [selectedStudentId, setSelectedStudentId] = useState<number>(() => studentsList[0]?.id ?? 1);
 

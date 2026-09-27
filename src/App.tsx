@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   RefreshCw,
   Wifi,
+  LogOut,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense } from './types';
 import * as api from './api/client';
@@ -22,6 +23,7 @@ import AccountingDashboard from './components/AccountingDashboard';
 import Settings from './components/Settings';
 import SupervisorDashboard from './components/SupervisorDashboard';
 import MessengerHub from './components/MessengerHub';
+import LoginScreen from './components/LoginScreen';
 
 const NAV_ITEMS = [
   {
@@ -87,6 +89,8 @@ const ACTIVE_BADGE_MAP: Record<string, string> = {
 };
 
 export default function App() {
+  const [authed, setAuthed] = useState<boolean>(!!api.getAuthToken());
+  const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
   const [activeTab, setActiveTab] = useState<string>('supervisor');
   const [loading, setLoading] = useState<boolean>(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
@@ -121,14 +125,49 @@ export default function App() {
     }
   };
 
-  useEffect(() => { refreshAllData(); }, []);
+  useEffect(() => {
+    const onLost = () => setAuthed(false);
+    window.addEventListener('carla-auth-lost', onLost);
+    return () => window.removeEventListener('carla-auth-lost', onLost);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!api.getAuthToken()) {
+        setAuthChecking(false);
+        setAuthed(false);
+        return;
+      }
+      try {
+        await api.fetchMe();
+        if (!cancelled) setAuthed(true);
+      } catch {
+        api.logout();
+        if (!cancelled) setAuthed(false);
+      } finally {
+        if (!cancelled) setAuthChecking(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (authed) refreshAllData();
+  }, [authed]);
 
   const handleActiveTabChange = (newTab: string) => setActiveTab(newTab);
 
   const activeNavItem = NAV_ITEMS.find(n => n.id === activeTab);
 
-  // Jalali date (static demo)
-  const jalaliDate = '۷ مرداد ۱۴۰۵';
+  const jalaliDate = new Date().toLocaleDateString('fa-IR');
+
+  if (authChecking) {
+    return <div className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center" dir="rtl">در حال بررسی ورود...</div>;
+  }
+  if (!authed) {
+    return <LoginScreen onLoggedIn={() => setAuthed(true)} />;
+  }
 
   return (
     <div
@@ -220,10 +259,17 @@ export default function App() {
                 className="h-full w-full object-cover"
               />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-300 leading-tight truncate">مدیریت پذیرش</div>
               <div className="text-[9px] text-slate-600 leading-tight">نسخه ۲.۴.۰ نهایی</div>
             </div>
+            <button
+              title="خروج"
+              onClick={() => { api.logout(); setAuthed(false); }}
+              className="p-1.5 rounded-lg text-slate-500 hover:text-rose-300 hover:bg-white/5"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </aside>

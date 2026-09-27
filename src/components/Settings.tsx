@@ -37,14 +37,19 @@ interface SettingsProps {
 export default function Settings({ courses, onRefresh }: SettingsProps) {
   const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database'>('academy');
 
+  const dummyOrEmpty = (key: string, dummies: string[]) => {
+    const v = localStorage.getItem(key) || '';
+    return !v || dummies.includes(v) ? '' : v;
+  };
+
   /* ── 1. Rubika & SMS Panel States ── */
-  const [rubikaBotToken, setRubikaBotToken]   = useState(() => localStorage.getItem('carla_rubika_bot_token') || 'RUBIKA-BOT-551249-YHBX987X');
-  const [rubikaChannelId, setRubikaChannelId] = useState(() => localStorage.getItem('carla_rubika_channel_id') || '@carla_driving_academy');
+  const [rubikaBotToken, setRubikaBotToken]   = useState(() => dummyOrEmpty('carla_rubika_bot_token', ['RUBIKA-BOT-551249-YHBX987X']));
+  const [rubikaChannelId, setRubikaChannelId] = useState(() => dummyOrEmpty('carla_rubika_channel_id', ['@carla_driving_academy']));
   const [rubikaIsActive, setRubikaIsActive]   = useState(() => localStorage.getItem('carla_rubika_active') !== 'false');
 
   const [smsProvider, setSmsProvider]                 = useState(() => localStorage.getItem('carla_sms_provider') || 'ippanel');
-  const [smsApiKey, setSmsApiKey]                     = useState(() => localStorage.getItem('carla_sms_api_key') || 'CARLA-SMS-98765-SECURE-KEY');
-  const [smsSenderLine, setSmsSenderLine]             = useState(() => localStorage.getItem('carla_sms_sender_line') || '5000400070');
+  const [smsApiKey, setSmsApiKey]                     = useState(() => dummyOrEmpty('carla_sms_api_key', ['CARLA-SMS-98765-SECURE-KEY']));
+  const [smsSenderLine, setSmsSenderLine]             = useState(() => dummyOrEmpty('carla_sms_sender_line', ['5000400070']));
   const [smsAutoSendRegister, setSmsAutoSendRegister] = useState(() => localStorage.getItem('carla_sms_auto_register') !== 'false');
   const [smsAutoSendExam, setSmsAutoSendExam]         = useState(() => localStorage.getItem('carla_sms_auto_exam') !== 'false');
 
@@ -55,17 +60,25 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     e.preventDefault();
     setIsSavingGateways(true); setGatewaysSuccess(false);
 
-    localStorage.setItem('carla_rubika_bot_token', rubikaBotToken);
-    localStorage.setItem('carla_rubika_channel_id', rubikaChannelId);
+    if (rubikaBotToken) localStorage.setItem('carla_rubika_bot_token', rubikaBotToken);
+    else localStorage.removeItem('carla_rubika_bot_token');
+    if (rubikaChannelId) localStorage.setItem('carla_rubika_channel_id', rubikaChannelId);
+    else localStorage.removeItem('carla_rubika_channel_id');
     localStorage.setItem('carla_rubika_active', String(rubikaIsActive));
 
     localStorage.setItem('carla_sms_provider', smsProvider);
-    localStorage.setItem('carla_sms_api_key', smsApiKey);
-    localStorage.setItem('carla_sms_sender_line', smsSenderLine);
+    if (smsApiKey) localStorage.setItem('carla_sms_api_key', smsApiKey);
+    else localStorage.removeItem('carla_sms_api_key');
+    if (smsSenderLine) localStorage.setItem('carla_sms_sender_line', smsSenderLine);
+    else localStorage.removeItem('carla_sms_sender_line');
     localStorage.setItem('carla_sms_auto_register', String(smsAutoSendRegister));
     localStorage.setItem('carla_sms_auto_exam', String(smsAutoSendExam));
 
-    localStorage.setItem('carla_sms_config', JSON.stringify({ provider: smsProvider, apiKey: smsApiKey, senderLine: smsSenderLine }));
+    if (smsApiKey) {
+      localStorage.setItem('carla_sms_config', JSON.stringify({ provider: smsProvider, apiKey: smsApiKey, senderLine: smsSenderLine }));
+    } else {
+      localStorage.removeItem('carla_sms_config');
+    }
 
     setTimeout(() => {
       setIsSavingGateways(false);
@@ -75,23 +88,41 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   };
 
   /* ── 2. Database States ── */
-  const [dbHost, setDbHost]         = useState(() => localStorage.getItem('carla_db_host') || 'postgresql-db.iran.liara.run');
-  const [dbPort, setDbPort]         = useState(() => localStorage.getItem('carla_db_port') || '5432');
-  const [dbName, setDbName]         = useState(() => localStorage.getItem('carla_db_name') || 'carla_crm_production');
-  const [dbUser, setDbUser]         = useState(() => localStorage.getItem('carla_db_user') || 'carla_root_admin');
-  const [dbPassword, setDbPassword] = useState(() => localStorage.getItem('carla_db_password') || '••••••••••••••••••••');
+  const [dbHost, setDbHost]         = useState(() => dummyOrEmpty('carla_db_host', ['postgresql-db.iran.liara.run']) || 'services.irn5.chabokan.net');
+  const [dbPort, setDbPort]         = useState(() => {
+    const v = localStorage.getItem('carla_db_port');
+    return !v || v === '5432' ? '52691' : v;
+  });
+  const [dbName, setDbName]         = useState(() => dummyOrEmpty('carla_db_name', ['carla_crm_production']) || 'nodejs430_carla');
+  const [dbUser, setDbUser]         = useState(() => dummyOrEmpty('carla_db_user', ['carla_root_admin']) || 'nodejs430_carla');
+  const [dbPassword, setDbPassword] = useState('');
 
   const [dbConnectionStatus, setDbConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [dbLastSync, setDbLastSync]                 = useState(() => localStorage.getItem('carla_db_last_sync') || '۱۴۰۵/۰۵/۲۸ - ۱۱:۲۵');
+  const [dbLastSync, setDbLastSync]                 = useState(() => dummyOrEmpty('carla_db_last_sync', ['۱۴۰۵/۰۵/۲۸ - ۱۱:۲۵', '۱۴۰۵/۰۵/۲۸ - ۱۳:۵۵']));
   const [isSyncing, setIsSyncing]                   = useState(false);
   const [syncProgress, setSyncProgress]             = useState(0);
   const [syncSuccess, setSyncSuccess]               = useState(false);
   const [isSavingDb, setIsSavingDb]                 = useState(false);
   const [dbSaveSuccess, setDbSaveSuccess]           = useState(false);
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
     setDbConnectionStatus('connecting');
-    setTimeout(() => setDbConnectionStatus('connected'), 1000);
+    try {
+      const origin = window.location.hostname.endsWith('github.io') ? 'https://crm.mmd30na.cloud' : '';
+      const token = sessionStorage.getItem('carla_crm_token');
+      const res = await fetch(`${origin}/api/health`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.db === 'chabokan-mysql') {
+        setDbConnectionStatus('connected');
+        setDbLastSync(new Date().toLocaleString('fa-IR'));
+      } else {
+        setDbConnectionStatus('disconnected');
+      }
+    } catch {
+      setDbConnectionStatus('disconnected');
+    }
   };
 
   const handleManualSync = () => {
@@ -106,7 +137,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
           clearInterval(interval);
           setIsSyncing(false);
           setSyncSuccess(true);
-          const ptime = '۱۴۰۵/۰۵/۲۸ - ۱۳:۵۵';
+          const ptime = new Date().toLocaleString('fa-IR');
           setDbLastSync(ptime);
           localStorage.setItem('carla_db_last_sync', ptime);
           setTimeout(() => setSyncSuccess(false), 2500);
@@ -124,7 +155,8 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     localStorage.setItem('carla_db_port', dbPort);
     localStorage.setItem('carla_db_name', dbName);
     localStorage.setItem('carla_db_user', dbUser);
-    localStorage.setItem('carla_db_password', dbPassword);
+    if (dbPassword) localStorage.setItem('carla_db_password', dbPassword);
+    else localStorage.removeItem('carla_db_password');
     setTimeout(() => {
       setIsSavingDb(false); setDbSaveSuccess(true);
       setTimeout(() => setDbSaveSuccess(false), 2000);
@@ -517,9 +549,14 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
             <div className="space-y-5 fade-in">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Database className="w-4 h-4 text-amber-600" />تنظیمات پایگاه‌داده آنلاین و همگام‌سازی
+                  <Database className="w-4 h-4 text-amber-600" />پایگاه‌داده واقعی چابکان
                 </h3>
               </div>
+              <p className="text-xs text-slate-500 leading-6 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                CRM به MySQL چابکان <span className="font-mono">nodejs430_carla</span> وصل است
+                (<span className="font-mono">services.irn5.chabokan.net:52691</span> از طریق SOCKS ایران).
+                رمز در Secrets به نام <span className="font-mono">NODEJS_DB_PASS</span> است؛ اینجا ذخیره نمی‌شود. Liara/Postgres در کار نیست.
+              </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Credentials Form */}
