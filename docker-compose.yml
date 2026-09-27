@@ -1,0 +1,32 @@
+# Local / transfer image for Carla CRM.
+# Later on Chabokan: drop DB_SOCKS_* so MySQL is direct TCP.
+services:
+  crm:
+    build: .
+    image: carla-crm:local
+    container_name: carla-crm
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DB_HOST: ${DB_HOST:-services.irn5.chabokan.net}
+      DB_PORT: ${DB_PORT:-52691}
+      DB_USER: ${DB_USER:-nodejs430_carla}
+      DB_NAME: ${DB_NAME:-nodejs430_carla}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      # Set only when MySQL is not reachable directly (this OpenClaw stack).
+      # On Chabokan leave these empty.
+      DB_SOCKS_HOST: ${DB_SOCKS_HOST:-}
+      DB_SOCKS_PORT: ${DB_SOCKS_PORT:-1081}
+      CRM_ADMIN_USER: ${CRM_ADMIN_USER:-admin}
+      CRM_ADMIN_PASSWORD: ${CRM_ADMIN_PASSWORD:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - crm_uploads:/app/uploads
+      - crm_student_files:/app/StudentFiles
+    restart: unless-stopped
+
+volumes:
+  crm_uploads:
+  crm_student_files:
