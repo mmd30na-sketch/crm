@@ -6,6 +6,9 @@ import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
+import * as chabokan from './mysql-socks';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config(); // fallback to .env
@@ -93,7 +96,8 @@ function sendRubikaMessage(chatId: string, text: string): Promise<any> {
 }
 
 const app = express();
-const PORT = 3000;
+app.disable('x-powered-by');
+const PORT = Number(process.env.PORT || 3000);
 
 // Set up storage directory for uploads
 // Set up StudentFiles storage directory structure matching MS Access logic
@@ -102,26 +106,46 @@ if (!fs.existsSync(studentFilesBase)) {
   fs.mkdirSync(studentFilesBase, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const courseNum = req.body.course_number || 'default_course';
-    const studentFolder = (req.body.last_name || 'student') + '_' + (req.body.student_id || Date.now());
-    const targetDir = path.join(studentFilesBase, String(courseNum), studentFolder);
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
+function safeSegment(value: unknown, fallback: string) {
+  const raw = String(value || fallback).trim() || fallback;
+  return raw.replace(/[^؀-ۿa-zA-Z0-9._-]+/g, '_').slice(0, 80) || fallback;
+}
+
+function publicPathFromFile(file: Express.Multer.File) {
+  const rel = path.relative(process.cwd(), path.resolve(file.path)).split(path.sep).join('/');
+  return `/${rel}`;
+}
+
+const studentPhotoStorage = multer.diskStorage({
+  destination: (req, _file, cb) => {
+    const courseNum = safeSegment(req.body.course_number, 'unsorted');
+    const studentId = safeSegment(req.params.id || req.body.student_id, String(Date.now()));
+    const lastName = safeSegment(req.body.last_name, 'student');
+    const targetDir = path.join(studentFilesBase, courseNum, `${lastName}_${studentId}`);
+    fs.mkdirSync(targetDir, { recursive: true });
     cb(null, targetDir);
   },
   filename: (req, file, cb) => {
-    const lastName = req.body.last_name || 'Student';
-    const studentId = req.body.student_id || Date.now();
-    const isIdCard = file.fieldname === 'id_card_photo';
+    const lastName = safeSegment(req.body.last_name, 'Student');
+    const studentId = safeSegment(req.params.id || req.body.student_id, String(Date.now()));
+    const isIdCard = file.fieldname === 'idCard' || file.fieldname === 'id_card_photo';
     const ext = path.extname(file.originalname) || '.jpg';
-    const fileName = isIdCard ? `${lastName}_${studentId}_ID${ext}` : `${lastName}_${studentId}_Photo${ext}`;
-    cb(null, fileName);
+    cb(null, `${lastName}_${studentId}_${isIdCard ? 'ID' : 'Photo'}${ext}`);
   },
 });
-const upload = multer({ storage });
+const uploadStudentMedia = multer({ storage: studentPhotoStorage });
+
+const uploadsDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const uploadsStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.bin';
+    cb(null, `${Date.now()}_${crypto.randomBytes(6).toString('hex')}${ext}`);
+  },
+});
+const upload = multer({ storage: uploadsStorage });
 app.use('/StudentFiles', express.static(studentFilesBase));
 
 // Database File Path
@@ -358,9 +382,116 @@ function sanitizeString(val: unknown, maxLen = 500): string {
   return val.trim().slice(0, maxLen);
 }
 
+function loadTokenSecret() {
+  if (process.env.CRM_JWT_SECRET) return process.env.CRM_JWT_SECRET;
+  const secretPath = path.join(process.cwd(), '.crm-jwt-secret');
+  try {
+    if (fs.existsSync(secretPath)) {
+      const existing = fs.readFileSync(secretPath, 'utf8').trim();
+      if (existing) return existing;
+    }
+  } catch {}
+  const generated = crypto.randomBytes(32).toString('hex');
+  try { fs.writeFileSync(secretPath, generated, { mode: 0o600 }); } catch {}
+  return generated;
+}
+const TOKEN_SECRET = loadTokenSecret();
+const loginBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function signToken(payload: Record<string, unknown>) {
+  const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 12 * 3600 * 1000 })).toString('base64url');
+  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifyToken(token: string): any | null {
+  const [body, sig] = token.split('.');
+  if (!body || !sig) return null;
+  const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(body).digest('base64url');
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!data.exp || data.exp < Date.now()) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function readBearer(req: express.Request): string | null {
+  const h = String(req.headers.authorization || '');
+  if (h.startsWith('Bearer ')) return h.slice(7).trim();
+  const q = String((req.query as any)?.token || '');
+  return q || null;
+}
+
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!chabokan.isMysqlEnabled()) return next();
+  const token = readBearer(req);
+  const session = token ? verifyToken(token) : null;
+  if (!session) return res.status(401).json({ error: 'Unauthorized' });
+  (req as any).user = session;
+  next();
+}
+
+app.post('/api/auth/login', async (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const bucket = loginBuckets.get(ip);
+  if (!bucket || now > bucket.resetAt) loginBuckets.set(ip, { count: 1, resetAt: now + 60_000 });
+  else {
+    bucket.count += 1;
+    if (bucket.count > 10) return res.status(429).json({ error: 'Too many login attempts' });
+  }
+
+  const username = sanitizeString(req.body?.username, 80);
+  const password = String(req.body?.password || '');
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+
+  try {
+    const envUser = process.env.CRM_ADMIN_USER || 'admin';
+    const envPass = process.env.CRM_ADMIN_PASSWORD || '';
+    if (envPass && username === envUser && password === envPass) {
+      const token = signToken({ username, role: 'admin', source: 'env' });
+      return res.json({ token, user: { username, role: 'admin' } });
+    }
+
+    if (chabokan.isMysqlEnabled()) {
+      const staff = await chabokan.findStaffByUsername(username);
+      if (staff && staff.is_active && staff.password_hash) {
+        const ok = await bcrypt.compare(password, String(staff.password_hash));
+        if (ok) {
+          const token = signToken({ username: staff.username, role: staff.role, user_id: staff.user_id });
+          return res.json({ token, user: { username: staff.username, role: staff.role } });
+        }
+      }
+    }
+    return res.status(401).json({ error: 'Unauthorized' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  res.json({ user: (req as any).user || null, db: chabokan.isMysqlEnabled() ? 'chabokan-mysql' : 'json' });
+});
+
+app.post('/api/auth/logout', (_req, res) => res.json({ success: true }));
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, db: chabokan.isMysqlEnabled() ? 'chabokan-mysql' : 'json-file' });
+});
+
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth')) return next();
+  if (req.path === '/health') return next();
+  if (req.method === 'OPTIONS') return next();
+  return requireAuth(req, res, next);
+});
+
 // Serve uploads statically
-const uploadsDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
 // Initialize Gemini API
@@ -516,176 +647,416 @@ app.post('/api/imports/access', (req, res) => {
 // ------------------- API ROUTES -------------------
 
 // 1. GET active courses
-app.get('/api/courses', (req, res) => {
-  const db = readDb();
-  res.json(db.courses);
+app.get('/api/courses', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listCourses());
+    res.json(readDb().courses);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // 2. Add / Update course
-app.post('/api/courses', (req, res) => {
-  const db = readDb();
-  const newCourse = {
-    id: db.courses.length > 0 ? Math.max(...db.courses.map(c => c.id)) + 1 : 1,
-    ...req.body,
-  };
-  db.courses.push(newCourse);
-  writeDb(db);
-  res.json(newCourse);
+app.post('/api/courses', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.insertCourse(req.body));
+    const db = readDb();
+    const newCourse = {
+      id: db.courses.length > 0 ? Math.max(...db.courses.map(c => c.id)) + 1 : 1,
+      ...req.body,
+    };
+    db.courses.push(newCourse);
+    writeDb(db);
+    res.json(newCourse);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/courses/:id', (req, res) => {
-  const db = readDb();
-  const id = parseInt(req.params.id);
-  const index = db.courses.findIndex(c => c.id === id);
-  if (index !== -1) {
-    db.courses[index] = { ...db.courses[index], ...req.body, id };
-    writeDb(db);
-    res.json(db.courses[index]);
-  } else {
-    res.status(404).json({ error: 'Course not found' });
-  }
+app.put('/api/courses/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (chabokan.isMysqlEnabled()) {
+      const row = await chabokan.updateCourse(id, req.body);
+      if (!row) return res.status(404).json({ error: 'Course not found' });
+      return res.json(row);
+    }
+    const db = readDb();
+    const index = db.courses.findIndex(c => c.id === id);
+    if (index !== -1) {
+      db.courses[index] = { ...db.courses[index], ...req.body, id };
+      writeDb(db);
+      res.json(db.courses[index]);
+    } else {
+      res.status(404).json({ error: 'Course not found' });
+    }
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // 3. GET/POST students
-app.get('/api/students', (req, res) => {
-  const db = readDb();
-  res.json(db.students);
+app.get('/api/students', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listStudents());
+    res.json(readDb().students);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/students', (req, res) => {
-  const db = readDb();
-  const studentData = req.body;
-  const newStudent: Student = {
-    id: db.students.length > 0 ? Math.max(...db.students.map(s => s.id)) + 1 : 1,
-    first_name: studentData.first_name,
-    last_name: studentData.last_name,
-    father_name: studentData.father_name || 'نامشخص',
-    national_code: studentData.national_code || '',
-    phone_number: studentData.phone_number || '',
-    birth_date_jalali: studentData.birth_date_jalali || '',
-    address: studentData.address || '',
-    status: 'active',
-    created_at: new Date().toISOString(),
-  };
-  db.students.push(newStudent);
-  writeDb(db);
-  res.json({ status: 'success', student: newStudent });
+app.post('/api/students', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) {
+      const student = await chabokan.insertStudent(req.body);
+      return res.json({ status: 'success', student });
+    }
+    const db = readDb();
+    const studentData = req.body;
+    const newStudent: Student = {
+      id: db.students.length > 0 ? Math.max(...db.students.map(s => s.id)) + 1 : 1,
+      first_name: studentData.first_name,
+      last_name: studentData.last_name,
+      father_name: studentData.father_name || '',
+      national_code: studentData.national_code || '',
+      phone_number: studentData.phone_number || '',
+      birth_date_jalali: studentData.birth_date_jalali || '',
+      address: studentData.address || '',
+      status: 'active',
+      created_at: new Date().toISOString(),
+    };
+    db.students.push(newStudent);
+    writeDb(db);
+    res.json({ status: 'success', student: newStudent });
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
 
-app.put('/api/students/:id', (req, res) => {
-  const db = readDb();
-  const studentId = parseInt(req.params.id, 10);
-  const index = db.students.findIndex(s => s.id === studentId);
-  if (index === -1) return res.status(404).json({ error: 'Student not found' });
-  const body = req.body || {};
-  db.students[index] = {
-    ...db.students[index],
-    first_name: sanitizeString(body.first_name, 80) || db.students[index].first_name,
-    last_name: sanitizeString(body.last_name, 80) || db.students[index].last_name,
-    father_name: sanitizeString(body.father_name, 80) || db.students[index].father_name,
-    national_code: sanitizeString(body.national_code, 20) || db.students[index].national_code,
-    phone_number: sanitizeString(body.phone_number, 20) || db.students[index].phone_number,
-    birth_date_jalali: sanitizeString(body.birth_date_jalali, 20) || db.students[index].birth_date_jalali,
-    address: sanitizeString(body.address, 400) || db.students[index].address,
-    status: body.status || db.students[index].status,
-  };
-  writeDb(db);
-  res.json({ status: 'success', student: db.students[index] });
+app.put('/api/students/:id', async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id, 10);
+    if (chabokan.isMysqlEnabled()) {
+      const student = await chabokan.updateStudent(studentId, req.body || {});
+      if (!student) return res.status(404).json({ error: 'Student not found' });
+      return res.json({ status: 'success', student });
+    }
+    const db = readDb();
+    const index = db.students.findIndex(s => s.id === studentId);
+    if (index === -1) return res.status(404).json({ error: 'Student not found' });
+    const body = req.body || {};
+    db.students[index] = {
+      ...db.students[index],
+      first_name: sanitizeString(body.first_name, 80) || db.students[index].first_name,
+      last_name: sanitizeString(body.last_name, 80) || db.students[index].last_name,
+      father_name: sanitizeString(body.father_name, 80) || db.students[index].father_name,
+      national_code: sanitizeString(body.national_code, 20) || db.students[index].national_code,
+      phone_number: sanitizeString(body.phone_number, 20) || db.students[index].phone_number,
+      birth_date_jalali: sanitizeString(body.birth_date_jalali, 20) || db.students[index].birth_date_jalali,
+      address: sanitizeString(body.address, 400) || db.students[index].address,
+      status: body.status || db.students[index].status,
+    };
+    writeDb(db);
+    res.json({ status: 'success', student: db.students[index] });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // 4. CASCADE DELETE student
-app.delete('/api/students/:id', (req, res) => {
-  const db = readDb();
-  const studentId = parseInt(req.params.id);
-
-  // Filter out student
-  db.students = db.students.filter(s => s.id !== studentId);
-  // Cascading deletes for enrollments and payments
-  db.enrollments = db.enrollments.filter(e => e.student_id !== studentId);
-  db.payments = db.payments.filter(p => p.student_id !== studentId);
-
-  writeDb(db);
-  res.json({ success: true });
+app.delete('/api/students/:id', async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.id);
+    if (chabokan.isMysqlEnabled()) {
+      await chabokan.deleteStudent(studentId);
+      return res.json({ success: true });
+    }
+    const db = readDb();
+    db.students = db.students.filter(s => s.id !== studentId);
+    db.enrollments = db.enrollments.filter(e => e.student_id !== studentId);
+    db.payments = db.payments.filter(p => p.student_id !== studentId);
+    writeDb(db);
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // 5. POST student photos
-app.post('/api/students/:id/photos', upload.fields([
+app.post('/api/students/:id/photos', uploadStudentMedia.fields([
   { name: 'idCard', maxCount: 1 },
   { name: 'personal', maxCount: 1 }
-]), (req, res) => {
-  const db = readDb();
+]), async (req, res) => {
   const studentId = parseInt(req.params.id);
+  const db = readDb();
   const index = db.students.findIndex(s => s.id === studentId);
-
-  if (index === -1) {
+  if (!chabokan.isMysqlEnabled() && index === -1) {
     return res.status(404).json({ error: 'Student not found' });
   }
 
   const files = req.files as { [fieldname: string]: Express.Multer.File[] };
 
-  if (files && files.idCard) {
-    db.students[index].id_card_photo_url = `/uploads/${files.idCard[0].filename}`;
+  const idCardPath = files?.idCard?.[0] ? publicPathFromFile(files.idCard[0]) : undefined;
+  const personalPath = files?.personal?.[0] ? publicPathFromFile(files.personal[0]) : undefined;
+  if (chabokan.isMysqlEnabled()) {
+    await chabokan.updateStudentPhotos(studentId, idCardPath, personalPath);
+    const student = await chabokan.listStudents().then((list) => list.find((s: any) => s.id === studentId));
+    return res.json(student || { id: studentId, id_card_photo_url: idCardPath, personal_photo_url: personalPath });
   }
-  if (files && files.personal) {
-    db.students[index].personal_photo_url = `/uploads/${files.personal[0].filename}`;
-  }
-
+  if (idCardPath) db.students[index].id_card_photo_url = idCardPath;
+  if (personalPath) db.students[index].personal_photo_url = personalPath;
   writeDb(db);
   res.json(db.students[index]);
 });
 
 // 6. POST enrollment
-app.post('/api/enrollments', (req, res) => {
-  const db = readDb();
-  const enrollmentData = req.body;
-  const newEnrollment = {
-    id: db.enrollments.length > 0 ? Math.max(...db.enrollments.map(e => e.id)) + 1 : 1,
-    student_id: parseInt(enrollmentData.student_id),
-    course_id: parseInt(enrollmentData.course_id),
-    course_number: enrollmentData.course_number ? parseInt(enrollmentData.course_number) : Math.floor(Math.random() * 150) + 1,
-    signup_date_jalali: enrollmentData.signup_date_jalali || '۱۴۰۵/۰۵/۰۱',
-    final_price: parseFloat(enrollmentData.final_price) || 0,
-  };
-  db.enrollments.push(newEnrollment);
-  writeDb(db);
-  res.json(newEnrollment);
+app.post('/api/enrollments', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.insertEnrollment(req.body));
+    const db = readDb();
+    const enrollmentData = req.body;
+    const newEnrollment = {
+      id: db.enrollments.length > 0 ? Math.max(...db.enrollments.map(e => e.id)) + 1 : 1,
+      student_id: parseInt(enrollmentData.student_id),
+      course_id: parseInt(enrollmentData.course_id),
+      course_number: enrollmentData.course_number ? parseInt(enrollmentData.course_number) : Math.floor(Math.random() * 150) + 1,
+      signup_date_jalali: enrollmentData.signup_date_jalali || chabokan.jalaliToday(),
+      final_price: parseFloat(enrollmentData.final_price) || 0,
+    };
+    db.enrollments.push(newEnrollment);
+    writeDb(db);
+    res.json(newEnrollment);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/enrollments', (req, res) => {
-  const db = readDb();
-  res.json(db.enrollments);
+app.get('/api/enrollments', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listEnrollments());
+    res.json(readDb().enrollments);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // 7. POST payments
-app.post('/api/payments', (req, res) => {
-  const db = readDb();
-  const paymentData = req.body;
-  const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
-  if (!studentId) return res.status(400).json({ error: 'student_id is required' });
-  const amount = parseFloat(paymentData.amount);
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount is required' });
-  const newPayment = {
-    id: db.payments.length > 0 ? Math.max(...db.payments.map(p => p.id)) + 1 : 1,
-    student_id: studentId,
-    enrollment_id: paymentData.enrollment_id ? parseInt(paymentData.enrollment_id, 10) : null,
-    amount,
-    pay_date_jalali: sanitizeString(paymentData.pay_date_jalali, 20) || new Date().toLocaleDateString('fa-IR'),
-    pay_method: sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos',
-    payment_kind: sanitizeString(paymentData.payment_kind, 40) || 'downpayment',
-    description: sanitizeString(paymentData.description ?? paymentData.notes, 400),
+app.post('/api/payments', async (req, res) => {
+  try {
+    const paymentData = req.body;
+    const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
+    if (!studentId) return res.status(400).json({ error: 'student_id is required' });
+    const amount = parseFloat(paymentData.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount is required' });
+    if (chabokan.isMysqlEnabled()) {
+      return res.json(await chabokan.insertPayment({
+        ...paymentData,
+        student_id: studentId,
+        amount,
+        pay_date_jalali: sanitizeString(paymentData.pay_date_jalali, 20) || new Date().toLocaleDateString('fa-IR'),
+      }));
+    }
+    const db = readDb();
+    const newPayment = {
+      id: db.payments.length > 0 ? Math.max(...db.payments.map(p => p.id)) + 1 : 1,
+      student_id: studentId,
+      enrollment_id: paymentData.enrollment_id ? parseInt(paymentData.enrollment_id, 10) : null,
+      amount,
+      pay_date_jalali: sanitizeString(paymentData.pay_date_jalali, 20) || new Date().toLocaleDateString('fa-IR'),
+      pay_method: sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos',
+      payment_kind: sanitizeString(paymentData.payment_kind, 40) || 'downpayment',
+      description: sanitizeString(paymentData.description ?? paymentData.notes, 400),
+    };
+    db.payments.push(newPayment);
+    writeDb(db);
+    res.json(newPayment);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/payments', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listPayments());
+    res.json(readDb().payments);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+type IranIdOcr = {
+  first_name: string;
+  last_name: string;
+  national_code: string;
+  father_name: string;
+  birth_date_jalali: string;
+  confidence: number;
+  provider?: string;
+};
+
+function toEnglishDigits(s: string) {
+  return String(s || '')
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
+function validNationalCode(code: string) {
+  if (!/^\d{10}$/.test(code) || /^(\d)\1{9}$/.test(code)) return false;
+  const d = code.split('').map(Number);
+  let s = 0;
+  for (let i = 0; i < 9; i++) s += d[i] * (10 - i);
+  const r = s % 11;
+  return r < 2 ? d[9] === r : d[9] === 11 - r;
+}
+
+function cleanPersonName(s: string) {
+  return String(s || '')
+    .replace(/[0-9۰-۹٠-٩]/g, ' ')
+    .replace(/[:：\-_|]/g, ' ')
+    .replace(/نام(?:\s*خانوادگ[یي])?|پدر|کد\s*ملی|تاریخ|تولد|انقضا|صادره|شناسایی|هوشمند/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function grabLabeled(text: string, labelRe: RegExp): string {
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(labelRe);
+    if (!m) continue;
+    const same = cleanPersonName(m[1] || '');
+    if (same) return same;
+    const next = cleanPersonName(lines[i + 1] || '');
+    if (next) return next;
+  }
+  return '';
+}
+
+function parseIranIdText(raw: string): IranIdOcr {
+  const text = toEnglishDigits(raw).replace(/\u200c/g, ' ');
+  const out: IranIdOcr = {
+    first_name: '', last_name: '', national_code: '', father_name: '', birth_date_jalali: '', confidence: 0,
   };
-  db.payments.push(newPayment);
-  writeDb(db);
-  res.json(newPayment);
+  const codeCandidates = [
+    ...(text.match(/\d{10}/g) || []),
+    ...(text.match(/\d{3}[\s\-]\d{7}/g) || []).map((s) => s.replace(/\D/g, '')),
+  ];
+  out.national_code = codeCandidates.find(validNationalCode) || '';
+  const date =
+    text.match(/(13\d{2}|14\d{2})[\/\-\.](0[1-9]|1[0-2]|[1-9])[\/\-\.](0[1-9]|[12]\d|3[01]|[1-9])/)
+    || text.match(/(13\d{2}|14\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
+  if (date) {
+    out.birth_date_jalali = `${date[1]}/${date[2].padStart(2, '0')}/${date[3].padStart(2, '0')}`;
+  }
+  out.last_name = grabLabeled(text, /^نام\s*خانوادگ[یي]\s*[:：\-]?\s*(.*)$/);
+  out.father_name = grabLabeled(text, /^نام\s*پدر\s*[:：\-]?\s*(.*)$/);
+  out.first_name = grabLabeled(text, /^نام(?!\s*(?:و\s*نام\s*)?خانواد|\s*پدر)(?:\s*کوچک)?\s*[:：\-]?\s*(.*)$/);
+  if (!out.first_name || !out.last_name) {
+    const combo = grabLabeled(text, /^نام(?:\s*و)?\s*نام\s*خانوادگ[یي]\s*[:：\-]?\s*(.*)$/);
+    if (combo) {
+      const parts = combo.split(/\s+/);
+      if (!out.first_name) out.first_name = parts[0] || '';
+      if (!out.last_name) out.last_name = parts.slice(1).join(' ');
+    }
+  }
+  const hits = [out.first_name, out.last_name, out.national_code, out.father_name, out.birth_date_jalali].filter(Boolean).length;
+  out.confidence = Number((hits / 5).toFixed(2));
+  return out;
+}
+
+function mergeOcr(primary: Partial<IranIdOcr>, fallback: IranIdOcr): IranIdOcr {
+  const pick = (k: keyof IranIdOcr) => String(primary[k] || fallback[k] || '');
+  const merged: IranIdOcr = {
+    first_name: pick('first_name'),
+    last_name: pick('last_name'),
+    national_code: pick('national_code'),
+    father_name: pick('father_name'),
+    birth_date_jalali: pick('birth_date_jalali'),
+    confidence: Number(primary.confidence || fallback.confidence || 0),
+    provider: String(primary.provider || fallback.provider || ''),
+  };
+  if (merged.national_code) merged.national_code = toEnglishDigits(merged.national_code).replace(/\D/g, '').slice(0, 10);
+  if (merged.birth_date_jalali) merged.birth_date_jalali = toEnglishDigits(merged.birth_date_jalali);
+  const hits = [merged.first_name, merged.last_name, merged.national_code, merged.father_name, merged.birth_date_jalali].filter(Boolean).length;
+  merged.confidence = Math.max(merged.confidence, Number((hits / 5).toFixed(2)));
+  return merged;
+}
+
+let gcpTokenCache: { token: string; exp: number } | null = null;
+async function getGcpAccessToken(): Promise<string | null> {
+  const clientId = process.env.GCP_CLIENT_ID;
+  const clientSecret = process.env.GCP_CLIENT_SECRET;
+  const refreshToken = process.env.GCP_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+  if (gcpTokenCache && Date.now() < gcpTokenCache.exp - 60_000) return gcpTokenCache.token;
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+  if (!res.ok) return null;
+  const data: any = await res.json();
+  if (!data.access_token) return null;
+  gcpTokenCache = { token: data.access_token, exp: Date.now() + Number(data.expires_in || 3600) * 1000 };
+  return data.access_token;
+}
+
+async function ocrWithCloudVision(fileBuffer: Buffer): Promise<IranIdOcr | null> {
+  const token = await getGcpAccessToken();
+  const project = process.env.GCP_PROJECT_ID || '';
+  if (!token || !project) return null;
+  const res = await fetch('https://vision.googleapis.com/v1/images:annotate', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'x-goog-user-project': project,
+    },
+    body: JSON.stringify({
+      requests: [{
+        image: { content: fileBuffer.toString('base64') },
+        features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+        imageContext: { languageHints: ['fa', 'en'] },
+      }],
+    }),
+  });
+  if (!res.ok) {
+    console.error('Cloud Vision OCR HTTP', res.status);
+    return null;
+  }
+  const data: any = await res.json();
+  const text = data?.responses?.[0]?.fullTextAnnotation?.text || data?.responses?.[0]?.textAnnotations?.[0]?.description || '';
+  if (!text.trim()) return null;
+  const parsed = parseIranIdText(text);
+  parsed.provider = 'cloud-vision';
+  return parsed;
+}
+
+async function ocrWithGemini(fileBuffer: Buffer, mimeType: string): Promise<IranIdOcr | null> {
+  if (!ai) return null;
+  const prompt = `این تصویر کارت ملی هوشمند ایران است. فقط JSON برگردان، بدون توضیح.
+{
+  "first_name": "نام کوچک به فارسی",
+  "last_name": "نام خانوادگی به فارسی",
+  "national_code": "۱۰ رقم انگلیسی",
+  "father_name": "نام پدر به فارسی",
+  "birth_date_jalali": "مثلا 1378/05/20",
+  "confidence": 0.95
+}
+اگر خوانده نشد رشته خالی بگذار. هیچ فیلدی را حدس نزن.`;
+  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          { inlineData: { data: fileBuffer.toString('base64'), mimeType } },
+          { text: prompt },
+        ],
+      });
+      const responseText = response.text || '';
+      const jsonStart = responseText.indexOf('{');
+      const jsonEnd = responseText.lastIndexOf('}');
+      if (jsonStart === -1 || jsonEnd === -1) continue;
+      const parsed = JSON.parse(responseText.slice(jsonStart, jsonEnd + 1));
+      parsed.provider = `gemini:${model}`;
+      return parsed;
+    } catch (err: any) {
+      console.warn('Gemini OCR model failed', model, err?.message || err);
+    }
+  }
+  return null;
+}
+
+app.get('/api/ocr/status', async (_req, res) => {
+  const vision = !!(process.env.GCP_CLIENT_ID && process.env.GCP_REFRESH_TOKEN && process.env.GCP_PROJECT_ID);
+  res.json({ gemini: !!ai, vision, ready: !!ai || vision });
 });
 
-app.get('/api/payments', (req, res) => {
-  const db = readDb();
-  res.json(db.payments);
-});
-
-// 8. OCR National Card Scan using Gemini or highly detailed intelligent fallback
+// 8. OCR Iranian national smart card: Gemini (if keyed) + Cloud Vision parser
 app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nationalCard', maxCount: 1 }]), async (req, res) => {
   const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
   const uploaded = files?.card?.[0] || files?.nationalCard?.[0] || (req as any).file;
@@ -693,75 +1064,32 @@ app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nati
     return res.status(400).json({ error: 'No file uploaded' });
   }
   (req as any).file = uploaded;
-
-  // Define structured fallbacks for mock cards or failed calls
-  const fallbacks = [
-    { first_name: 'علیرضا', last_name: 'امیدیان', national_code: '0078439210', father_name: 'احمد', birth_date_jalali: '1379/11/04', confidence: 0.95 },
-    { first_name: 'فاطمه', last_name: 'موسوی', national_code: '0451298403', father_name: 'سید علی', birth_date_jalali: '1381/02/18', confidence: 0.98 },
-    { first_name: 'امیررضا', last_name: 'خسروی', national_code: '2280456172', father_name: 'مجتبی', birth_date_jalali: '1376/07/09', confidence: 0.92 },
-  ];
-  const fallback = fallbacks[Math.floor(Math.random() * fallbacks.length)];
-
-  if (ai) {
-    try {
-      const filePath = req.file.path;
-      const fileBuffer = fs.readFileSync(filePath);
-      const base64Data = fileBuffer.toString('base64');
-
-      const prompt = `Please perform OCR on this Iranian National ID card image (کارت ملی هوشمند).
-Extract these exact fields in Persian (except national_code which should be pure digits):
-- First Name (نام)
-- Last Name (نام خانوادگی)
-- National Code (کد ملی)
-- Father's Name (نام پدر)
-- Date of Birth (تاریخ تولد) in Jalali format (e.g. 1378/05/20).
-
-Respond STRICTLY with a valid JSON object matching this schema structure and no Markdown decoration (no backticks):
-{
-  "first_name": "...",
-  "last_name": "...",
-  "national_code": "...",
-  "father_name": "...",
-  "birth_date_jalali": "...",
-  "confidence": 0.95
-}
-If any fields cannot be read, populate them with reasonable simulated values but keep the confidence high.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
-        contents: [
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType: req.file.mimetype,
-            },
-          },
-          { text: prompt },
-        ],
+  const fileBuffer = fs.readFileSync(req.file.path);
+  try {
+    const [gemini, vision] = await Promise.all([
+      ocrWithGemini(fileBuffer, req.file.mimetype || 'image/jpeg'),
+      ocrWithCloudVision(fileBuffer),
+    ]);
+    const empty: IranIdOcr = { first_name: '', last_name: '', national_code: '', father_name: '', birth_date_jalali: '', confidence: 0 };
+    const merged = mergeOcr(gemini || {}, vision || empty);
+    if (gemini) merged.provider = vision ? `${gemini.provider}+cloud-vision` : gemini.provider;
+    else if (vision) merged.provider = 'cloud-vision';
+    const hasAny = !!(merged.first_name || merged.last_name || merged.national_code);
+    if (!hasAny) {
+      return res.status(422).json({
+        success: false,
+        error: 'خواندن کارت ملی ناموفق بود. اطلاعات را دستی وارد کنید.',
+        ...empty,
       });
-
-      const responseText = response.text || '';
-      console.log('Gemini OCR raw response:', responseText);
-
-      // Extract JSON block if Gemini returns backticks
-      const jsonStart = responseText.indexOf('{');
-      const jsonEnd = responseText.lastIndexOf('}');
-      if (jsonStart !== -1 && jsonEnd !== -1) {
-        const jsonStr = responseText.substring(jsonStart, jsonEnd + 1);
-        const parsed = JSON.parse(jsonStr);
-        return res.json(parsed);
-      }
-
-      const parsed = JSON.parse(responseText.trim());
-      return res.json(parsed);
-    } catch (error) {
-      console.error('Error with real Gemini OCR, returning detailed simulated fallback:', error);
-      return res.json(fallback);
     }
-  } else {
-    // Return high quality mock result if Gemini is not set up yet
-    console.log('Gemini API key is not configured, returning simulated fallback.');
-    return res.json(fallback);
+    return res.json({ success: true, ...merged });
+  } catch (error) {
+    console.error('National card OCR failed:', (error as any)?.message || error);
+    return res.status(422).json({
+      success: false,
+      error: 'خواندن کارت ملی ناموفق بود. اطلاعات را دستی وارد کنید.',
+      first_name: '', last_name: '', national_code: '', father_name: '', birth_date_jalali: '', confidence: 0,
+    });
   }
 });
 
@@ -819,37 +1147,49 @@ app.get('/api/enrollments/:id/report-context', (req, res) => {
 });
 
 // 12. Upload receipt PDF
-app.post('/api/enrollments/:id/receipt', upload.single('pdf'), (req, res) => {
-  const db = readDb();
+app.post('/api/enrollments/:id/receipt', upload.single('pdf'), async (req, res) => {
   const enrollmentId = parseInt(req.params.id);
-  const index = db.enrollments.findIndex(e => e.id === enrollmentId);
-
-  if (index === -1) {
-    return res.status(404).json({ error: 'Enrollment not found' });
+  if (!req.file) {
+    return res.status(400).json({ error: 'No PDF file uploaded' });
   }
-
-  if (req.file) {
-    db.enrollments[index].receipt_pdf_path = `/uploads/${req.file.filename}`;
+  const receiptPath = publicPathFromFile(req.file);
+  try {
+    if (chabokan.isMysqlEnabled()) {
+      await chabokan.updateEnrollmentReceipt(enrollmentId, receiptPath);
+      return res.json({ receipt_pdf_path: receiptPath });
+    }
+    const db = readDb();
+    const index = db.enrollments.findIndex(e => e.id === enrollmentId);
+    if (index === -1) {
+      return res.status(404).json({ error: 'Enrollment not found' });
+    }
+    db.enrollments[index].receipt_pdf_path = receiptPath;
     writeDb(db);
-    res.json({ receipt_pdf_path: db.enrollments[index].receipt_pdf_path });
-  } else {
-    res.status(400).json({ error: 'No PDF file uploaded' });
+    res.json({ receipt_pdf_path: receiptPath });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
 // 13. Expenses management
-app.get('/api/expenses', (req, res) => {
-  const db = readDb();
-  res.json(db.expenses);
+app.get('/api/expenses', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listExpenses());
+    res.json(readDb().expenses);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/expenses', (req, res) => {
+app.post('/api/expenses', async (req, res) => {
   const db = readDb();
   const expenseData = req.body;
   const title = sanitizeString(expenseData.title ?? expenseData.expenseTitle, 160);
   const amount = parseFloat(expenseData.amount ?? expenseData.expenseAmount);
   if (!title || !Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: 'title and amount are required' });
+  }
+  try {
+  if (chabokan.isMysqlEnabled()) {
+    return res.json(await chabokan.insertExpense({ ...expenseData, title, amount }));
   }
   const newExpense = {
     id: db.expenses.length > 0 ? Math.max(...db.expenses.map(ex => ex.id)) + 1 : 1,
@@ -862,6 +1202,29 @@ app.post('/api/expenses', (req, res) => {
   db.expenses.push(newExpense);
   writeDb(db);
   res.json(newExpense);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/registrations', async (req, res) => {
+  try {
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listWebsiteRegistrations());
+    res.json([]);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/registrations/:id/approve', async (req, res) => {
+  try {
+    const registrationId = parseInt(req.params.id, 10);
+    const studentId = parseInt(req.body?.student_id, 10);
+    if (!registrationId || !studentId) {
+      return res.status(400).json({ error: 'registration id and student_id are required' });
+    }
+    if (!chabokan.isMysqlEnabled()) {
+      return res.status(503).json({ error: 'MySQL is not enabled' });
+    }
+    const row = await chabokan.linkWebsiteRegistration(registrationId, studentId, 'approved');
+    res.json({ success: true, registration: row });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 
@@ -909,6 +1272,7 @@ app.post('/api/settings/gateways', (req, res) => {
 
 // Vite Integration middleware & SPA fallback
 async function startServer() {
+  await chabokan.initMysql();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -924,7 +1288,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Carla CRM server running on http://localhost:${PORT}`);
+    console.log(`Server started successfully on http://0.0.0.0:${PORT}`);
   });
 }
 
