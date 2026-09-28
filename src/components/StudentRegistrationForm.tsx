@@ -248,10 +248,16 @@ export default function StudentRegistrationForm({
   const [createdEnrollmentId, setCreatedEnrollmentId] = useState<number | null>(null);
   const [pdfPath, setPdfPath] = useState<string | null>(null);
 
-  const [courseNumber, setCourseNumber] = useState<number>(() => {
-    const nums = enrollments.map(e => e.course_number).filter((n): n is number => n != null);
-    return nums.length > 0 ? Math.max(...nums) + 1 : 105;
-  });
+  const maxCourseNum = enrollments.map(e => e.course_number).filter((n): n is number => n != null).reduce((a,b) => Math.max(a,b), 0);
+  const currentMax = maxCourseNum > 0 ? maxCourseNum : 105;
+  const [courseNumber, setCourseNumber] = useState<number>(currentMax);
+  const [showNewCoursePrompt, setShowNewCoursePrompt] = useState<boolean>(false);
+  
+  // Track if they've answered the popup so it doesn't loop
+  const [hasPromptedNewCourse, setHasPromptedNewCourse] = useState<boolean>(false);
+  
+  // Also we want to keep currentMax around to compare
+
 
   /* ── Personal Info ── */
   const [firstName,    setFirstName]    = useState('');
