@@ -281,7 +281,11 @@ export default function StudentRegistrationForm({
   const [isPortrait, setIsPortrait] = useState(false);
 
   /* Course & Payment */
-  const [selectedCourseId, setSelectedCourseId] = useState<number>(courses[0]?.id || 1);
+    const [selectedCourseId, setSelectedCourseId] = useState<number>(courses[0]?.id || 1);
+  const [signupDate, setSignupDate] = useState(() => {
+    const d = new Date();
+    return d.toLocaleDateString('fa-IR-u-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
+  });
   const [finalPrice,       setFinalPrice]       = useState<number>(0);
   const [hasDiscount,      setHasDiscount]      = useState<boolean>(false);
   const [discountAmount,   setDiscountAmount]   = useState<number>(0);
@@ -904,7 +908,10 @@ export default function StudentRegistrationForm({
           <div className="space-y-6">
             <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm">
               <SectionHeader icon={BookOpen} label="دوره آموزشی و شماره دوره" color="amber" />
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
+                <Field label="تاریخ ثبتنام" required>
+                  <Input icon={Calendar} value={signupDate} onChange={setSignupDate} mono />
+                </Field>
                 <div className="sm:col-span-2">
                   <Field label="دوره آموزشی" required>
                     <div className="relative">
