@@ -604,7 +604,7 @@ export default function StudentRegistrationForm({
         student_id: studentObj.id,
         course_id: selectedCourseId,
         course_number: courseNumber,
-        signup_date_jalali: today,
+        signup_date_jalali: signupDate,
         final_price: finalPrice,
       });
       setCreatedEnrollmentId(enrollmentObj.id);
