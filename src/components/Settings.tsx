@@ -26,7 +26,7 @@ import {
   Layers,
   ChevronRight,
 } from 'lucide-react';
-import { Course } from '../types';
+import { Course, StaffRole, StaffUser } from '../types';
 import * as api from '../api/client';
 
 interface SettingsProps {
@@ -189,11 +189,85 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     { id: 3, name: 'صندوق نقد دفتری (تنخواه)', code: 'cash_desk', active: true },
   ]);
 
-  const [systemUsers] = useState([
-    { id: 1, name: 'مدیر کل آموزشگاه (کارلا)', email: 'admin@carla-crm.ir', role: 'مدیر ارشد سیستم', active: true },
-    { id: 2, name: 'مریم صالحی (صندوق‌دار)', email: 'accounting@carla-crm.ir', role: 'حسابدار ارشد', active: true },
-    { id: 3, name: 'استاد حسینی (مربی ارشد)', email: 'coach1@carla-crm.ir', role: 'مربی رانندگی', active: true },
-  ]);
+  const ROLE_LABEL: Record<StaffRole, string> = {
+    admin: 'مدیر',
+    cashier: 'صندوقدار',
+    instructor: 'مربی',
+  };
+  const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState('');
+  const [staffNotice, setStaffNotice] = useState('');
+  const [isSavingStaff, setIsSavingStaff] = useState(false);
+  const [newStaff, setNewStaff] = useState({ full_name: '', username: '', password: '', role: 'cashier' as StaffRole });
+  const [passwordEdits, setPasswordEdits] = useState<Record<number, string>>({});
+
+  const loadStaffUsers = async () => {
+    setStaffLoading(true);
+    setStaffError('');
+    try {
+      setStaffUsers(await api.fetchStaffUsers());
+    } catch (err: any) {
+      setStaffError(err?.message || 'دریافت کاربران ناموفق بود');
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubTab === 'users') loadStaffUsers();
+  }, [activeSubTab]);
+
+  const handleCreateStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStaffError('');
+    setStaffNotice('');
+    setIsSavingStaff(true);
+    try {
+      await api.createStaffUser(newStaff);
+      setNewStaff({ full_name: '', username: '', password: '', role: 'cashier' });
+      setStaffNotice('کاربر ایجاد شد');
+      await loadStaffUsers();
+    } catch (err: any) {
+      setStaffError(err?.message || 'ایجاد کاربر ناموفق بود');
+    } finally {
+      setIsSavingStaff(false);
+    }
+  };
+
+  const handleToggleStaff = async (user: StaffUser) => {
+    if (user.source === 'env') return;
+    setStaffError('');
+    try {
+      await api.updateStaffUser(user.id, { is_active: !user.is_active });
+      await loadStaffUsers();
+    } catch (err: any) {
+      setStaffError(err?.message || 'تغییر وضعیت ناموفق بود');
+    }
+  };
+
+  const handleStaffRole = async (user: StaffUser, role: StaffRole) => {
+    if (user.source === 'env') return;
+    setStaffError('');
+    try {
+      await api.updateStaffUser(user.id, { role });
+      await loadStaffUsers();
+    } catch (err: any) {
+      setStaffError(err?.message || 'تغییر نقش ناموفق بود');
+    }
+  };
+
+  const handleStaffPassword = async (user: StaffUser) => {
+    setStaffError('');
+    setStaffNotice('');
+    try {
+      await api.updateStaffUser(user.id, { password: (passwordEdits[user.id] || '').trim() });
+      setPasswordEdits(prev => ({ ...prev, [user.id]: '' }));
+      setStaffNotice(`رمز «${user.username}» تغییر کرد`);
+    } catch (err: any) {
+      setStaffError(err?.message || 'تغییر رمز ناموفق بود');
+    }
+  };
 
   useEffect(() => {
     async function loadSettings() {
@@ -649,26 +723,80 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <Users className="w-4 h-4 text-rose-600" />کاربران سیستم و سطح دسترسی
                 </h3>
+                <span className="text-[10px] text-slate-400">منبع: فایل محلی — بعداً به MySQL وصل می‌شود</span>
               </div>
+
+              {staffError && (
+                <div className="flex items-center gap-2 text-rose-600 text-xs bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />{staffError}
+                </div>
+              )}
+              {staffNotice && (
+                <div className="flex items-center gap-2 text-emerald-700 text-xs bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2">
+                  <Check className="w-4 h-4 shrink-0" />{staffNotice}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateStaff} className="grid grid-cols-1 md:grid-cols-5 gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                <input className="px-3 py-2 text-xs border border-slate-200 rounded-lg" placeholder="نام نمایشی" value={newStaff.full_name} onChange={e => setNewStaff(s => ({ ...s, full_name: e.target.value }))} required />
+                <input className="px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono" placeholder="username" value={newStaff.username} onChange={e => setNewStaff(s => ({ ...s, username: e.target.value }))} required />
+                <input type="password" className="px-3 py-2 text-xs border border-slate-200 rounded-lg" placeholder="رمز (حداقل ۶)" value={newStaff.password} onChange={e => setNewStaff(s => ({ ...s, password: e.target.value }))} required />
+                <select className="px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white" value={newStaff.role} onChange={e => setNewStaff(s => ({ ...s, role: e.target.value as StaffRole }))}>
+                  <option value="cashier">صندوقدار</option>
+                  <option value="instructor">مربی</option>
+                  <option value="admin">مدیر</option>
+                </select>
+                <button type="submit" disabled={isSavingStaff} className="px-3 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-60 rounded-lg">
+                  {isSavingStaff ? 'در حال ثبت...' : 'افزودن کاربر'}
+                </button>
+              </form>
 
               <div className="overflow-x-auto border border-slate-200 rounded-xl">
                 <table className="w-full text-right text-xs">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-100 text-slate-400 font-semibold">
-                      <th className="p-3">نام کاربر</th>
-                      <th className="p-3">نام کاربری / ایمیل</th>
-                      <th className="p-3">نقش کاربری</th>
+                      <th className="p-3">نام</th>
+                      <th className="p-3">نام کاربری</th>
+                      <th className="p-3">نقش</th>
                       <th className="p-3">وضعیت</th>
+                      <th className="p-3">رمز جدید</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {systemUsers.map(u => (
-                      <tr key={u.id} className="hover:bg-slate-50/60 transition">
-                        <td className="p-3 font-bold text-slate-900">{u.name}</td>
-                        <td className="p-3 font-mono text-slate-600">{u.email}</td>
-                        <td className="p-3 font-bold text-sky-700">{u.role}</td>
+                    {staffLoading ? (
+                      <tr><td className="p-3 text-slate-400" colSpan={5}>در حال بارگذاری...</td></tr>
+                    ) : staffUsers.map(u => (
+                      <tr key={`${u.source}-${u.id}`} className="hover:bg-slate-50/60 transition">
+                        <td className="p-3 font-bold text-slate-900">{u.full_name}</td>
+                        <td className="p-3 font-mono text-slate-600">
+                          {u.username}
+                          {u.locked && <span className="mr-2 text-[9px] text-slate-400">سیستمی</span>}
+                        </td>
                         <td className="p-3">
-                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">فعال</span>
+                          {u.locked ? (
+                            <span className="font-bold text-sky-700">{ROLE_LABEL[u.role]}</span>
+                          ) : (
+                            <select className="border border-slate-200 rounded-md px-2 py-1 bg-white" value={u.role} onChange={e => handleStaffRole(u, e.target.value as StaffRole)}>
+                              <option value="admin">مدیر</option>
+                              <option value="cashier">صندوقدار</option>
+                              <option value="instructor">مربی</option>
+                            </select>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {u.locked ? (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">فعال</span>
+                          ) : (
+                            <button type="button" onClick={() => handleToggleStaff(u)} className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${u.is_active ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
+                              {u.is_active ? 'فعال' : 'غیرفعال'}
+                            </button>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-1">
+                            <input type="password" className="w-28 px-2 py-1 border border-slate-200 rounded-md" placeholder={u.source === 'env' ? 'رمز ادمین' : 'رمز جدید'} value={passwordEdits[u.id] || ''} onChange={e => setPasswordEdits(prev => ({ ...prev, [u.id]: e.target.value }))} />
+                            <button type="button" onClick={() => handleStaffPassword(u)} className="px-2 py-1 text-[10px] font-bold border border-slate-200 rounded-md hover:bg-slate-50">ثبت</button>
+                          </div>
                         </td>
                       </tr>
                     ))}

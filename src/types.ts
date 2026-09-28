@@ -112,6 +112,19 @@ export interface ReportTemplate {
   active: boolean;
 }
 
+export type StaffRole = 'admin' | 'cashier' | 'instructor';
+
+export interface StaffUser {
+  id: number;
+  username: string;
+  full_name: string;
+  role: StaffRole;
+  is_active: boolean;
+  source?: 'local' | 'env';
+  locked?: boolean;
+  created_at?: string;
+}
+
 export interface ReportContextResponse {
   enrollment: Enrollment;
   student: Student;

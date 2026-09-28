@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Lock, User, AlertCircle } from 'lucide-react';
 import * as api from '../api/client';
 
-export default function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
+export default function LoginScreen({ onLoggedIn }: { onLoggedIn: (user?: { username: string; role?: string; full_name?: string }) => void }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -13,8 +13,8 @@ export default function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) 
     setError('');
     setLoading(true);
     try {
-      await api.login(username.trim(), password);
-      onLoggedIn();
+      const data = await api.login(username.trim(), password);
+      onLoggedIn(data.user);
     } catch (err: any) {
       setError(err?.message || 'ورود ناموفق بود');
     } finally {

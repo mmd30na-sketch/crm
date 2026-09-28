@@ -15,7 +15,7 @@ import {
   Wifi,
   LogOut,
 } from 'lucide-react';
-import { Student, Course, Enrollment, Payment, Expense } from './types';
+import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
 import StudentList from './components/StudentList';
 import StudentRegistrationForm from './components/StudentRegistrationForm';
@@ -32,13 +32,15 @@ const NAV_ITEMS = [
     sublabel: 'کنترل و نمای کلی',
     icon: LayoutDashboard,
     color: 'brand',
+    roles: ['admin'] as StaffRole[],
   },
   {
     id: 'students',
-    label: 'داشبورد کارآموزان',
+    label: 'کارآموزان',
     sublabel: 'مدیریت هنرجویان',
     icon: Users,
     color: 'teal',
+    roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
   },
   {
     id: 'register',
@@ -46,6 +48,7 @@ const NAV_ITEMS = [
     sublabel: 'OCR کارت ملی',
     icon: UserPlus,
     color: 'purple',
+    roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
     id: 'accounting',
@@ -53,6 +56,7 @@ const NAV_ITEMS = [
     sublabel: 'درآمد و مخارج',
     icon: BarChart3,
     color: 'amber',
+    roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
     id: 'messenger',
@@ -60,6 +64,7 @@ const NAV_ITEMS = [
     sublabel: 'مرکز ارتباطی',
     icon: MessageSquare,
     color: 'rose',
+    roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
   },
   {
     id: 'settings',
@@ -67,8 +72,15 @@ const NAV_ITEMS = [
     sublabel: 'پیکربندی سیستم',
     icon: SettingsIcon,
     color: 'slate',
+    roles: ['admin'] as StaffRole[],
   },
 ];
+
+const ROLE_LABEL: Record<StaffRole, string> = {
+  admin: 'مدیر سیستم',
+  cashier: 'صندوقدار',
+  instructor: 'مربی',
+};
 
 const ICON_COLOR_MAP: Record<string, string> = {
   brand:  'text-sky-400',
@@ -91,6 +103,7 @@ const ACTIVE_BADGE_MAP: Record<string, string> = {
 export default function App() {
   const [authed, setAuthed] = useState<boolean>(!!api.getAuthToken());
   const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
+  const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>('supervisor');
   const [loading, setLoading] = useState<boolean>(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
@@ -140,11 +153,17 @@ export default function App() {
         return;
       }
       try {
-        await api.fetchMe();
-        if (!cancelled) setAuthed(true);
+        const me = await api.fetchMe();
+        if (!cancelled) {
+          setCurrentUser(me.user || null);
+          setAuthed(true);
+        }
       } catch {
         api.logout();
-        if (!cancelled) setAuthed(false);
+        if (!cancelled) {
+          setCurrentUser(null);
+          setAuthed(false);
+        }
       } finally {
         if (!cancelled) setAuthChecking(false);
       }
@@ -156,9 +175,21 @@ export default function App() {
     if (authed) refreshAllData();
   }, [authed]);
 
-  const handleActiveTabChange = (newTab: string) => setActiveTab(newTab);
+  const role: StaffRole = currentUser?.role === 'cashier' || currentUser?.role === 'instructor' ? currentUser.role : 'admin';
+  const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role));
 
-  const activeNavItem = NAV_ITEMS.find(n => n.id === activeTab);
+  const handleActiveTabChange = (newTab: string) => {
+    if (!visibleNav.some(item => item.id === newTab)) return;
+    setActiveTab(newTab);
+  };
+
+  useEffect(() => {
+    if (!visibleNav.some(item => item.id === activeTab)) {
+      setActiveTab(visibleNav[0]?.id || 'students');
+    }
+  }, [role, activeTab]);
+
+  const activeNavItem = visibleNav.find(n => n.id === activeTab) || NAV_ITEMS.find(n => n.id === activeTab);
 
   const jalaliDate = new Date().toLocaleDateString('fa-IR');
 
@@ -166,7 +197,7 @@ export default function App() {
     return <div className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center" dir="rtl">در حال بررسی ورود...</div>;
   }
   if (!authed) {
-    return <LoginScreen onLoggedIn={() => setAuthed(true)} />;
+    return <LoginScreen onLoggedIn={(user) => { setCurrentUser(user || null); setAuthed(true); }} />;
   }
 
   return (
@@ -193,7 +224,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-white text-base font-bold tracking-tight leading-tight">Carla CRM</h1>
-              <p className="text-slate-500 text-[9px] uppercase tracking-widest font-semibold">آموزشگاه رانندگی</p>
+              
             </div>
           </div>
         </div>
@@ -205,7 +236,7 @@ export default function App() {
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           <p className="carla-section-title px-3 mb-2">منوی اصلی</p>
 
-          {NAV_ITEMS.map((item) => {
+          {visibleNav.map((item) => {
             const isActive = activeTab === item.id;
             const Icon = item.icon;
             return (
@@ -260,12 +291,12 @@ export default function App() {
               />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold text-slate-300 leading-tight truncate">مدیریت پذیرش</div>
-              <div className="text-[9px] text-slate-600 leading-tight">نسخه ۲.۴.۰ نهایی</div>
+              <div className="text-xs font-semibold text-slate-300 leading-tight truncate">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
+              <div className="text-[9px] text-slate-600 leading-tight">{ROLE_LABEL[role]}</div>
             </div>
             <button
               title="خروج"
-              onClick={() => { api.logout(); setAuthed(false); }}
+              onClick={() => { api.logout(); setCurrentUser(null); setAuthed(false); }}
               className="p-1.5 rounded-lg text-slate-500 hover:text-rose-300 hover:bg-white/5"
             >
               <LogOut className="h-4 w-4" />
@@ -296,7 +327,7 @@ export default function App() {
 
             {/* Breadcrumb */}
             <div className="flex items-center gap-1.5 text-sm">
-              <span className="text-slate-400 font-medium">کارلا</span>
+              
               <ChevronLeft className="h-3.5 w-3.5 text-slate-300" />
               {activeNavItem && (
                 <div className="flex items-center gap-1.5">
@@ -345,13 +376,13 @@ export default function App() {
             {/* User Avatar */}
             <div className="flex items-center gap-2.5 pl-1">
               <div className="hidden md:block text-right">
-                <div className="text-xs font-bold text-slate-700 leading-tight">مدیریت پذیرش</div>
-                <div className="text-[9px] text-slate-400">صندوق‌دار سیستم</div>
+                <div className="text-xs font-bold text-slate-700 leading-tight">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
+                <div className="text-[9px] text-slate-400">{ROLE_LABEL[role]}</div>
               </div>
               <div className="h-8 w-8 rounded-xl overflow-hidden border-2 border-sky-100 ring-1 ring-sky-200/50">
                 <img
                   src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=64&h=64&q=80"
-                  alt="اپراتور کارلا"
+                  alt="اپراتور"
                   className="h-full w-full object-cover"
                 />
               </div>
@@ -371,7 +402,7 @@ export default function App() {
             </div>
           ) : (
             <div className="fade-in">
-              {activeTab === 'supervisor' && (
+              {activeTab === 'supervisor' && role === 'admin' && (
                 <SupervisorDashboard
                   students={students}
                   courses={courses}
@@ -392,7 +423,7 @@ export default function App() {
                   onActiveTabChange={handleActiveTabChange}
                 />
               )}
-              {activeTab === 'register' && (
+              {activeTab === 'register' && (role === 'admin' || role === 'cashier') && (
                 <StudentRegistrationForm
                   courses={courses}
                   enrollments={enrollments}
@@ -400,7 +431,7 @@ export default function App() {
                   onActiveTabChange={handleActiveTabChange}
                 />
               )}
-              {activeTab === 'accounting' && (
+              {activeTab === 'accounting' && (role === 'admin' || role === 'cashier') && (
                 <AccountingDashboard
                   students={students}
                   courses={courses}
@@ -416,7 +447,7 @@ export default function App() {
                   onRefresh={refreshAllData}
                 />
               )}
-              {activeTab === 'settings' && (
+              {activeTab === 'settings' && role === 'admin' && (
                 <Settings
                   courses={courses}
                   onRefresh={refreshAllData}
@@ -440,7 +471,7 @@ export default function App() {
             <span>Carla CRM v2.4.0</span>
           </div>
           <div className="text-[10px] text-slate-400">
-            سیستم جامع مدیریت آموزشگاه رانندگی کارلا
+            سیستم مدیریت
           </div>
         </footer>
       </main>

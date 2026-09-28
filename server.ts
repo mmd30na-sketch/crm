@@ -206,6 +206,17 @@ interface Expense {
   description?: string;
 }
 
+
+interface StaffUserRecord {
+  id: number;
+  username: string;
+  password_hash: string;
+  full_name: string;
+  role: 'admin' | 'cashier' | 'instructor';
+  is_active: boolean;
+  created_at: string;
+}
+
 interface ReportTemplate {
   key: string;
   title: string;
@@ -222,6 +233,7 @@ interface DatabaseSchema {
     address: string;
     header_text?: string;
     footer_text?: string;
+    admin_password_hash?: string;
   };
   courses: Course[];
   students: Student[];
@@ -229,6 +241,7 @@ interface DatabaseSchema {
   payments: Payment[];
   expenses: Expense[];
   reportTemplates: ReportTemplate[];
+  staff_users: StaffUserRecord[];
 }
 
 // Initial Seed Data
@@ -304,7 +317,8 @@ const initialDb: DatabaseSchema = {
   reportTemplates: [
     { key: 'standard_receipt', title: 'فیش پرداخت رسمی کارآموز (A5)', category: 'receipt', active: true, body: '<div class="receipt-print">...</div>' },
     { key: 'standard_contract', title: 'قرارداد رسمی آموزش رانندگی', category: 'contract', active: true, body: '<div class="contract-print">...</div>' },
-  ]
+  ],
+  staff_users: [],
 };
 
 // Helper function to read/write DB
@@ -312,7 +326,9 @@ function readDb(): typeof initialDb {
   try {
     if (fs.existsSync(DB_PATH)) {
       const data = fs.readFileSync(DB_PATH, 'utf8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (!Array.isArray(parsed.staff_users)) parsed.staff_users = [];
+      return parsed;
     }
   } catch (err) {
     console.error('Error reading database file, using in-memory store instead.', err);
@@ -428,7 +444,6 @@ function readBearer(req: express.Request): string | null {
 }
 
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (!chabokan.isMysqlEnabled()) return next();
   const token = readBearer(req);
   const session = token ? verifyToken(token) : null;
   if (!session) return res.status(401).json({ error: 'Unauthorized' });
@@ -453,9 +468,33 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const envUser = process.env.CRM_ADMIN_USER || 'admin';
     const envPass = process.env.CRM_ADMIN_PASSWORD || '';
-    if (envPass && username === envUser && password === envPass) {
-      const token = signToken({ username, role: 'admin', source: 'env' });
-      return res.json({ token, user: { username, role: 'admin' } });
+    if (username === envUser) {
+      const adminHash = readDb().settings?.admin_password_hash;
+      const envOk = !!envPass && password === envPass;
+      const hashOk = adminHash ? await bcrypt.compare(password, String(adminHash)) : false;
+      if (hashOk || (!adminHash && envOk)) {
+        const token = signToken({ username: envUser, role: 'admin', source: 'env' });
+        return res.json({ token, user: { username: envUser, role: 'admin', full_name: 'مدیر سیستم' } });
+      }
+    }
+
+    const localStaff = readDb().staff_users.find(
+      (s) => s.username.toLowerCase() === username.toLowerCase()
+    );
+    if (localStaff && localStaff.is_active && localStaff.password_hash) {
+      const ok = await bcrypt.compare(password, String(localStaff.password_hash));
+      if (ok) {
+        const token = signToken({
+          username: localStaff.username,
+          role: localStaff.role,
+          user_id: localStaff.id,
+          source: 'local',
+        });
+        return res.json({
+          token,
+          user: { username: localStaff.username, role: localStaff.role, full_name: localStaff.full_name },
+        });
+      }
     }
 
     if (chabokan.isMysqlEnabled()) {
@@ -484,11 +523,170 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, db: chabokan.isMysqlEnabled() ? 'chabokan-mysql' : 'json-file' });
 });
 
+const STAFF_ROLES = ['admin', 'cashier', 'instructor'] as const;
+type StaffRole = typeof STAFF_ROLES[number];
+
+function currentRole(req: express.Request): StaffRole | null {
+  const role = String((req as any).user?.role || '');
+  return (STAFF_ROLES as readonly string[]).includes(role) ? role as StaffRole : null;
+}
+
+function canAccessApi(role: StaffRole, method: string, path: string): boolean {
+  if (role === 'admin') return true;
+  const write = method !== 'GET' && method !== 'HEAD';
+  if (path.startsWith('/staff') || path.startsWith('/settings') || path.startsWith('/imports')) return false;
+  if (path.startsWith('/courses') && write) return false;
+  if (path.startsWith('/receipt-settings') && write) return false;
+  if (path.startsWith('/payments') || path.startsWith('/expenses')) return role === 'cashier';
+  if (path.startsWith('/ocr')) return role === 'cashier';
+  if (path.includes('report-templates') || path.includes('report-context') || path.includes('/receipt')) return role === 'cashier';
+  if (path.startsWith('/registrations')) return role === 'cashier';
+  if (path.startsWith('/students') || path.startsWith('/enrollments')) {
+    if (write) return role === 'cashier';
+    return true;
+  }
+  if (path.startsWith('/messenger')) return true;
+  if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
+  if (!write) return role === 'cashier';
+  return false;
+}
+
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth')) return next();
   if (req.path === '/health') return next();
+  if (req.path === '/messenger/webhook') return next();
   if (req.method === 'OPTIONS') return next();
   return requireAuth(req, res, next);
+});
+
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth') || req.path === '/health' || req.path === '/messenger/webhook' || req.method === 'OPTIONS') return next();
+  const role = currentRole(req);
+  if (!role) return res.status(401).json({ error: 'Unauthorized' });
+  if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
+  next();
+});
+
+function envAdminUsername() {
+  return sanitizeString(process.env.CRM_ADMIN_USER || 'admin', 80) || 'admin';
+}
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const token = readBearer(req);
+  const session = token ? verifyToken(token) : null;
+  if (!session) return res.status(401).json({ error: 'Unauthorized' });
+  if (session.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
+  (req as any).user = session;
+  next();
+}
+
+function publicStaffUser(u: StaffUserRecord) {
+  return {
+    id: u.id,
+    username: u.username,
+    full_name: u.full_name,
+    role: u.role,
+    is_active: !!u.is_active,
+    source: 'local' as const,
+    locked: false,
+    created_at: u.created_at,
+  };
+}
+
+function envAdminPublic() {
+  return {
+    id: 0,
+    username: envAdminUsername(),
+    full_name: 'مدیر سیستم',
+    role: 'admin' as const,
+    is_active: true,
+    source: 'env' as const,
+    locked: true,
+  };
+}
+
+function nextStaffId(users: StaffUserRecord[]) {
+  return users.length > 0 ? Math.max(...users.map((u) => u.id)) + 1 : 1;
+}
+
+app.get('/api/staff', requireAdmin, (req, res) => {
+  const db = readDb();
+  res.json({ users: [envAdminPublic(), ...db.staff_users.map(publicStaffUser)] });
+});
+
+app.post('/api/staff', requireAdmin, async (req, res) => {
+  try {
+    const username = sanitizeString(req.body?.username, 80).toLowerCase();
+    const full_name = sanitizeString(req.body?.full_name, 80);
+    const password = String(req.body?.password || '');
+    const role = String(req.body?.role || 'cashier') as StaffRole;
+    const is_active = req.body?.is_active !== false;
+    if (!username || !full_name) return res.status(400).json({ error: 'نام و نام کاربری الزامی است' });
+    if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
+      return res.status(400).json({ error: 'نام کاربری باید ۳ تا ۳۲ کاراکتر لاتین باشد' });
+    }
+    if (password.length < 6) return res.status(400).json({ error: 'رمز حداقل ۶ کاراکتر باشد' });
+    if (!STAFF_ROLES.includes(role)) return res.status(400).json({ error: 'نقش نامعتبر است' });
+    if (username === envAdminUsername().toLowerCase()) {
+      return res.status(409).json({ error: 'این نام کاربری سیستمی است' });
+    }
+    const db = readDb();
+    if (db.staff_users.some((s) => s.username.toLowerCase() === username)) {
+      return res.status(409).json({ error: 'نام کاربری تکراری است' });
+    }
+    const record: StaffUserRecord = {
+      id: nextStaffId(db.staff_users),
+      username,
+      password_hash: await bcrypt.hash(password, 10),
+      full_name,
+      role,
+      is_active,
+      created_at: new Date().toISOString(),
+    };
+    db.staff_users.push(record);
+    writeDb(db);
+    res.json({ status: 'success', user: publicStaffUser(record) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/staff/:id', requireAdmin, async (req, res) => {
+  try {
+    const staffId = parseInt(req.params.id, 10);
+    const body = req.body || {};
+    if (!staffId) {
+      const password = String(body.password || '');
+      if (password.length < 6) return res.status(400).json({ error: 'رمز حداقل ۶ کاراکتر باشد' });
+      const db = readDb();
+      db.settings = db.settings || ({} as typeof db.settings);
+      db.settings.admin_password_hash = await bcrypt.hash(password, 10);
+      writeDb(db);
+      return res.json({ status: 'success', user: envAdminPublic() });
+    }
+    const db = readDb();
+    const index = db.staff_users.findIndex((s) => s.id === staffId);
+    if (index === -1) return res.status(404).json({ error: 'کاربر یافت نشد' });
+    const current = db.staff_users[index];
+    const full_name = body.full_name !== undefined ? sanitizeString(body.full_name, 80) : current.full_name;
+    if (!full_name) return res.status(400).json({ error: 'نام الزامی است' });
+    let role = current.role;
+    if (body.role !== undefined) {
+      if (!STAFF_ROLES.includes(body.role)) return res.status(400).json({ error: 'نقش نامعتبر است' });
+      role = body.role;
+    }
+    const is_active = body.is_active !== undefined ? !!body.is_active : current.is_active;
+    let password_hash = current.password_hash;
+    if (body.password) {
+      if (String(body.password).length < 6) return res.status(400).json({ error: 'رمز حداقل ۶ کاراکتر باشد' });
+      password_hash = await bcrypt.hash(String(body.password), 10);
+    }
+    db.staff_users[index] = { ...current, full_name, role, is_active, password_hash };
+    writeDb(db);
+    res.json({ status: 'success', user: publicStaffUser(db.staff_users[index]) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Serve uploads statically

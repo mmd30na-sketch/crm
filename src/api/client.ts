@@ -16,6 +16,7 @@ import {
   ReportContextResponse,
   Expense,
   WebsiteRegistration,
+  StaffUser,
 } from '../types';
 
 function resolveApiOrigin(): string {
@@ -635,3 +636,42 @@ export async function fetchMessengerMessages(): Promise<any[]> {
     return [];
   }
 }
+
+export async function fetchStaffUsers(): Promise<StaffUser[]> {
+  const res = await apiFetch('/staff');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'دریافت کاربران ناموفق بود');
+  return Array.isArray(data.users) ? data.users : [];
+}
+
+export async function createStaffUser(body: {
+  username: string;
+  full_name: string;
+  password: string;
+  role: StaffUser['role'];
+  is_active?: boolean;
+}): Promise<StaffUser> {
+  const res = await apiFetch('/staff', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'ایجاد کاربر ناموفق بود');
+  return data.user;
+}
+
+export async function updateStaffUser(id: number, body: {
+  full_name?: string;
+  role?: StaffUser['role'];
+  is_active?: boolean;
+  password?: string;
+}): Promise<StaffUser> {
+  const res = await apiFetch(`/staff/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'بروزرسانی کاربر ناموفق بود');
+  return data.user;
+}
+

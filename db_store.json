@@ -512,5 +512,16 @@
       "message": "سلام /start",
       "received_at": "2026-07-29T16:04:16.204Z"
     }
+  ],
+  "staff_users": [
+    {
+      "id": 1,
+      "username": "cashier1",
+      "password_hash": "$2b$10$3RD2F0pJvyAlHg9qM7DbbOi1DZNGSeku6a8k4TZpWpUvZ1fYvXy0u",
+      "full_name": "صندوقدار آزمایشی",
+      "role": "cashier",
+      "is_active": true,
+      "created_at": "2026-09-28T09:01:13.798Z"
+    }
   ]
 }
