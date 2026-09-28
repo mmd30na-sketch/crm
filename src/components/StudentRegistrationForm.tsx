@@ -40,7 +40,7 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+      <label className="block text-sm font-semibold text-slate-700 mb-2">
         {label}
         {required && <span className="text-rose-500 mr-1">*</span>}
       </label>
@@ -66,7 +66,7 @@ function Input({
 }) {
   return (
     <div className="relative">
-      <Icon className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <Icon className="w-5 h-5 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       <input
         id={id}
         type={type}
@@ -77,7 +77,7 @@ function Input({
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`w-full min-h-11 pr-9 pl-3 text-sm border rounded-xl focus:outline-none focus:ring-2 transition ${
+        className={`w-full min-h-[52px] pr-11 pl-4 text-sm font-medium border rounded-2xl focus:outline-none focus:ring-2 focus:ring-offset-1 transition-all shadow-sm ${
           error
             ? 'border-rose-300 bg-rose-50/40 focus:border-rose-400 focus:ring-rose-100'
             : 'border-slate-200 bg-white focus:border-sky-400 focus:ring-sky-100'
@@ -176,7 +176,7 @@ function SectionHeader({ icon: Icon, label, color = 'sky' }: {
     amber:  'bg-amber-50 text-amber-700 border-amber-200',
   };
   return (
-    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold mb-3 ${map[color]}`}>
+    <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold mb-4 ${map[color]}`}>
       <Icon className="w-3.5 h-3.5" />
       {label}
     </div>
@@ -233,6 +233,14 @@ export default function StudentRegistrationForm({
   onActiveTabChange,
 }: StudentRegistrationFormProps) {
 
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768 || /Mobi|Android/i.test(navigator.userAgent));
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess,    setIsSuccess]    = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -275,6 +283,9 @@ export default function StudentRegistrationForm({
   /* Course & Payment */
   const [selectedCourseId, setSelectedCourseId] = useState<number>(courses[0]?.id || 1);
   const [finalPrice,       setFinalPrice]       = useState<number>(0);
+  const [hasDiscount,      setHasDiscount]      = useState<boolean>(false);
+  const [discountAmount,   setDiscountAmount]   = useState<number>(0);
+  const [paymentType,      setPaymentType]      = useState<'full'|'partial'>('full');
   const [payAmount,        setPayAmount]        = useState<number>(0);
   const [payMethod,        setPayMethod]        = useState('pos');
   const [payDesc,          setPayDesc]          = useState('');
@@ -535,10 +546,6 @@ export default function StudentRegistrationForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (step !== 3) {
-      goNext();
-      return;
-    }
     if (!firstName || !lastName || !nationalCode || !phoneNumber) {
       setStepError('فیلدهای ستاره‌دار اجباری را تکمیل کنید.'); return;
     }
@@ -697,11 +704,7 @@ export default function StudentRegistrationForm({
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-lg font-black text-slate-900">ثبت‌نام هوشمند کارآموز</h2>
-            <p className="text-xs text-slate-400">
-              {step === 1 && 'گام ۱: مدارک و اطلاعات شخصی'}
-              {step === 2 && 'گام ۲: تلفن همراه و آدرس'}
-              {step === 3 && 'گام ۳: دوره آموزشی و شماره دوره'}
-            </p>
+            
           </div>
           <div className="flex items-center gap-1.5 px-3 py-1 bg-sky-50 border border-sky-200 rounded-xl">
             <Sparkles className="w-3.5 h-3.5 text-sky-500" />
@@ -709,7 +712,6 @@ export default function StudentRegistrationForm({
           </div>
         </div>
 
-        <WizardSteps step={step} onSelect={(s) => { setStepError(null); setStep(s); }} />
 
         {(stepError || ocrError) && (
           <div role="alert" className="mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-rose-700">
@@ -718,7 +720,7 @@ export default function StudentRegistrationForm({
           </div>
         )}
 
-        {pendingRegs.length > 0 && step === 1 && (
+        {pendingRegs.length > 0 && (
           <div className="mb-4 bg-violet-50/70 border border-violet-200 rounded-2xl p-3.5">
             <div className="flex items-center justify-between gap-3 mb-2">
               <div className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-800">
@@ -760,10 +762,9 @@ export default function StudentRegistrationForm({
           </div>
         )}
 
-        {step === 1 && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_200px] gap-3 items-start">
-              <div className="bg-white border border-sky-200 rounded-2xl p-4 shadow-xs">
+        <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_240px] gap-5 items-start">
+              <div className="bg-white/90 border border-sky-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition duration-300">
                 <div className="flex items-center justify-between mb-2">
                   <div className="inline-flex items-center gap-1.5 text-sm font-black text-sky-800">
                     <CreditCard className="w-4 h-4" />
@@ -771,37 +772,43 @@ export default function StudentRegistrationForm({
                   </div>
                   {idCardPreview && <CheckCircle className="w-4 h-4 text-emerald-500" />}
                 </div>
-                <p className="text-[11px] text-slate-500 mb-3 flex items-center gap-1.5">
-                  <RotateCw className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                  کارت ملی ایران ۸۵.۶×۵۴ میلی‌متر است — گوشی را افقی بگیرید
-                </p>
+                
                 <div className={`w-full max-w-lg mx-auto aspect-[85.6/53.98] rounded-[14px] border-2 overflow-hidden mb-3 flex items-center justify-center ${idCardPreview ? 'border-sky-400 bg-white' : 'border-dashed border-sky-300 bg-sky-50/50'}`}>
                   {idCardPreview ? (
                     <img src={idCardPreview} alt="کارت ملی" className="w-full h-full object-cover" />
                   ) : (
                     <div className="text-center text-sky-400 px-4">
                       <CreditCard className="w-10 h-10 mx-auto mb-1" />
-                      <span className="text-xs font-bold block">کادر کارت ملی (افقی)</span>
-                      <span className="text-[10px] opacity-80">نسبت واقعی ID-1</span>
+                      <span className="text-sm font-bold block">کادر کارت ملی</span>
+                      
                     </div>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => startCamera('idCard')}
-                  disabled={isScanningOCR}
-                  className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 disabled:opacity-60 text-white text-sm font-extrabold rounded-xl transition shadow-sm flex items-center justify-center gap-2"
-                >
-                  {isScanningOCR
-                    ? <><Loader2 className="w-5 h-5 animate-spin" />در حال خواندن کارت ملی...</>
-                    : <><RotateCw className="w-5 h-5" />اسکن افقی کارت ملی</>}
-                </button>
                 <input type="file" id="idCardFirstUpload" accept="image/*"
                   onChange={e => { const f = e.target.files?.[0]; e.target.value=''; if (f) assignIdCard(f); }} className="hidden" />
-                <label htmlFor="idCardFirstUpload"
-                  className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 cursor-pointer transition flex items-center justify-center gap-2">
-                  <FolderOpen className="w-4 h-4 text-slate-500" />انتخاب فایل کارت ملی
-                </label>
+                {isMobile ? (
+                  <>
+                    <button type="button" onClick={() => startCamera('idCard')} disabled={isScanningOCR}
+                      className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 disabled:opacity-60 text-white text-sm font-extrabold rounded-xl shadow-sm transition flex items-center justify-center gap-2"
+                    >
+                      {isScanningOCR ? <><Loader2 className="w-5 h-5 animate-spin" />در حال خواندن کارت ملی...</> : <><Camera className="w-5 h-5" />دوربین گوشی (اسکن کارت)</>}
+                    </button>
+                    <label htmlFor="idCardFirstUpload" className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 cursor-pointer flex items-center justify-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-slate-500" />گالری فایل
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="idCardFirstUpload" className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 text-white text-sm font-extrabold rounded-xl cursor-pointer shadow-sm flex items-center justify-center gap-2">
+                      <FolderOpen className="w-5 h-5" />انتخاب فایل اسکنشده (پیشفرض)
+                    </label>
+                    <button type="button" onClick={() => alert('سرویس دسکتاپ اسکنر در حال توسعه است. فعلاً از انتخاب فایل استفاده کنید.')} disabled={isScanningOCR}
+                      className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-2"
+                    >
+                      {isScanningOCR ? <><Loader2 className="w-4 h-4 animate-spin text-sky-600" />در حال پردازش...</> : <><Camera className="w-4 h-4 text-slate-500" />اسکن مستقیم با دستگاه</>}
+                    </button>
+                  </>
+                )}
                 {idCardFile && !ocrSuccess && !isScanningOCR && (
                   <button type="button" onClick={() => void runOcr()}
                     className="mt-2 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5">
@@ -813,106 +820,128 @@ export default function StudentRegistrationForm({
                 )}
               </div>
 
-              <div className="bg-white border border-teal-200 rounded-2xl p-4 shadow-xs">
+              <div className="bg-white/90 border border-teal-100 rounded-3xl p-6 shadow-sm hover:shadow-md transition duration-300">
                 <div className="flex items-center justify-between mb-2">
                   <div className="inline-flex items-center gap-1.5 text-sm font-black text-teal-800">
                     <User className="w-4 h-4" />عکس پرسنلی ۳×۴
                   </div>
                   {personalPhotoPreview && <CheckCircle className="w-4 h-4 text-emerald-500" />}
                 </div>
-                <p className="text-[11px] text-slate-500 mb-3">
-                  اندازه رسمی ۳×۴ سانتی‌متر — گوشی را عمودی بگیرید
-                </p>
+                
                 <div className={`w-[168px] mx-auto aspect-[3/4] rounded-xl border-2 overflow-hidden mb-3 flex items-center justify-center ${personalPhotoPreview ? 'border-teal-400 bg-white' : 'border-dashed border-teal-300 bg-teal-50/50'}`}>
                   {personalPhotoPreview ? (
                     <img src={personalPhotoPreview} alt="عکس پرسنلی ۳×۴" className="w-full h-full object-cover" />
                   ) : (
                     <div className="text-center text-teal-400 px-2">
                       <User className="w-8 h-8 mx-auto mb-1" />
-                      <span className="text-xs font-bold block">کادر عمودی ۳×۴</span>
+                      <span className="text-sm font-bold block">عکس پرسنلی</span>
                       <span className="text-[10px] opacity-80">۳ سانتی‌متر × ۴ سانتی‌متر</span>
                     </div>
                   )}
                 </div>
-                <button type="button" onClick={() => startCamera('personal')}
-                  className="w-full py-3 bg-gradient-to-l from-teal-600 to-teal-500 hover:from-teal-700 text-white text-sm font-extrabold rounded-xl transition shadow-sm flex items-center justify-center gap-2">
-                  <Camera className="w-5 h-5" />ثبت عکس عمودی ۳×۴
-                </button>
                 <input type="file" id="personalPhotoFirstUpload" accept="image/*"
                   onChange={e => { const f = e.target.files?.[0]; e.target.value=''; if (f) void assignPersonalPhoto(f); }} className="hidden" />
-                <label htmlFor="personalPhotoFirstUpload"
-                  className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 cursor-pointer transition flex items-center justify-center gap-2">
-                  <FolderOpen className="w-4 h-4 text-slate-500" />انتخاب فایل عکس پرسنلی
-                </label>
+                {isMobile ? (
+                  <>
+                    <button type="button" onClick={() => startCamera('personal')}
+                      className="w-full py-3 bg-gradient-to-l from-teal-600 to-teal-500 hover:from-teal-700 text-white text-sm font-extrabold rounded-xl shadow-sm transition flex items-center justify-center gap-2"
+                    >
+                      <Camera className="w-5 h-5" />عکاسی با دوربین ۳×۴
+                    </button>
+                    <label htmlFor="personalPhotoFirstUpload" className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 cursor-pointer flex items-center justify-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-slate-500" />انتخاب فتو گالری
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="personalPhotoFirstUpload" className="w-full py-3 bg-gradient-to-l from-teal-600 to-teal-500 hover:from-teal-700 text-white text-sm font-extrabold rounded-xl cursor-pointer shadow-sm flex items-center justify-center gap-2">
+                      <FolderOpen className="w-5 h-5" />انتخاب فایل ۳×۴ (پیشفرض)
+                    </label>
+                    <button type="button" onClick={() => alert('سرویس دسکتاپ اسکنر در حال توسعه است. فعلاً از انتخاب فایل استفاده کنید.')}
+                      className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-2"
+                    >
+                      <Camera className="w-4 h-4 text-slate-500" />اسکن مستقیم با دستگاه
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-xs">
               <SectionHeader icon={User} label="اطلاعات شخصی کارآموز" color="sky" />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
                 <Field label="نام" required>
-                  <Input icon={User} value={firstName} onChange={setFirstName} placeholder="امیرحسین" />
+                  <Input icon={User} value={firstName} onChange={setFirstName} placeholder="نام" />
                 </Field>
                 <Field label="نام خانوادگی" required>
-                  <Input icon={User} value={lastName} onChange={setLastName} placeholder="رضایی" />
+                  <Input icon={User} value={lastName} onChange={setLastName} placeholder="نام خانوادگی" />
                 </Field>
                 <Field label="کد ملی" required error={nationalCodeError}>
-                  <Input icon={CreditCard} value={nationalCode} onChange={setNationalCode} placeholder="۱۰ رقم" mono error={!!nationalCodeError} inputMode="numeric" maxLength={10} autoComplete="off" />
+                  <Input icon={CreditCard} value={nationalCode} onChange={setNationalCode} placeholder="کد ملی ده رقمی" mono error={!!nationalCodeError} inputMode="numeric" maxLength={10} autoComplete="off" />
                 </Field>
                 <Field label="نام پدر">
-                  <Input icon={User} value={fatherName} onChange={setFatherName} placeholder="علیرضا" />
+                  <Input icon={User} value={fatherName} onChange={setFatherName} placeholder="نام پدر" />
                 </Field>
                 <div className="sm:col-span-2">
                   <Field label="تاریخ تولد">
-                    <Input icon={Calendar} value={birthDate} onChange={setBirthDate} placeholder="۱۳۸۰/۰۱/۰۱" mono />
+                    <Input icon={Calendar} value={birthDate} onChange={setBirthDate} placeholder="مثال: ۱۳۷۰/۰۵/۲۴" mono />
                   </Field>
                 </div>
               </div>
             </div>
           </div>
-        )}
 
-        {step === 2 && (
-          <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-xs space-y-3">
+          <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-5">
             <SectionHeader icon={Phone} label="اطلاعات ارتباطی" color="teal" />
             <Field label="شماره همراه" required error={phoneError}>
-              <Input icon={Phone} value={phoneNumber} onChange={setPhoneNumber} placeholder="0912xxxxxxx" mono error={!!phoneError} type="tel" inputMode="numeric" maxLength={11} autoComplete="tel" />
+              <Input icon={Phone} value={phoneNumber} onChange={setPhoneNumber} placeholder="شماره موبایل (مانند 09123456789)" mono error={!!phoneError} type="tel" inputMode="numeric" maxLength={11} autoComplete="tel" />
             </Field>
             <Field label="آدرس سکونت">
-              <Input icon={MapPin} value={address} onChange={setAddress} placeholder="تهران، ونک، خیابان ولیعصر..." />
+              <Input icon={MapPin} value={address} onChange={setAddress} placeholder="آدرس کامل پستی" />
             </Field>
           </div>
-        )}
 
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-xs">
+          <div className="space-y-6">
+            <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm">
               <SectionHeader icon={BookOpen} label="دوره آموزشی و شماره دوره" color="amber" />
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                 <div className="sm:col-span-2">
                   <Field label="دوره آموزشی" required>
                     <div className="relative">
-                      <BookOpen className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <BookOpen className="w-5 h-5 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <select value={selectedCourseId} onChange={e => setSelectedCourseId(+e.target.value)}
-                        className="w-full pr-9 pl-6 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-sky-400 bg-white cursor-pointer transition appearance-none font-medium">
+                        className="w-full min-h-[52px] pr-11 pl-4 text-sm border border-slate-200 rounded-2xl focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 focus:ring-offset-1 transition-all shadow-sm appearance-none bg-white font-medium cursor-pointer">
                         {courses.map(c => (
-                          <option key={c.id} value={c.id}>{c.title} — {c.tuition.toLocaleString('fa-IR')} تومان</option>
+                          <option key={c.id} value={c.id}>{c.title}</option>
                         ))}
                       </select>
                     </div>
                   </Field>
                 </div>
                 <Field label="شماره دوره">
-                  <Input icon={BookOpen} value={courseNumber} onChange={v => setCourseNumber(+v || 0)} type="number" mono />
-                </Field>
-                <Field label="شهریه نهایی (تومان)">
-                  <Input icon={DollarSign} value={finalPrice} onChange={v => setFinalPrice(+v || 0)} type="number" mono />
+                  <Input icon={BookOpen} value={courseNumber || ''} onChange={v => setCourseNumber(+v || 0)} currency mono />
                 </Field>
               </div>
+              <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-3.5 mb-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                  <input type="checkbox" id="hasDiscountTog" checked={hasDiscount} onChange={(e) => setHasDiscount(e.target.checked)} className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer" />
+                  <label htmlFor="hasDiscountTog" className="text-sm font-bold text-amber-900 cursor-pointer select-none">اعمال تخفیف روی شهریه</label>
+                </div>
+                <div className={`grid grid-cols-1 gap-4 ${hasDiscount ? 'sm:grid-cols-2' : ''}`}>
+                  {hasDiscount && (
+                    <Field label="مبلغ تخفیف (تومان)">
+                      <Input icon={DollarSign} value={discountAmount || ''} onChange={v => setDiscountAmount(+v || 0)} currency mono placeholder="مثال: ۵۰۰٬۰۰۰" />
+                    </Field>
+                  )}
+                  <Field label="شهریه نهایی">
+                    <Input icon={DollarSign} value={finalPrice || ''} onChange={() => {}} disabled currency mono />
+                  </Field>
+                </div>
+              </div>
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-4">
                   <Field label="مبلغ پیش‌پرداخت">
-                    <Input icon={DollarSign} value={payAmount} onChange={v => setPayAmount(+v || 0)} type="number" mono />
+                    <Input icon={DollarSign} value={payAmount || ''} onChange={v => setPayAmount(+v || 0)} currency mono />
                   </Field>
                   <Field label="روش دریافت">
                     <div className="relative">
@@ -938,28 +967,14 @@ export default function StudentRegistrationForm({
               <div className="flex justify-between"><span className="text-slate-400">موبایل</span><span className="font-mono font-bold">{phoneNumber}</span></div>
             </div>
           </div>
-        )}
 
-        <div className="flex items-center justify-between gap-3 mt-4">
-          {step > 1 ? (
-            <button type="button" onClick={() => { setStepError(null); setStep((step - 1) as 1 | 2 | 3); }}
-              className="flex items-center gap-1.5 min-h-11 px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition">
-              <ChevronRight className="w-4 h-4" />بازگشت
-            </button>
-          ) : <span />}
-          {step < 3 ? (
-            <button type="button" onClick={goNext}
-              className="flex items-center gap-1.5 min-h-11 px-5 py-2.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-extrabold rounded-xl transition shadow-sm">
-              ادامه<ChevronLeft className="w-4 h-4" />
-            </button>
-          ) : (
-            <button type="submit" disabled={isSubmitting}
-              className="flex items-center gap-1.5 min-h-11 px-5 py-2.5 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 disabled:opacity-60 text-white text-xs font-extrabold rounded-xl transition shadow-md shadow-sky-200">
-              {isSubmitting
-                ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</>
-                : <><CheckCircle className="w-4 h-4" />ثبت نهایی پرونده</>}
-            </button>
-          )}
+        <div className="flex items-center justify-end gap-4 mt-8 pt-4 border-t border-slate-200/50">
+          <button type="submit" disabled={isSubmitting}
+            className="flex flex-1 md:flex-none items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 disabled:opacity-50 disabled:grayscale text-white text-base font-black rounded-2xl transition-all shadow-lg shadow-sky-500/30">
+            {isSubmitting
+              ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</>
+              : <><CheckCircle className="w-4 h-4" />ثبت نهایی پرونده</>}
+          </button>
         </div>
       </form>
 
@@ -1022,7 +1037,7 @@ export default function StudentRegistrationForm({
                 <span className="absolute bottom-0 left-0 w-7 h-7 border-b-4 border-l-4 border-sky-400 rounded-bl-md" />
               </div>
               <span className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-white/90 bg-slate-900/70 px-2 py-1 rounded-lg whitespace-nowrap">
-                {activeCameraTarget === 'idCard' ? 'کارت را کامل داخل کادر افقی قرار دهید' : 'چهره را داخل کادر عمودی ۳×۴ قرار دهید'}
+                {activeCameraTarget === 'idCard' ? 'کارت را کامل داخل کادر افقی قرار دهید' : 'چهره را داخل عکس پرسنلی قرار دهید'}
               </span>
             </div>
 
