@@ -242,6 +242,7 @@ export default function StudentRegistrationForm({
   }, []);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitMode, setSubmitMode] = useState<'new'|'print'>('new');
   const [isSuccess,    setIsSuccess]    = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [createdStudent, setCreatedStudent] = useState<Student | null>(null);
@@ -307,7 +308,7 @@ export default function StudentRegistrationForm({
 
   useEffect(() => {
     const c = courses.find(c => c.id === selectedCourseId);
-    if (c) { setFinalPrice(c.tuition); setPayAmount(0); }
+    if (c) { setFinalPrice(c.tuition); }
   }, [selectedCourseId, courses]);
 
   useEffect(() => {
@@ -554,8 +555,13 @@ export default function StudentRegistrationForm({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (mode: 'new'|'print' = submitMode, e?: React.FormEvent) => {
+    if(e) e.preventDefault();
+    if (courseNumber > currentMax && !hasPromptedNewCourse) {
+      setSubmitMode(mode);
+      setShowNewCoursePrompt(true);
+      return;
+    }
     if (!firstName || !lastName || !nationalCode || !phoneNumber) {
       setStepError('فیلدهای ستاره‌دار اجباری را تکمیل کنید.'); return;
     }
@@ -621,13 +627,15 @@ export default function StudentRegistrationForm({
           amount: payAmount,
           pay_date_jalali: today,
           pay_method: payMethod,
-          payment_kind: 'downpayment',
+          payment_kind: paymentType === 'full' ? 'full' : 'downpayment',
           description: payDesc || 'پیش‌پرداخت ثبت‌نام',
         });
       }
       const courseObj = courses.find(c => c.id === selectedCourseId) || courses[0];
-      await generateAndUploadReceipt(enrollmentObj.id, studentObj, courseObj, payAmount);
+      const pdfRes = await generateAndUploadReceipt(enrollmentObj.id, studentObj, courseObj, payAmount);
       onRefresh();
+      if (mode === 'print' && pdfRes?.url) window.open(pdfRes.url, '_blank');
+      if (mode === 'new') { handleReset(); return; }
       setIsSuccess(true);
     } catch (err: any) {
       setStepError(err?.message || 'ثبت‌نام با خطا مواجه شد. اتصال را بررسی کنید.');
@@ -641,7 +649,7 @@ export default function StudentRegistrationForm({
     setSelectedRegId(null); setRegQuery('');
     setIdCardFile(null); setIdCardPreview(null);
     setPersonalPhotoFile(null); setPersonalPhotoPreview(null);
-    setPayAmount(0); setPayDesc('');
+    setPayAmount(0); setPayDesc(''); setPaymentType('full'); setHasDiscount(false); setDiscountAmount(0);
     setCreatedStudent(null); setCreatedEnrollmentId(null); setPdfPath(null);
     setOcrSuccess(false); setOcrError(null); setStepError(null); setIsSuccess(false);
     const nums = enrollments.map(e => e.course_number).filter((n): n is number => n != null);
@@ -709,7 +717,7 @@ export default function StudentRegistrationForm({
 
   return (
     <div className="w-full fade-in" id="registration-form-container">
-      <form onSubmit={handleSubmit}>
+      <form>
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -943,7 +951,7 @@ export default function StudentRegistrationForm({
                 <div className={`grid grid-cols-1 gap-4 ${hasDiscount ? 'sm:grid-cols-2' : ''}`}>
                   {hasDiscount && (
                     <Field label="مبلغ تخفیف (تومان)">
-                      <Input icon={DollarSign} value={discountAmount || ''} onChange={v => setDiscountAmount(+v || 0)} currency mono placeholder="مثال: ۵۰۰٬۰۰۰" />
+                      <Input icon={DollarSign} value={discountAmount || ''} onChange={v => setDiscountAmount(Math.max(0, +v || 0))} currency mono placeholder="مثال: ۵۰۰٬۰۰۰" />
                     </Field>
                   )}
                   <Field label="شهریه نهایی">
@@ -960,7 +968,7 @@ export default function StudentRegistrationForm({
                     <div className="relative">
                       <CreditCard className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <select value={payMethod} onChange={e => setPayMethod(e.target.value)}
-                        className="w-full pr-9 pl-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-sky-400 bg-white cursor-pointer transition appearance-none font-medium">
+                        className="w-full min-h-[52px] pr-11 pl-4 text-sm border border-slate-200 rounded-2xl focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 focus:ring-offset-1 transition-all shadow-sm appearance-none bg-white font-medium cursor-pointer">
                         <option value="pos">کارتخوان</option>
                         <option value="card_transfer">کارت به کارت</option>
                         <option value="cash">نقدی</option>
@@ -981,12 +989,15 @@ export default function StudentRegistrationForm({
             </div>
           </div>
 
-        <div className="flex items-center justify-end gap-4 mt-8 pt-4 border-t border-slate-200/50">
-          <button type="submit" disabled={isSubmitting}
-            className="flex flex-1 md:flex-none items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 disabled:opacity-50 disabled:grayscale text-white text-base font-black rounded-2xl transition-all shadow-lg shadow-sky-500/30">
-            {isSubmitting
-              ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</>
-              : <><CheckCircle className="w-4 h-4" />ثبت نهایی پرونده</>}
+        <div className="flex flex-col md:flex-row items-center justify-end gap-4 mt-8 pt-6 border-t border-slate-200/80">
+          <button type="button" disabled={isSubmitting} onClick={(e) => { setSubmitMode('new'); handleSubmit('new', e as any); }}
+             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-white border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:grayscale text-sm font-black rounded-2xl transition-all shadow-sm">
+             {isSubmitting && submitMode === 'new' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><User className="w-4 h-4" />ثبت و جدید</>}
+          </button>
+          
+          <button type="button" disabled={isSubmitting} onClick={(e) => { setSubmitMode('print'); handleSubmit('print', e as any); }}
+            className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 disabled:opacity-50 disabled:grayscale text-white text-sm md:text-base font-black rounded-2xl transition-all shadow-lg shadow-sky-500/30">
+            {isSubmitting && submitMode === 'print' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><FileText className="w-4 h-4" />ثبت و چاپ رسید</>}
           </button>
         </div>
       </form>
