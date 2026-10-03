@@ -675,3 +675,30 @@ export async function updateStaffUser(id: number, body: {
   return data.user;
 }
 
+
+export async function saveGateways(gateways: any) {
+  const res = await apiFetch('/settings/gateways', {
+    method: 'POST',
+    body: JSON.stringify(gateways),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'خطا در ذخیرهسازی درگاهها');
+  }
+  return res.json();
+}
+
+export async function syncDb() {
+  const res = await apiFetch('/db/sync', { method: 'POST' });
+  if (!res.ok) throw new Error('خطا در همگامسازی');
+  return res.json();
+}
+
+export async function sendSms(payload: any) {
+  const res = await apiFetch('/sms/send', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error('خطا در ارسال پیامک');
+  return res.json();
+}

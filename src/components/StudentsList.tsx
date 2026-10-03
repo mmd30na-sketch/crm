@@ -35,38 +35,6 @@ interface StudentsListProps {
   onActiveTabChange?: (tab: string, enrollmentIdOrStudentId?: number) => void;
 }
 
-const INITIAL_MOCK_STUDENTS: Student[] = [
-  { id: 1, first_name: 'امیرحسین', last_name: 'رضایی', father_name: 'علیرضا', national_code: '0012345678', phone_number: '09123456789', birth_date_jalali: '1378/04/15', address: 'تهران، محله ونک، خیابان ملاصدرا، کوچه شیراز، پلاک ۱۲', personal_photo_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400', id_card_photo_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600', status: 'active', created_at: '2026-06-20T10:00:00Z' },
-  { id: 2, first_name: 'سارا', last_name: 'احمدی', father_name: 'حمید', national_code: '0459876543', phone_number: '09198765432', birth_date_jalali: '1382/10/22', address: 'تهران، شهرک غرب، بلوار پاکنژاد، کوچه مریم، پلاک ۵', personal_photo_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=400', id_card_photo_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&q=80&w=600', status: 'active', created_at: '2026-07-01T10:00:00Z' },
-  { id: 3, first_name: 'محمدرضا', last_name: 'کریمی', father_name: 'محمد', national_code: '2991234567', phone_number: '09355551122', birth_date_jalali: '1375/01/01', address: 'تهران، تهرانپارس، خیابان رشید، نبش ۱۵۴، پلاک ۸', personal_photo_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=400', id_card_photo_url: 'https://images.unsplash.com/photo-1568602471122-7832951cc4c5?auto=format&fit=crop&q=80&w=600', status: 'suspended', created_at: '2026-06-05T10:00:00Z' },
-  { id: 4, first_name: 'نیلوفر', last_name: 'صادقی', father_name: 'بهرام', national_code: '0087654321', phone_number: '09129876543', birth_date_jalali: '1380/06/12', address: 'تهران، سعادت‌آباد، صراف‌های شمالی، کوچه یازدهم، پلاک ۴۲', personal_photo_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=400', id_card_photo_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600', status: 'active', created_at: '2026-05-15T10:00:00Z' },
-  { id: 5, first_name: 'کیوان', last_name: 'حسینی', father_name: 'رضا', national_code: '1270984512', phone_number: '09361112233', birth_date_jalali: '1377/11/30', address: 'تهران، پاسداران، بوستان پنجم، پلاک ۱۸، واحد ۴', personal_photo_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=400', id_card_photo_url: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?auto=format&fit=crop&q=80&w=600', status: 'active', created_at: '2026-07-10T10:00:00Z' },
-];
-
-const INITIAL_MOCK_COURSES: Course[] = [
-  { id: 1, title: 'گواهینامه پایه سوم (سواری)', code: 'C3-DRIVE', tuition: 4500000, duration_weeks: 10, active: true },
-  { id: 2, title: 'موتور سیکلت (پایه الف)', code: 'MOTO-A', tuition: 2200000, duration_weeks: 6, active: true },
-  { id: 3, title: 'گواهینامه پایه دوم (سنگین)', code: 'C2-HEAVY', tuition: 6800000, duration_weeks: 12, active: true },
-  { id: 4, title: 'گواهینامه پایه یک (ترانزیت)', code: 'C1-TRAILER', tuition: 9500000, duration_weeks: 16, active: true },
-];
-
-const INITIAL_MOCK_ENROLLMENTS: Enrollment[] = [
-  { id: 1, student_id: 1, course_id: 1, course_number: 104, signup_date_jalali: '۱۴۰۵/۰۴/۲۰', final_price: 4500000 },
-  { id: 2, student_id: 2, course_id: 2, course_number: 88,  signup_date_jalali: '۱۴۰۵/۰۵/۰۵', final_price: 2200000 },
-  { id: 3, student_id: 3, course_id: 3, course_number: 32,  signup_date_jalali: '۱۴۰۵/۰۴/۰۱', final_price: 6800000 },
-  { id: 4, student_id: 4, course_id: 4, course_number: 15,  signup_date_jalali: '۱۴۰۵/۰۳/۱۵', final_price: 9500000 },
-  { id: 5, student_id: 5, course_id: 1, course_number: 106, signup_date_jalali: '۱۴۰۵/۰۵/۱۰', final_price: 4500000 },
-];
-
-const INITIAL_MOCK_PAYMENTS: Payment[] = [
-  { id: 1, student_id: 1, enrollment_id: 1, amount: 2500000, pay_date_jalali: '۱۴۰۵/۰۴/۲۰', pay_method: 'pos',           payment_kind: 'downpayment', description: 'پیش‌پرداخت اولیه' },
-  { id: 2, student_id: 1, enrollment_id: 1, amount: 2000000, pay_date_jalali: '۱۴۰۵/۰۵/۱۰', pay_method: 'card_transfer', payment_kind: 'full',        description: 'تسویه حساب نهایی' },
-  { id: 3, student_id: 2, enrollment_id: 2, amount: 1200000, pay_date_jalali: '۱۴۰۵/۰۵/۰۵', pay_method: 'cash',           payment_kind: 'downpayment', description: 'نقدی به صندوق' },
-  { id: 4, student_id: 3, enrollment_id: 3, amount: 3000000, pay_date_jalali: '۱۴۰۵/۰۴/۰۱', pay_method: 'pos',           payment_kind: 'downpayment', description: 'قسط اول' },
-  { id: 5, student_id: 4, enrollment_id: 4, amount: 9500000, pay_date_jalali: '۱۴۰۵/۰۳/۱۵', pay_method: 'pos',           payment_kind: 'full',        description: 'پرداخت یکجا' },
-  { id: 6, student_id: 5, enrollment_id: 5, amount: 2000000, pay_date_jalali: '۱۴۰۵/۰۵/۱۰', pay_method: 'pos',           payment_kind: 'downpayment', description: 'پیش‌پرداخت' },
-];
-
 /* ────────────────────────────────────────────
    SUB-COMPONENTS
 ──────────────────────────────────────────── */
@@ -121,25 +89,15 @@ export default function StudentsList({
   onActiveTabChange,
 }: StudentsListProps) {
 
-  const [localStudents, setLocalStudents]     = useState<Student[]>(INITIAL_MOCK_STUDENTS);
-  const [localCourses]                         = useState<Course[]>(INITIAL_MOCK_COURSES);
-  const [localEnrollments, setLocalEnrollments]= useState<Enrollment[]>(INITIAL_MOCK_ENROLLMENTS);
-  const [localPayments, setLocalPayments]      = useState<Payment[]>(INITIAL_MOCK_PAYMENTS);
-
-  const studentsList    = propStudents    !== undefined ? propStudents    : localStudents;
-  const coursesList     = propCourses     !== undefined && propCourses.length     > 0 ? propCourses     : localCourses;
-  const enrollmentsList = propEnrollments !== undefined ? propEnrollments : localEnrollments;
-  const paymentsList    = propPayments    !== undefined ? propPayments    : localPayments;
+    const studentsList    = propStudents    ?? [];
+  const coursesList     = propCourses     ?? [];
+  const enrollmentsList = propEnrollments ?? [];
+  const paymentsList    = propPayments    ?? [];
 
     const [selectedStudentId, setSelectedStudentId] = useState<number>(() => studentsList[0]?.id ?? 1);
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
 
-  React.useEffect(() => {
-    if (!hasAutoSelected && filteredStudents.length > 0) {
-      setSelectedStudentId(filteredStudents[0].id);
-      setHasAutoSelected(true);
-    }
-  }, [filteredStudents, hasAutoSelected]);
+
 
   const [searchTerm,          setSearchTerm]          = useState('');
   const [courseFilter,        setCourseFilter]        = useState('all');
@@ -195,8 +153,15 @@ export default function StudentsList({
     return true;
   }).sort((a, b) => b.id - a.id), [studentsList, enrollmentsList, paymentsList, coursesList, searchTerm, courseFilter, courseNumberFilter, financialFilter]);
 
+    React.useEffect(() => {
+    if (!hasAutoSelected && filteredStudents.length > 0) {
+      setSelectedStudentId(filteredStudents[0].id);
+      setHasAutoSelected(true);
+    }
+  }, [filteredStudents, hasAutoSelected]);
+
   const selectedStudent = useMemo(() => studentsList.find(s => s.id === selectedStudentId) ?? filteredStudents[0] ?? null, [studentsList, selectedStudentId, filteredStudents]);
-  const selectedFinance = selectedStudent ? getStudentFinance(selectedStudent.id) : null;
+  const selectedFinance = selectedStudent ? getStudentFinance(selectedStudent?.id) : null;
   const hasActiveFilters = searchTerm || courseFilter !== 'all' || financialFilter !== 'all';
 
   /* ── Handlers ── */
@@ -207,10 +172,10 @@ export default function StudentsList({
         await api.updateStudent(editingStudent);
         onRefresh();
       } else {
-        setLocalStudents(prev => prev.map(s => s.id === editingStudent.id ? { ...editingStudent } : s));
+        
       }
     } catch {
-      setLocalStudents(prev => prev.map(s => s.id === editingStudent.id ? { ...editingStudent } : s));
+      
     }
     setEditingStudent(null);
   };
@@ -219,9 +184,9 @@ export default function StudentsList({
     try {
       if (onRefresh) { await api.deleteStudentCascade(id); onRefresh(); }
       else {
-        setLocalStudents(prev => prev.filter(s => s.id !== id));
-        setLocalEnrollments(prev => prev.filter(e => e.student_id !== id));
-        setLocalPayments(prev => prev.filter(p => p.student_id !== id));
+        
+        
+        
       }
       setDeleteConfirmStudent(null);
       if (selectedStudentId === id) setSelectedStudentId(studentsList.find(s => s.id !== id)?.id ?? 1);
@@ -234,7 +199,7 @@ export default function StudentsList({
     try {
       const amount = parseFloat(paymentAmount);
       if (onRefresh) { await api.createPayment({ student_id: paymentStudent.id, amount, pay_method: paymentMethod, description: paymentDesc }); onRefresh(); }
-      else { setLocalPayments(prev => [...prev, { id: Date.now(), student_id: paymentStudent.id, enrollment_id: getStudentFinance(paymentStudent.id).primaryCourse.enrollmentId || null, amount, pay_date_jalali: '۱۴۰۵/۰۵/۲۸', pay_method: paymentMethod, payment_kind: 'installment', description: paymentDesc }]); }
+      else {  }
       setPaymentStudent(null); setPaymentAmount('');
     } finally { setIsSubmittingPay(false); }
   };
@@ -264,7 +229,7 @@ export default function StudentsList({
       ══════════════════════════════════════════════ */}
       {selectedStudent && selectedFinance && (
         <div
-          key={selectedStudent.id}
+          key={selectedStudent?.id}
           className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm"
           id="student-profile-master-card"
           style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
@@ -277,9 +242,9 @@ export default function StudentsList({
               <span className="text-xs text-slate-400">/ کارآموز انتخاب‌شده</span>
             </div>
             <div className="flex items-center gap-2">
-              <StatusBadge status={selectedStudent.status} />
+              <StatusBadge status={selectedStudent?.status} />
               <span className="font-mono text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-lg">
-                #{String(selectedStudent.id).padStart(4, '0')}
+                #{String(selectedStudent?.id).padStart(4, '0')}
               </span>
             </div>
           </div>
@@ -291,15 +256,15 @@ export default function StudentsList({
               {/* Portrait Photo */}
               <div className="shrink-0 relative group">
                 <div className="w-20 h-28 rounded-xl overflow-hidden border-2 border-slate-200 bg-slate-100 shadow-sm">
-                  {selectedStudent.personal_photo_url ? (
-                    <img src={selectedStudent.personal_photo_url} alt="عکس پرسنلی" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  {selectedStudent?.personal_photo_url ? (
+                    <img src={selectedStudent?.personal_photo_url} alt="عکس پرسنلی" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center text-slate-300">
                       <User className="w-8 h-8 mb-1" /><span className="text-[10px]">عکس ۳×۴</span>
                     </div>
                   )}
-                  {selectedStudent.personal_photo_url && (
-                    <button onClick={() => setZoomPhotoUrl({ url: selectedStudent.personal_photo_url!, title: 'عکس پرسنلی' })}
+                  {selectedStudent?.personal_photo_url && (
+                    <button onClick={() => setZoomPhotoUrl({ url: selectedStudent?.personal_photo_url!, title: 'عکس پرسنلی' })}
                       className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center rounded-xl">
                       <ZoomIn className="w-5 h-5 text-white" />
                     </button>
@@ -314,15 +279,15 @@ export default function StudentsList({
               <div className="flex-1 min-w-0">
                 <div className="mb-3">
                   <h2 className="text-xl font-black text-slate-900 tracking-tight">
-                    {selectedStudent.first_name} {selectedStudent.last_name}
+                    {selectedStudent?.first_name} {selectedStudent?.last_name}
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">فرزند {selectedStudent.father_name || '—'}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">فرزند {selectedStudent?.father_name || '—'}</p>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <InfoCell icon={FileText}  label="کد ملی"       value={selectedStudent.national_code}             mono accent="sky" />
-                  <InfoCell icon={Phone}     label="شماره همراه"  value={selectedStudent.phone_number}               mono accent="teal" />
-                  <InfoCell icon={Calendar}  label="تاریخ تولد"   value={selectedStudent.birth_date_jalali ?? '—'}        accent="violet" />
-                  <InfoCell icon={Building}  label="دوره آموزشی"  value={selectedFinance.primaryCourse.courseTitle}       accent="amber" />
+                  <InfoCell icon={FileText}  label="کد ملی"       value={selectedStudent?.national_code}             mono accent="sky" />
+                  <InfoCell icon={Phone}     label="شماره همراه"  value={selectedStudent?.phone_number}               mono accent="teal" />
+                  <InfoCell icon={Calendar}  label="تاریخ تولد"   value={selectedStudent?.birth_date_jalali ?? '—'}        accent="violet" />
+                  <InfoCell icon={Building}  label="دوره آموزشی"  value={selectedFinance?.primaryCourse?.courseTitle}       accent="amber" />
                 </div>
               </div>
 
@@ -330,10 +295,10 @@ export default function StudentsList({
               <div className="shrink-0">
                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5 text-center">اسکن کارت ملی</p>
                 <div className="relative group w-36 h-24 rounded-xl overflow-hidden border-2 border-slate-200 bg-slate-50 shadow-sm cursor-zoom-in"
-                  onClick={() => selectedStudent.id_card_photo_url && setZoomPhotoUrl({ url: selectedStudent.id_card_photo_url, title: 'اسکن کارت ملی' })}>
-                  {selectedStudent.id_card_photo_url ? (
+                  onClick={() => selectedStudent?.id_card_photo_url && setZoomPhotoUrl({ url: selectedStudent?.id_card_photo_url, title: 'اسکن کارت ملی' })}>
+                  {selectedStudent?.id_card_photo_url ? (
                     <>
-                      <img src={selectedStudent.id_card_photo_url} alt="کارت ملی" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <img src={selectedStudent?.id_card_photo_url} alt="کارت ملی" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
                         <ZoomIn className="w-5 h-5 text-white" />
                       </div>
@@ -354,7 +319,7 @@ export default function StudentsList({
                   <MapPin className="w-3.5 h-3.5" />
                   <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">نشانی سکونت</span>
                 </div>
-                <p className="text-sm text-slate-700 font-medium leading-relaxed">{selectedStudent.address || 'ثبت نشده'}</p>
+                <p className="text-sm text-slate-700 font-medium leading-relaxed">{selectedStudent?.address || 'ثبت نشده'}</p>
               </div>
 
               {/* Financial KPI */}
@@ -363,27 +328,27 @@ export default function StudentsList({
                   <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
                     <DollarSign className="w-4 h-4 text-sky-500" />وضعیت مالی پرونده
                   </span>
-                  {selectedFinance.isSettled ? (
+                  {selectedFinance?.isSettled ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-bold">
                       <CheckCircle className="w-3.5 h-3.5" />تسویه کامل
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-50 text-rose-600 border border-rose-200 rounded-full text-xs font-bold">
-                      <AlertCircle className="w-3.5 h-3.5" />بدهکار: {formatToman(selectedFinance.debt)}
+                      <AlertCircle className="w-3.5 h-3.5" />بدهکار: {formatToman(selectedFinance?.debt)}
                     </span>
                   )}
                 </div>
 
                 {/* Progress Bar */}
                 <div className="carla-progress mb-3">
-                  <div className="carla-progress-fill" style={{ width: `${pct(selectedFinance.totalPaid, selectedFinance.totalTuition)}%` }} />
+                  <div className="carla-progress-fill" style={{ width: `${pct(selectedFinance?.totalPaid, selectedFinance?.totalTuition)}%` }} />
                 </div>
 
                 <div className="grid grid-cols-3 gap-3 text-center">
                   {[
-                    { label: 'شهریه کل', val: formatToman(selectedFinance.totalTuition), color: 'text-slate-700' },
-                    { label: 'پرداخت‌شده', val: formatToman(selectedFinance.totalPaid), color: 'text-emerald-600' },
-                    { label: 'مانده', val: formatToman(selectedFinance.debt), color: selectedFinance.debt > 0 ? 'text-rose-600' : 'text-emerald-600' },
+                    { label: 'شهریه کل', val: formatToman(selectedFinance?.totalTuition), color: 'text-slate-700' },
+                    { label: 'پرداخت‌شده', val: formatToman(selectedFinance?.totalPaid), color: 'text-emerald-600' },
+                    { label: 'مانده', val: formatToman(selectedFinance?.debt), color: selectedFinance?.debt > 0 ? 'text-rose-600' : 'text-emerald-600' },
                   ].map(({ label, val, color }) => (
                     <div key={label} className="bg-slate-50 rounded-lg p-2">
                       <div className="text-[10px] text-slate-400 font-medium mb-0.5">{label}</div>
@@ -392,8 +357,8 @@ export default function StudentsList({
                   ))}
                 </div>
 
-                {selectedFinance.debt > 0 && (
-                  <button onClick={() => { setPaymentStudent(selectedStudent); setPaymentAmount(selectedFinance.debt.toString()); }}
+                {selectedFinance?.debt > 0 && (
+                  <button onClick={() => { setPaymentStudent(selectedStudent); setPaymentAmount(selectedFinance?.debt.toString()); }}
                     className="mt-3 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer">
                     <CreditCard className="w-3.5 h-3.5" />ثبت پرداختی
                   </button>
@@ -727,20 +692,20 @@ export default function StudentsList({
             <div id="printable-receipt" className="bg-white text-slate-900 p-6 rounded-xl border border-slate-200 space-y-4 text-xs">
               <div className="flex items-center justify-between border-b-2 border-slate-800 pb-4">
                 <div><h2 className="text-base font-extrabold">آموزشگاه رانندگی کارلا</h2><p className="text-xs text-slate-500">رسید رسمی ثبت‌نام و وضعیت مالی</p></div>
-                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent.id).padStart(5, '0')}</div><div>تاریخ: ۱۴۰۵/۰۵/۲۸</div></div>
+                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent?.id).padStart(5, '0')}</div><div>تاریخ: ۱۴۰۵/۰۵/۲۸</div></div>
               </div>
               <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <div><strong>نام:</strong> {selectedStudent.first_name} {selectedStudent.last_name}</div>
-                <div><strong>کد ملی:</strong> {selectedStudent.national_code}</div>
-                <div><strong>شماره همراه:</strong> {selectedStudent.phone_number}</div>
-                <div><strong>دوره:</strong> {selectedFinance.primaryCourse.courseTitle}</div>
+                <div><strong>نام:</strong> {selectedStudent?.first_name} {selectedStudent?.last_name}</div>
+                <div><strong>کد ملی:</strong> {selectedStudent?.national_code}</div>
+                <div><strong>شماره همراه:</strong> {selectedStudent?.phone_number}</div>
+                <div><strong>دوره:</strong> {selectedFinance?.primaryCourse?.courseTitle}</div>
               </div>
               <table className="w-full border-collapse border border-slate-200 text-right">
                 <thead><tr className="bg-slate-100"><th className="p-2 border border-slate-200">عنوان</th><th className="p-2 border border-slate-200">مبلغ (تومان)</th></tr></thead>
                 <tbody>
-                  <tr><td className="p-2 border border-slate-200">شهریه مصوب دوره</td><td className="p-2 border border-slate-200 font-mono">{formatToman(selectedFinance.totalTuition)}</td></tr>
-                  <tr><td className="p-2 border border-slate-200">مجموع دریافتی</td><td className="p-2 border border-slate-200 font-mono text-emerald-700 font-bold">{formatToman(selectedFinance.totalPaid)}</td></tr>
-                  <tr className="bg-slate-50"><td className="p-2 border border-slate-200 font-bold">مانده بدهی</td><td className="p-2 border border-slate-200 font-mono font-bold text-rose-700">{formatToman(selectedFinance.debt)}</td></tr>
+                  <tr><td className="p-2 border border-slate-200">شهریه مصوب دوره</td><td className="p-2 border border-slate-200 font-mono">{formatToman(selectedFinance?.totalTuition)}</td></tr>
+                  <tr><td className="p-2 border border-slate-200">مجموع دریافتی</td><td className="p-2 border border-slate-200 font-mono text-emerald-700 font-bold">{formatToman(selectedFinance?.totalPaid)}</td></tr>
+                  <tr className="bg-slate-50"><td className="p-2 border border-slate-200 font-bold">مانده بدهی</td><td className="p-2 border border-slate-200 font-mono font-bold text-rose-700">{formatToman(selectedFinance?.debt)}</td></tr>
                 </tbody>
               </table>
               <div className="pt-8 grid grid-cols-2 text-center text-xs text-slate-500">
