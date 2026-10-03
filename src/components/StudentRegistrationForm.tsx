@@ -485,48 +485,200 @@ export default function StudentRegistrationForm({
   };
 
   /* PDF receipt */
+    /* 3-Page Registration Forms PDF: Receipt (P1), Cardex (P2), Contract (P3) */
   const generateAndUploadReceipt = async (enrollmentId: number, studentObj: Student, courseObj: Course, paid: number) => {
     try {
       const settings = await api.fetchReceiptSettings();
-      const canvas   = document.createElement('canvas');
-      canvas.width = 800; canvas.height = 1130;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 800, 1130);
-      ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = 8; ctx.strokeRect(20, 20, 760, 1090);
-      ctx.fillStyle = '#0ea5e9'; ctx.fillRect(35, 35, 730, 90);
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Tahoma'; ctx.textAlign = 'center';
-      ctx.fillText(settings.academy_name || 'آموزشگاه رانندگی کارلا', 400, 75);
-      ctx.font = '13px Tahoma';
-      ctx.fillText(settings.header_text || 'رسید رسمی پرداخت و ثبت‌نام کارآموز', 400, 110);
-      ctx.fillStyle = '#1e293b'; ctx.textAlign = 'right'; ctx.font = 'bold 13px Tahoma';
-      ctx.fillText(`شماره فیش: ${enrollmentId}`, 730, 170);
-      ctx.fillText(`تاریخ: ${jalaliToday()}`, 730, 195);
-      ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
-      ctx.beginPath(); ctx.moveTo(35, 215); ctx.lineTo(765, 215); ctx.stroke(); ctx.setLineDash([]);
-      ctx.font = 'bold 14px Tahoma'; ctx.fillStyle = '#0ea5e9';
-      ctx.fillText('مشخصات کارآموز:', 730, 250);
-      ctx.fillStyle = '#1e293b'; ctx.font = '13px Tahoma';
-      ctx.fillText(`نام: ${studentObj.first_name} ${studentObj.last_name}`, 730, 280);
-      ctx.fillText(`کد ملی: ${studentObj.national_code}`, 730, 305);
-      ctx.fillText(`تلفن: ${studentObj.phone_number}`, 730, 330);
-      ctx.fillText(`دوره: ${courseObj.title}`, 730, 355);
-      const debt = finalPrice - paid;
-      ctx.fillStyle = '#0ea5e9'; ctx.font = 'bold 14px Tahoma';
-      ctx.fillText('جدول مالی:', 730, 400);
-      [[`شهریه کل: ${finalPrice.toLocaleString('fa-IR')} تومان`, '#1e293b'],
-       [`پرداخت‌شده: ${paid.toLocaleString('fa-IR')} تومان`, '#059669'],
-       [`مانده: ${debt.toLocaleString('fa-IR')} تومان`, debt > 0 ? '#dc2626' : '#059669']
-      ].forEach(([txt, color], i) => {
-        ctx.fillStyle = color as string; ctx.font = '14px Tahoma';
-        ctx.fillText(txt as string, 730, 440 + i * 35);
-      });
-      ctx.fillStyle = '#94a3b8'; ctx.font = '11px Tahoma'; ctx.textAlign = 'center';
-      ctx.fillText(settings.footer_text || 'خواهشمند است تا هفته چهارم نسبت به تسویه کامل اقدام فرمایید.', 400, 750);
+      const today = jalaliToday();
+      let tuitionPrice = finalPrice || courseObj?.tuition || 0;
+      const debt = tuitionPrice - paid;
+      const statusText = debt <= 0 ? 'تسویه کامل' : 'بدهکار';
+      
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      doc.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 210, 297);
+
+      // Helper function to build high-res page canvas
+      const renderPage = (renderContent: (ctx: CanvasRenderingContext2D) => void) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1240;
+        canvas.height = 1754;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return '';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 1240, 1754);
+        renderContent(ctx);
+        return canvas.toDataURL('image/jpeg', 0.95);
+      };
+
+      // Page 1: Receipt
+      const p1Img = renderPage((ctx) => {
+        ctx.strokeStyle = '#0284c7';
+        ctx.lineWidth = 6;
+        ctx.strokeRect(40, 40, 1160, 1674);
+
+        ctx.fillStyle = '#eff6ff';
+        ctx.fillRect(43, 43, 1154, 160);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 36px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText(settings.academy_name || 'آموزشگاه رانندگی کارلا', 620, 125);
+        ctx.font = '22px Tahoma';
+        ctx.fillText(settings.header_text || 'رسید رسمی دریافت وجه و ثبت نام کارآموز', 620, 175);
+
+        ctx.fillStyle = '#0f172a';
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 24px Tahoma';
+        ctx.fillText(`تاریخ: ${today}`, 1120, 270);
+        ctx.fillText(`شماره ثبت نام: ${courseNumber || enrollmentId}`, 1120, 320);
+
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(60, 360);
+        ctx.lineTo(1180, 360);
+        ctx.stroke();
+
+        ctx.fillStyle = '#0284c7';
+        ctx.font = 'bold 26px Tahoma';
+        ctx.fillText('مشخصات کارآموز و دوره', 1120, 420);
+
+        ctx.fillStyle = '#1e293b';
+        ctx.font = '24px Tahoma';
+        ctx.fillText(`نام: ${studentObj.first_name}`, 1120, 480);
+        ctx.fillText(`نام خانوادگی: ${studentObj.last_name}`, 1120, 530);
+        ctx.fillText(`کد ملی: ${studentObj.national_code}`, 1120, 580);
+        ctx.fillText(`شماره همراه: ${studentObj.phone_number}`, 1120, 630);
+        ctx.fillText(`دوره آموزشی: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 680);
+
+        ctx.beginPath();
+        ctx.moveTo(60, 740);
+        ctx.lineTo(1180, 740);
+        ctx.stroke();
+
+        ctx.fillStyle = '#0284c7';
+        ctx.font = 'bold 26px Tahoma';
+        ctx.fillText('وضعیت مالی', 1120, 800);
+
+        ctx.fillStyle = '#1e293b';
+        ctx.font = '24px Tahoma';
+        ctx.fillText(`شهریه مصوب: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 860);
+        ctx.fillStyle = '#059669';
+        ctx.fillText(`مبلغ پرداختی: ${paid.toLocaleString('fa-IR')} تومان`, 1120, 910);
+        ctx.fillStyle = debt > 0 ? '#dc2626' : '#059669';
+        ctx.fillText(`مانده: ${debt.toLocaleString('fa-IR')} تومان`, 1120, 960);
+        ctx.fillText(`وضعیت تسویه: ${statusText}`, 1120, 1010);
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '20px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText(settings.footer_text || 'خواهشمند است تا اتمام امتحانات نسبت به تسویه کامل اقدام فرمایید.', 620, 1650);
+      });
+      if (p1Img) doc.addImage(p1Img, 'JPEG', 0, 0, 210, 297);
+
+      // Page 2: Cardex
+      const p2Img = renderPage((ctx) => {
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 6;
+        ctx.strokeRect(40, 40, 1160, 1674);
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(43, 43, 1154, 140);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 36px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText('کاردکس مهارت آموز', 620, 135);
+
+        ctx.fillStyle = '#0f172a';
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 24px Tahoma';
+        ctx.fillText(`کد پرونده: ${courseNumber || enrollmentId}`, 1120, 250);
+        ctx.fillText(`تاریخ صدور: ${today}`, 1120, 300);
+
+        ctx.fillStyle = '#1e293b';
+        ctx.font = '24px Tahoma';
+        ctx.fillText(`نام و نام خانوادگی: ${studentObj.first_name} ${studentObj.last_name}`, 1120, 380);
+        ctx.fillText(`کد ملی: ${studentObj.national_code}`, 1120, 430);
+        ctx.fillText(`شماره تماس: ${studentObj.phone_number}`, 1120, 480);
+        ctx.fillText(`رشته / دوره: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 530);
+
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(60, 600);
+        ctx.lineTo(1180, 600);
+        ctx.stroke();
+
+        ctx.fillText(`شهریه کل: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 670);
+        ctx.fillText(`مبلغ پرداختی: ${paid.toLocaleString('fa-IR')} تومان`, 1120, 720);
+        ctx.fillText(`وضعیت حساب: ${statusText}`, 1120, 770);
+
+        ctx.strokeRect(60, 850, 1120, 750);
+        ctx.fillStyle = '#475569';
+        ctx.font = '22px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText('جدول جلسات آموزش نظری و عملی / امتحانات و ارزیابی مهارت آموز', 620, 900);
+      });
+      if (p2Img) {
+        doc.addPage();
+        doc.addImage(p2Img, 'JPEG', 0, 0, 210, 297);
+      }
+
+      // Page 3: Contract
+      const p3Img = renderPage((ctx) => {
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 6;
+        ctx.strokeRect(40, 40, 1160, 1674);
+
+        ctx.fillStyle = '#f1f5f9';
+        ctx.fillRect(43, 43, 1154, 140);
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 34px Tahoma';
+        ctx.textAlign = 'center';
+        ctx.fillText('قرارداد ثبت نام دوره آموزشی', 620, 135);
+
+        ctx.fillStyle = '#0f172a';
+        ctx.textAlign = 'right';
+        ctx.font = 'bold 24px Tahoma';
+        ctx.fillText(`تاریخ قرارداد: ${today}`, 1120, 250);
+        ctx.fillText(`شماره دوره / کلاس: ${courseNumber || enrollmentId}`, 1120, 300);
+
+        ctx.fillStyle = '#1e293b';
+        ctx.font = '24px Tahoma';
+        ctx.fillText(`نام کارآموز: ${studentObj.first_name} ${studentObj.last_name}`, 1120, 380);
+        ctx.fillText(`شماره ملی: ${studentObj.national_code}`, 1120, 430);
+        ctx.fillText(`موضوع دوره: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 480);
+        ctx.fillText(`مبلغ قرارداد: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 530);
+
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(60, 590);
+        ctx.lineTo(1180, 590);
+        ctx.stroke();
+
+        ctx.fillStyle = '#334155';
+        ctx.font = '20px Tahoma';
+        const terms = [
+          '۱. کارآموز متعهد است ضوابط و مقررات آموزشی و انضباطی آموزشگاه را رعایت فرماید.',
+          '۲. حضور به موقع در کلاس های نظری و مهارت عملی الزامی می باشد.',
+          '۳. تسویه حساب کامل قبل از معرفی به آزمون پایانی دوره الزامی است.',
+          '۴. آموزشگاه هیچگونه مسئولیتی در قبال مدارک و اشیاء مفقودی هنرجویان ندارد.'
+        ];
+        terms.forEach((line, idx) => {
+          ctx.fillText(line, 1120, 660 + idx * 55);
+        });
+
+        ctx.font = 'bold 22px Tahoma';
+        ctx.fillText('امضاء و اثر انگشت کارآموز:', 1100, 1400);
+        ctx.textAlign = 'left';
+        ctx.fillText('مهر و امضاء امور ثبت نام مدیریت آموزشگاه:', 150, 1400);
+      });
+      if (p3Img) {
+        doc.addPage();
+        doc.addImage(p3Img, 'JPEG', 0, 0, 210, 297);
+      }
+
       const blob = doc.output('blob');
-      const res  = await api.uploadEnrollmentReceipt(enrollmentId, blob, { filename: `receipt_${enrollmentId}.pdf` });
+      const res  = await api.uploadEnrollmentReceipt(enrollmentId, blob, { filename: `registration_forms_${enrollmentId}.pdf` });
       if (res) setPdfPath(res.receipt_pdf_path);
     } catch { /* noop */ }
   };
