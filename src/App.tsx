@@ -21,6 +21,7 @@ import StudentList from './components/StudentList';
 import StudentRegistrationForm from './components/StudentRegistrationForm';
 import AccountingDashboard from './components/AccountingDashboard';
 import Settings from './components/Settings';
+import ContractPrintForm from './components/forms/ContractPrintForm';
 import SupervisorDashboard from './components/SupervisorDashboard';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
@@ -395,7 +396,9 @@ export default function App() {
           className="flex-1 overflow-y-auto p-6 space-y-5"
           id="main-content-scroll"
         >
-          {loading ? (
+          {new URLSearchParams(window.location.search).get('print') === 'contract' ? (
+              <ContractPrintForm />
+          ) : loading ? (
             <div className="flex flex-col items-center justify-center py-40 space-y-4 fade-in">
               <div className="carla-spinner" />
               <p className="text-sm text-slate-400 font-medium">در حال بارگذاری داده‌ها...</p>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>پیشنمایش فرم قرارداد</title>
+    <style>
+        body { background: #525659; display: flex; justify-content: center; padding: 20px; font-family: Tahoma; }
+        canvas { background: white; box-shadow: 0px 4px 10px rgba(0,0,0,0.5); width: 827px; height: 1169px; /* A4 Ratio */ }
+    </style>
+</head>
+<body>
+    <canvas id="pdfCanvas" width="1240" height="1754"></canvas>
+    <script>
+        const canvas = document.getElementById('pdfCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 1240, 1754);
+
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#000000';
+        
+        // Logo Outline
+        ctx.save();
+        ctx.translate(950, 75);
+        ctx.beginPath();
+        ctx.moveTo(70, 0); ctx.lineTo(140, 30); ctx.lineTo(120, 100); ctx.lineTo(70, 140); ctx.lineTo(20, 100); ctx.lineTo(0, 30); ctx.closePath();
+        ctx.lineWidth = 2; ctx.strokeStyle = '#000000'; ctx.stroke();
+        ctx.textAlign = 'center'; ctx.fillStyle = '#000000'; ctx.font = 'bold 16px Tahoma'; 
+        ctx.fillText('کارت هوشمند کرمانشاه', 70, 25);
+        ctx.beginPath(); ctx.arc(70, 70, 20, 0, Math.PI*2); ctx.stroke(); 
+        ctx.restore();
+
+        // Top Left Date Area
+        ctx.textAlign = 'right';
+        ctx.font = '22px Tahoma';
+        ctx.fillText('تاریخ : ۱۴۰۴/۱۱/۰۲', 400, 120);
+        ctx.fillText('شماره پرونده : 120', 400, 170);
+
+        // Main Title
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 42px Tahoma';
+        ctx.fillText('قرارداد و رسید پرداخت شهریه', 620, 300);
+
+        // Section: Specifications
+        ctx.textAlign = 'right'; 
+        ctx.font = 'bold 28px Tahoma';
+        ctx.fillText('مشخصات کارآموز :', 1100, 420);
+
+        let cY = 480;
+        const bulletRow = (label, value) => {
+            ctx.font = '24px Tahoma';
+            ctx.fillText(`●  ${label} : ${value}`, 1100, cY);
+            cY += 60;
+        };
+        bulletRow('نام و نام خانوادگی', 'آرمین نجف آبادی');
+        bulletRow('کد ملی', '324-229-3908');
+        bulletRow('دوره', 'حمل و نقل جاده ای');
+        bulletRow('مبلغ پرداختی', '۴,۷۰۰,۰۰۰ تومان');
+
+        cY += 50;
+
+        // Section: Terms
+        ctx.font = 'bold 28px Tahoma';
+        ctx.fillText('شرایط و تعهدات کارآموز:', 1100, cY);
+        cY += 60;
+
+        const rules = [
+            { num: '۱.', text: 'شهریه پرداختی (بیعانه یا تسویه) پس از ثبتنام قطعی و شروع کلاسبندی، به هیچ وجه مسترد نمیگردد.', boldSpan: 'مسترد نمیگردد.' },
+            { num: '۲.', text: 'کارآموز متعهد به حضور منظم در کلاسهاست؛ غیبت بیش از حد مجاز طبق آییننامه، موجب حذف از دوره و عدم معرفی به آزمون خواهد شد.' },
+            { num: '۳.', text: 'آموزشگاه هیچگونه مسئولیتی در قبال قبولی یا مردودی کارآموز در آزمونهای فنی و حرفهای ندارد.', isBold: true },
+            { num: '۴.', text: 'هزینههای ثبتنام آزمون، صدور گواهینامه و آزمونهای مجدد، جدا از شهریه آموزشی بوده و بر عهده کارآموز است.' },
+            { num: '۵.', text: 'تسویه حساب مالی کامل باید قبل از معرفی به آزمون انجام شود، در غیر این صورت کارت ورود به جلسه صادر نخواهد شد.' }
+        ];
+
+        rules.forEach(rule => {
+            ctx.font = rule.isBold ? 'bold 22px Tahoma' : '22px Tahoma';
+            ctx.fillText(rule.num, 1100, cY);
+            
+            if (rule.boldSpan && !rule.isBold) {
+                let parts = rule.text.split(rule.boldSpan);
+                let currX = 1060;
+                ctx.fillText(parts[0], currX, cY);
+                let wSpan1 = ctx.measureText(parts[0]).width;
+                currX -= wSpan1;
+                
+                ctx.font = 'bold 22px Tahoma';
+                ctx.fillText(rule.boldSpan, currX, cY);
+                let wSpan2 = ctx.measureText(rule.boldSpan).width;
+                currX -= wSpan2;
+                
+                ctx.font = '22px Tahoma';
+                if(parts[1]) ctx.fillText(parts[1], currX, cY);
+            } else {
+                if (rule.text.length > 80) {
+                   let cutIdx = rule.text.lastIndexOf(' ', 80);
+                   if(cutIdx === -1) cutIdx = 80;
+                   ctx.fillText(rule.text.substring(0, cutIdx), 1060, cY);
+                   cY += 40;
+                   ctx.fillText(rule.text.substring(cutIdx), 1060, cY);
+                } else {
+                   ctx.fillText(rule.text, 1060, cY);
+                }
+            }
+            cY += 70;
+        });
+
+        cY += 40;
+        ctx.beginPath();
+        ctx.setLineDash([10, 10]);
+        ctx.moveTo(100, cY);
+        ctx.lineTo(1140, cY);
+        ctx.stroke();
+
+        cY += 80;
+        ctx.setLineDash([]); 
+
+        ctx.font = 'bold 26px Tahoma';
+        ctx.fillText('امضا و اثرانگشت کارآموز (با قبول شرایط فوق)', 1100, cY);
+        ctx.font = '22px Tahoma';
+        ctx.fillText('[محل امضا] - تاریخ: .................', 1100, cY + 120);
+
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 26px Tahoma';
+        ctx.fillText('مهر آموزشگاه', 300, cY);
+        ctx.font = '22px Tahoma';
+        ctx.fillText('[محل مهر]', 300, cY + 120);
+    </script>
+</body>
+</html>
