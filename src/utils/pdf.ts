@@ -16,7 +16,8 @@ export const drawCardexPage = (ctx: any, data: any) => {
   // Demo mock for compiler
 };
 
-
+export const drawContractPage = (ctx: any, data: any) => {
+  const { today, courseNumber, enrollmentId, studentObj, courseObj } = data || {};
   ctx.save();
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, 1240, 1754);

@@ -55,29 +55,41 @@ function Field({
   );
 }
 
+function toLatinDigits(v: string): string {
+  return v
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
 function Input({
   icon: Icon, value, onChange, placeholder, type = 'text', mono = false, error = false,
-  inputMode, autoComplete, id, maxLength,
+  inputMode, autoComplete, id, maxLength, disabled = false, currency = false,
 }: {
   icon: React.ElementType; value: string | number; onChange: (v: string) => void;
   placeholder?: string; type?: string; mono?: boolean; error?: boolean;
   inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
-  autoComplete?: string; id?: string; maxLength?: number;
+  autoComplete?: string; id?: string; maxLength?: number; disabled?: boolean;
+  /** Numeric amount: shown with thousands separators, emitted as plain digits. */
+  currency?: boolean;
 }) {
+  const shown = currency && value !== '' && value != null
+    ? Number(toLatinDigits(String(value)).replace(/\D/g, '') || 0).toLocaleString('en-US')
+    : value;
   return (
     <div className="relative">
       <Icon className="w-5 h-5 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       <input
         id={id}
         type={type}
-        inputMode={inputMode}
+        inputMode={currency ? 'numeric' : inputMode}
         autoComplete={autoComplete}
         maxLength={maxLength}
+        disabled={disabled}
         aria-invalid={error || undefined}
-        value={value}
-        onChange={e => onChange(e.target.value)}
+        value={shown}
+        onChange={e => onChange(currency ? toLatinDigits(e.target.value).replace(/\D/g, '') : e.target.value)}
         placeholder={placeholder}
-        className={`w-full min-h-[52px] pr-11 pl-4 text-sm font-medium border rounded-2xl focus:outline-none focus:ring-2 focus:ring-offset-1 transition-all shadow-sm ${
+        className={`w-full min-h-[52px] pr-11 pl-4 text-sm font-medium border rounded-2xl focus:outline-none focus:ring-2 focus:ring-offset-1 transition-all shadow-sm disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed ${
           error
             ? 'border-rose-300 bg-rose-50/40 focus:border-rose-400 focus:ring-rose-100'
             : 'border-slate-200 bg-white focus:border-sky-400 focus:ring-sky-100'
@@ -88,10 +100,7 @@ function Input({
 }
 
 function jalaliToday(): string {
-  const raw = new Date().toLocaleDateString('fa-IR');
-  const mapped = raw
-    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
-    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+  const mapped = toLatinDigits(new Date().toLocaleDateString('fa-IR'));
   const m = mapped.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
   if (!m) return mapped;
   return `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}`;
@@ -252,13 +261,13 @@ export default function StudentRegistrationForm({
   const maxCourseNum = enrollments.map(e => e.course_number).filter((n): n is number => n != null).reduce((a,b) => Math.max(a,b), 0);
   const currentMax = maxCourseNum > 0 ? maxCourseNum : 105;
   const [courseNumber, setCourseNumber] = useState<number>(currentMax);
+  const courseNumberTouched = useRef(false);
   const [showNewCoursePrompt, setShowNewCoursePrompt] = useState<boolean>(false);
-  
-  // Track if they've answered the popup so it doesn't loop
-  const [hasPromptedNewCourse, setHasPromptedNewCourse] = useState<boolean>(false);
-  
-  // Also we want to keep currentMax around to compare
 
+  // Enrollments load asynchronously: follow the highest course number until the user edits it.
+  useEffect(() => {
+    if (!courseNumberTouched.current) setCourseNumber(currentMax);
+  }, [currentMax]);
 
   /* ── Personal Info ── */
   const [firstName,    setFirstName]    = useState('');
@@ -288,7 +297,7 @@ export default function StudentRegistrationForm({
   const [isPortrait, setIsPortrait] = useState(false);
 
   /* Course & Payment */
-    const [selectedCourseId, setSelectedCourseId] = useState<number>(courses[0]?.id || 1);
+  const [selectedCourseId, setSelectedCourseId] = useState<number>(courses[0]?.id || 1);
   const [signupDate, setSignupDate] = useState(() => {
     const d = new Date();
     return d.toLocaleDateString('fa-IR-u-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
@@ -306,10 +315,19 @@ export default function StudentRegistrationForm({
   const [stepError,         setStepError]         = useState<string | null>(null);
   const [ocrError,          setOcrError]          = useState<string | null>(null);
 
+  // Courses may arrive after mount; fall back to the first one if the selection is unknown.
+  useEffect(() => {
+    if (courses.length > 0 && !courses.some(c => c.id === selectedCourseId)) {
+      setSelectedCourseId(courses[0].id);
+    }
+  }, [courses, selectedCourseId]);
+
   useEffect(() => {
     const c = courses.find(c => c.id === selectedCourseId);
-    if (c) { setFinalPrice(c.tuition); }
-  }, [selectedCourseId, courses]);
+    if (!c) return;
+    const discount = hasDiscount ? Math.min(discountAmount, c.tuition) : 0;
+    setFinalPrice(Math.max(0, c.tuition - discount));
+  }, [selectedCourseId, courses, hasDiscount, discountAmount]);
 
   useEffect(() => {
     api.fetchRegistrations()
@@ -385,8 +403,6 @@ export default function StudentRegistrationForm({
       } catch { /* browsers may ignore lock outside fullscreen */ }
     } catch (err) {
       console.warn('Camera access denied:', err);
-      setActiveCameraTarget(null);
-      alert('دسترسی به دوربین ممکن نشد. از «انتخاب فایل» استفاده کنید.');
       setActiveCameraTarget(null);
       setOcrError('دسترسی به دوربین ممکن نشد — از «انتخاب فایل» استفاده کنید.');
       return;
@@ -486,7 +502,7 @@ export default function StudentRegistrationForm({
 
   /* PDF receipt */
     /* 3-Page Registration Forms PDF: Receipt (P1), Cardex (P2), Contract (P3) */
-  const generateAndUploadReceipt = async (enrollmentId: number, studentObj: Student, courseObj: Course, paid: number) => {
+  const generateAndUploadReceipt = async (enrollmentId: number, studentObj: Student, courseObj: Course, paid: number): Promise<string | null> => {
     try {
       const settings = await api.fetchReceiptSettings();
       const today = jalaliToday();
@@ -679,8 +695,13 @@ export default function StudentRegistrationForm({
 
       const blob = doc.output('blob');
       const res  = await api.uploadEnrollmentReceipt(enrollmentId, blob, { filename: `registration_forms_${enrollmentId}.pdf` });
-      if (res) setPdfPath(res.receipt_pdf_path);
-    } catch { /* noop */ }
+      const path = res?.receipt_pdf_path || null;
+      setPdfPath(path);
+      return path;
+    } catch (err) {
+      console.warn('Receipt PDF generation failed:', err);
+      return null;
+    }
   };
 
   const goNext = () => {
@@ -707,19 +728,28 @@ export default function StudentRegistrationForm({
     }
   };
 
-  const handleSubmit = async (mode: 'new'|'print' = submitMode, e?: React.FormEvent) => {
-    if(e) e.preventDefault();
-    if (courseNumber > currentMax && !hasPromptedNewCourse) {
-      setSubmitMode(mode);
-      setShowNewCoursePrompt(true);
-      return;
-    }
+  const handleSubmit = async (mode: 'new'|'print', newCourseConfirmed = false) => {
+    setSubmitMode(mode);
     if (!firstName || !lastName || !nationalCode || !phoneNumber) {
       setStepError('فیلدهای ستاره‌دار اجباری را تکمیل کنید.'); return;
     }
     if (nationalCodeError || phoneError) {
       setStepError('خطاهای اعتبارسنجی را برطرف کنید.'); return;
     }
+    if (!courses.some(c => c.id === selectedCourseId)) {
+      setStepError('دوره آموزشی را انتخاب کنید.'); return;
+    }
+    if (!courseNumber || courseNumber <= 0) {
+      setStepError('شماره دوره را وارد کنید.'); return;
+    }
+    if (payAmount > finalPrice) {
+      setStepError('مبلغ پیش‌پرداخت نمی‌تواند از شهریه نهایی بیشتر باشد.'); return;
+    }
+    if (courseNumber > currentMax && !newCourseConfirmed) {
+      setShowNewCoursePrompt(true);
+      return;
+    }
+    setShowNewCoursePrompt(false);
     setStepError(null);
     setIsSubmitting(true);
     try {
@@ -784,9 +814,9 @@ export default function StudentRegistrationForm({
         });
       }
       const courseObj = courses.find(c => c.id === selectedCourseId) || courses[0];
-      const pdfRes = await generateAndUploadReceipt(enrollmentObj.id, studentObj, courseObj, payAmount);
+      const receiptPath = await generateAndUploadReceipt(enrollmentObj.id, studentObj, courseObj, payAmount);
       onRefresh();
-      if (mode === 'print' && pdfRes?.url) window.open(pdfRes.url, '_blank');
+      if (mode === 'print' && receiptPath) window.open(receiptPath, '_blank');
       if (mode === 'new') { handleReset(); return; }
       setIsSuccess(true);
     } catch (err: any) {
@@ -804,8 +834,9 @@ export default function StudentRegistrationForm({
     setPayAmount(0); setPayDesc(''); setPaymentType('full'); setHasDiscount(false); setDiscountAmount(0);
     setCreatedStudent(null); setCreatedEnrollmentId(null); setPdfPath(null);
     setOcrSuccess(false); setOcrError(null); setStepError(null); setIsSuccess(false);
-    const nums = enrollments.map(e => e.course_number).filter((n): n is number => n != null);
-    setCourseNumber(nums.length > 0 ? Math.max(...nums) + 1 : 105);
+    courseNumberTouched.current = false;
+    setCourseNumber(Math.max(currentMax, courseNumber));
+    setShowNewCoursePrompt(false);
     setStep(1);
     onRefresh();
   };
@@ -869,7 +900,7 @@ export default function StudentRegistrationForm({
 
   return (
     <div className="w-full fade-in" id="registration-form-container">
-      <form>
+      <form onSubmit={e => e.preventDefault()}>
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -1061,7 +1092,7 @@ export default function StudentRegistrationForm({
             </div>
           </div>
 
-          <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-5">
+          <div className="mt-4 bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-5">
             <SectionHeader icon={Phone} label="اطلاعات ارتباطی" color="teal" />
             <Field label="شماره همراه" required error={phoneError}>
               <Input icon={Phone} value={phoneNumber} onChange={setPhoneNumber} placeholder="شماره موبایل (مانند 09123456789)" mono error={!!phoneError} type="tel" inputMode="numeric" maxLength={11} autoComplete="tel" />
@@ -1071,10 +1102,10 @@ export default function StudentRegistrationForm({
             </Field>
           </div>
 
-          <div className="space-y-6">
+          <div className="mt-4 space-y-6">
             <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm">
               <SectionHeader icon={BookOpen} label="دوره آموزشی و شماره دوره" color="amber" />
-                                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
                 <Field label="تاریخ ثبتنام" required>
                   <Input icon={Calendar} value={signupDate} onChange={setSignupDate} mono />
                 </Field>
@@ -1092,7 +1123,7 @@ export default function StudentRegistrationForm({
                   </Field>
                 </div>
                 <Field label="شماره دوره">
-                  <Input icon={BookOpen} value={courseNumber || ''} onChange={v => setCourseNumber(+v || 0)} currency mono />
+                  <Input icon={BookOpen} value={courseNumber || ''} onChange={v => { courseNumberTouched.current = true; setCourseNumber(+toLatinDigits(v).replace(/\D/g, '') || 0); }} inputMode="numeric" mono />
                 </Field>
               </div>
               <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-3.5 mb-5 shadow-sm">
@@ -1142,17 +1173,51 @@ export default function StudentRegistrationForm({
           </div>
 
         <div className="flex flex-col md:flex-row items-center justify-end gap-4 mt-8 pt-6 border-t border-slate-200/80">
-          <button type="button" disabled={isSubmitting} onClick={(e) => { setSubmitMode('new'); handleSubmit('new', e as any); }}
+          <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit('new')}
              className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-white border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:grayscale text-sm font-black rounded-2xl transition-all shadow-sm">
              {isSubmitting && submitMode === 'new' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><User className="w-4 h-4" />ثبت و جدید</>}
           </button>
           
-          <button type="button" disabled={isSubmitting} onClick={(e) => { setSubmitMode('print'); handleSubmit('print', e as any); }}
+          <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit('print')}
             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 disabled:opacity-50 disabled:grayscale text-white text-sm md:text-base font-black rounded-2xl transition-all shadow-lg shadow-sky-500/30">
             {isSubmitting && submitMode === 'print' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><FileText className="w-4 h-4" />ثبت و چاپ رسید</>}
           </button>
         </div>
       </form>
+
+      {/* ── NEW COURSE NUMBER CONFIRMATION ── */}
+      {showNewCoursePrompt && (
+        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 w-full max-w-sm space-y-4 text-slate-800 shadow-2xl">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-black text-slate-900 mb-1">شروع دوره جدید؟</h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  شماره دوره {courseNumber} از آخرین دوره ثبت‌شده ({currentMax}) بیشتر است.
+                  آیا این کارآموز در یک دوره جدید ثبت شود؟
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowNewCoursePrompt(false); setCourseNumber(currentMax); courseNumberTouched.current = false; }}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition"
+              >
+                ماندن در دوره {currentMax}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSubmit(submitMode, true)}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition"
+              >
+                بله، دوره جدید
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── CAMERA MODAL FOR REAL-TIME SCANNING / PHOTO CAPTURE ── */}
       {activeCameraTarget && (
