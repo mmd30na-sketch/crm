@@ -65,7 +65,9 @@ if (!fs.existsSync(studentFilesBase)) {
 
 function safeSegment(value: unknown, fallback: string) {
   const raw = String(value || fallback).trim() || fallback;
-  return raw.replace(/[^؀-ۿa-zA-Z0-9._-]+/g, '_').slice(0, 80) || fallback;
+  const clean = raw.replace(/[^؀-ۿa-zA-Z0-9._-]+/g, '_').slice(0, 80);
+  // '.' / '..' would climb out of StudentFiles when used as a directory name.
+  return !clean || /^\.+$/.test(clean) ? fallback : clean;
 }
 
 function publicPathFromFile(file: Express.Multer.File) {
@@ -113,6 +115,27 @@ function removeUploadedFiles(files: Express.Multer.File | Express.Multer.File[] 
   if (!files) return;
   const list = Array.isArray(files) ? files : 'path' in files ? [files as Express.Multer.File] : Object.values(files).flat();
   for (const f of list) fs.unlink(f.path, () => {});
+}
+
+/** Deletes a stored file given its public path (e.g. /StudentFiles/...), only when it resolves inside `baseDir`. */
+function unlinkStoredFile(publicPath: unknown, baseDir: string) {
+  if (typeof publicPath !== 'string' || !publicPath) return;
+  let rel = publicPath.split(/[?#]/)[0];
+  try { rel = decodeURIComponent(rel); } catch { return; }
+  const abs = path.resolve(process.cwd(), rel.replace(/^\/+/, ''));
+  if (!abs.startsWith(baseDir + path.sep)) return;
+  fs.unlink(abs, () => {
+    // Drop the per-student folder when it is now empty (no-op otherwise).
+    const dir = path.dirname(abs);
+    if (dir !== baseDir && dir.startsWith(baseDir + path.sep)) fs.rmdir(dir, () => {});
+  });
+}
+/** Removes a deleted student's photos/scans and the receipt PDFs of their enrollments. */
+function removeStudentFiles(student: any, enrollments: any[]) {
+  for (const key of ['id_card_photo_url', 'personal_photo_url', 'national_card_path', 'personal_photo_path']) {
+    unlinkStoredFile(student?.[key], studentFilesBase);
+  }
+  for (const e of enrollments) unlinkStoredFile(e?.receipt_pdf_path, uploadsDir);
 }
 
 const uploadStudentMedia = multer({
@@ -398,6 +421,12 @@ app.use('/api/', (req, res, next) => {
   next();
 });
 
+/** Settings safe to send to the browser (no password hash, no gateway keys). */
+const publicSettings = (settings: any) => {
+  const { admin_password_hash, gateways, ...rest } = settings || {};
+  return rest;
+};
+
 function sanitizeString(val: unknown, maxLen = 500): string {
   if (typeof val !== 'string') return '';
   return val.trim().slice(0, maxLen);
@@ -418,6 +447,16 @@ function loadTokenSecret() {
 }
 const TOKEN_SECRET = loadTokenSecret();
 const loginBuckets = new Map<string, { count: number; resetAt: number }>();
+// Failed logins per username (lower-cased): a guessed password is throttled even when the IP changes.
+const failedLogins = new Map<string, { count: number; resetAt: number }>();
+const MAX_FAILED_LOGINS = 10;
+const FAILED_LOGIN_WINDOW_MS = 15 * 60_000;
+setInterval(() => {
+  const now = Date.now();
+  for (const map of [rateBuckets, loginBuckets, failedLogins]) {
+    for (const [key, b] of map) if (now > b.resetAt) map.delete(key);
+  }
+}, 60_000).unref();
 
 function signToken(payload: Record<string, unknown>) {
   const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 12 * 3600 * 1000 })).toString('base64url');
@@ -444,13 +483,31 @@ function verifyToken(token: string): any | null {
 function readBearer(req: express.Request): string | null {
   const h = String(req.headers.authorization || '');
   if (h.startsWith('Bearer ')) return h.slice(7).trim();
+  // ?token= is only for <img>/<a> file loads (they cannot send headers); the API needs the header.
+  if (!/^\/(uploads|StudentFiles)(\/|$)/i.test(req.originalUrl.split('?')[0])) return null;
   const q = String((req.query as any)?.token || '');
   return q || null;
 }
 
-function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+/** Valid token -> session. Local staff are re-checked against the store so deactivation and role changes apply at once. */
+function sessionFromRequest(req: express.Request): any | null {
   const token = readBearer(req);
   const session = token ? verifyToken(token) : null;
+  if (!session) return null;
+  if (session.source === 'local') {
+    try {
+      const staff = readDb().staff_users.find((s) => s.id === session.user_id);
+      if (!staff || !staff.is_active) return null;
+      return { ...session, username: staff.username, role: staff.role };
+    } catch {
+      return null;
+    }
+  }
+  return session;
+}
+
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const session = sessionFromRequest(req);
   if (!session) return res.status(401).json({ error: 'Unauthorized' });
   (req as any).user = session;
   next();
@@ -477,6 +534,11 @@ app.post('/api/auth/login', async (req, res) => {
   const username = sanitizeString(req.body?.username, 80);
   const password = String(req.body?.password || '');
   if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+  const userKey = username.toLowerCase();
+  const failed = failedLogins.get(userKey);
+  if (failed && now <= failed.resetAt && failed.count >= MAX_FAILED_LOGINS) {
+    return res.status(429).json({ error: 'Too many failed attempts, try again later' });
+  }
 
   try {
     const envUser = process.env.CRM_ADMIN_USER || 'admin';
@@ -486,6 +548,7 @@ app.post('/api/auth/login', async (req, res) => {
       const envOk = !!envPass && password === envPass;
       const hashOk = adminHash ? await bcrypt.compare(password, String(adminHash)) : false;
       if (hashOk || (!adminHash && envOk)) {
+        failedLogins.delete(userKey);
         const token = signToken({ username: envUser, role: 'admin', source: 'env' });
         return res.json({ token, user: { username: envUser, role: 'admin', full_name: 'مدیر سیستم' } });
       }
@@ -497,6 +560,7 @@ app.post('/api/auth/login', async (req, res) => {
     if (localStaff && localStaff.is_active && localStaff.password_hash) {
       const ok = await bcrypt.compare(password, String(localStaff.password_hash));
       if (ok) {
+        failedLogins.delete(userKey);
         const token = signToken({
           username: localStaff.username,
           role: localStaff.role,
@@ -515,11 +579,14 @@ app.post('/api/auth/login', async (req, res) => {
       if (staff && staff.is_active && staff.password_hash) {
         const ok = await bcrypt.compare(password, String(staff.password_hash));
         if (ok) {
+          failedLogins.delete(userKey);
           const token = signToken({ username: staff.username, role: staff.role, user_id: staff.user_id });
           return res.json({ token, user: { username: staff.username, role: staff.role } });
         }
       }
     }
+    if (!failed || now > failed.resetAt) failedLogins.set(userKey, { count: 1, resetAt: now + FAILED_LOGIN_WINDOW_MS });
+    else failed.count += 1;
     return res.status(401).json({ error: 'Unauthorized' });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -544,8 +611,9 @@ function currentRole(req: express.Request): StaffRole | null {
   return (STAFF_ROLES as readonly string[]).includes(role) ? role as StaffRole : null;
 }
 
-function canAccessApi(role: StaffRole, method: string, path: string): boolean {
+function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean {
   if (role === 'admin') return true;
+  const path = rawPath.toLowerCase(); // Express routing ignores case, so the checks must too
   const write = method !== 'GET' && method !== 'HEAD';
   if (path.startsWith('/staff') || path.startsWith('/settings') || path.startsWith('/imports')) return false;
   if (path.startsWith('/courses') && write) return false;
@@ -558,7 +626,7 @@ function canAccessApi(role: StaffRole, method: string, path: string): boolean {
     if (write) return role === 'cashier';
     return true;
   }
-  if (path.startsWith('/messenger')) return true;
+  if (path.startsWith('/messenger')) return role === 'cashier';
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
   if (!write) return role === 'cashier';
   return false;
@@ -585,8 +653,7 @@ function envAdminUsername() {
 }
 
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const token = readBearer(req);
-  const session = token ? verifyToken(token) : null;
+  const session = sessionFromRequest(req);
   if (!session) return res.status(401).json({ error: 'Unauthorized' });
   if (session.role !== 'admin') return res.status(403).json({ error: 'Forbidden' });
   (req as any).user = session;
@@ -666,9 +733,10 @@ app.post('/api/staff', requireAdmin, async (req, res) => {
 
 app.put('/api/staff/:id', requireAdmin, async (req, res) => {
   try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'شناسه نامعتبر است' });
     const staffId = parseInt(req.params.id, 10);
     const body = req.body || {};
-    if (!staffId) {
+    if (staffId === 0) {
       const password = String(body.password || '');
       if (password.length < 6) return res.status(400).json({ error: 'رمز حداقل ۶ کاراکتر باشد' });
       const db = readDb();
@@ -703,7 +771,12 @@ app.put('/api/staff/:id', requireAdmin, async (req, res) => {
 });
 
 // Serve uploads statically
-app.use('/uploads', requireStaff, express.static(uploadsDir));
+// Receipt PDFs and scans in uploads/ are financial/personal documents: admin and cashier only.
+app.use('/uploads', requireStaff, (req, res, next) => {
+  const role = currentRole(req);
+  if (role !== 'admin' && role !== 'cashier') return res.status(403).json({ error: 'Forbidden' });
+  next();
+}, express.static(uploadsDir));
 
 // Initialize Gemini API
 let ai: GoogleGenAI | null = null;
@@ -738,7 +811,9 @@ function webhookAuthorized(req: express.Request): boolean {
 }
 
 app.post('/api/messenger/webhook', (req, res) => {
-  if (process.env.MESSENGER_WEBHOOK_SECRET && !webhookAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+  // Fail closed: without MESSENGER_WEBHOOK_SECRET the endpoint is disabled.
+  if (!process.env.MESSENGER_WEBHOOK_SECRET) return res.status(403).json({ error: 'Webhook is not configured' });
+  if (!webhookAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
   const { sender, message, channel, chat_id, sender_phone } = req.body || {};
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required' });
 
@@ -747,7 +822,7 @@ app.post('/api/messenger/webhook', (req, res) => {
 
   // The chat_id <-> student link decides who receives that student's messages, so it is only
   // accepted from a caller that knows the shared secret (MESSENGER_WEBHOOK_SECRET).
-  if (channel === 'rubika' && chat_id && sender_phone && webhookAuthorized(req)) {
+  if (channel === 'rubika' && chat_id && sender_phone) {
     const phone = String(sender_phone).replace(/^\+98/, '0');
     const student = db.students.find((s: any) =>
       String(s.phone_number || '').replace(/^\+98/, '0') === phone
@@ -994,7 +1069,10 @@ const enrollmentId = (e: any): number => Number(e.enrollment_id ?? e.id);
 async function remainingBalance(studentId: number, forEnrollmentId?: number | null): Promise<number> {
   if (chabokan.isMysqlEnabled()) {
     const row = (await chabokan.listStudents()).find((s: any) => Number(s.id) === studentId);
-    return Math.max(0, Number(row?.remaining_debt ?? 0));
+    const studentRemaining = Math.max(0, Number(row?.remaining_debt ?? 0));
+    if (!forEnrollmentId) return studentRemaining;
+    const enr = (await chabokan.listEnrollments()).find((e: any) => enrollmentId(e) === forEnrollmentId);
+    return Math.max(0, Math.min(studentRemaining, Number(enr?.remaining_debt ?? 0)));
   }
   const db = readDb();
   const enrollments = db.enrollments.filter(e => e.student_id === studentId);
@@ -1014,13 +1092,55 @@ app.get('/api/courses', async (req, res) => {
 });
 
 // 2. Add / Update course
+/** Whitelists and validates course input. `partial` (updates) only checks fields that were sent. */
+function parseCourseInput(body: any, partial: boolean): { data: { title?: string; code?: string; price?: number; duration_days?: number; is_active?: boolean }; error?: string } {
+  const b = body && typeof body === 'object' ? body : {};
+  const data: { title?: string; code?: string; price?: number; duration_days?: number; is_active?: boolean } = {};
+  const sent = (v: unknown) => v !== undefined && v !== null && v !== '';
+
+  if (sent(b.title)) {
+    const title = sanitizeString(b.title, 120);
+    if (!title) return { data, error: 'عنوان دوره الزامی است.' };
+    data.title = title;
+  } else if (!partial) return { data, error: 'عنوان دوره الزامی است.' };
+
+  if (sent(b.code)) data.code = sanitizeString(b.code, 40);
+
+  const rawPrice = sent(b.price) ? b.price : b.tuition;
+  if (sent(rawPrice)) {
+    const price = typeof rawPrice === 'number' || typeof rawPrice === 'string' ? Number(rawPrice) : NaN;
+    if (!Number.isFinite(price) || price < 0 || price > 1e12) return { data, error: 'شهریه نامعتبر است.' };
+    data.price = Math.round(price);
+  } else if (!partial) data.price = 0;
+
+  const rawDays = sent(b.duration_days) ? b.duration_days : (sent(b.duration_weeks) ? Number(b.duration_weeks) * 7 : undefined);
+  if (sent(rawDays)) {
+    const days = typeof rawDays === 'number' || typeof rawDays === 'string' ? Number(rawDays) : NaN;
+    if (!Number.isInteger(days) || days < 1 || days > 3650) return { data, error: 'مدت دوره نامعتبر است.' };
+    data.duration_days = days;
+  } else if (!partial) data.duration_days = 56;
+
+  const rawActive = b.is_active ?? b.active;
+  if (sent(rawActive)) {
+    if (![true, false, 1, 0, '1', '0', 'true', 'false'].includes(rawActive)) return { data, error: 'وضعیت دوره نامعتبر است.' };
+    data.is_active = rawActive === true || rawActive === 1 || rawActive === '1' || rawActive === 'true';
+  } else if (!partial) data.is_active = true;
+  return { data };
+}
+
 app.post('/api/courses', async (req, res) => {
   try {
-    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.insertCourse(req.body));
+    const { data, error } = parseCourseInput(req.body, false);
+    if (error) return res.status(400).json({ error });
+    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.insertCourse(data));
     const db = readDb();
     const newCourse = {
       id: db.courses.length > 0 ? Math.max(...db.courses.map(c => c.id)) + 1 : 1,
-      ...req.body,
+      title: data.title!,
+      code: data.code || data.title!.slice(0, 8).replace(/\s/g, '-').toUpperCase(),
+      tuition: data.price!,
+      duration_weeks: Math.ceil(data.duration_days! / 7),
+      active: data.is_active!,
     };
     db.courses.push(newCourse);
     writeDb(db);
@@ -1031,15 +1151,34 @@ app.post('/api/courses', async (req, res) => {
 app.put('/api/courses/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
+    const { data, error } = parseCourseInput(req.body, true);
+    if (error) return res.status(400).json({ error });
     if (chabokan.isMysqlEnabled()) {
-      const row = await chabokan.updateCourse(id, req.body);
+      // updateCourse writes every column, so start from the stored course and apply only what was sent.
+      const current = (await loadCourses()).find(c => Number(c.id) === id);
+      if (!current) return res.status(404).json({ error: 'Course not found' });
+      const row = await chabokan.updateCourse(id, {
+        title: current.title, price: coursePrice(current), duration_days: Number(current.duration_weeks || 8) * 7, is_active: courseIsActive(current),
+        ...data,
+      });
       if (!row) return res.status(404).json({ error: 'Course not found' });
       return res.json(row);
     }
     const db = readDb();
     const index = db.courses.findIndex(c => c.id === id);
     if (index !== -1) {
-      db.courses[index] = { ...db.courses[index], ...req.body, id };
+      // Older records may carry price/duration_days/is_active; fold them into the canonical fields.
+      const { price: _p, duration_days: _d, is_active: _a, ...cur } = db.courses[index] as any;
+      const legacy = db.courses[index] as any;
+      db.courses[index] = {
+        ...cur,
+        title: data.title ?? cur.title,
+        code: data.code ?? cur.code,
+        tuition: data.price ?? coursePrice(legacy),
+        duration_weeks: data.duration_days !== undefined ? Math.ceil(data.duration_days / 7) : (cur.duration_weeks ?? Math.ceil(Number(legacy.duration_days || 56) / 7)),
+        active: data.is_active ?? courseIsActive(legacy),
+        id,
+      };
       writeDb(db);
       res.json(db.courses[index]);
     } else {
@@ -1111,14 +1250,18 @@ app.put('/api/students/:id', async (req, res) => {
       if (!student) return res.status(404).json({ error: 'Student not found' });
       return res.json({ status: 'success', student });
     }
+    const body = req.body || {};
+    const hasStatus = body.status !== undefined && body.status !== null && body.status !== '';
+    if (hasStatus && !['active', 'suspended', 'graduated'].includes(body.status)) {
+      return res.status(400).json({ error: 'وضعیت کارآموز نامعتبر است.' });
+    }
     const db = readDb();
     const index = db.students.findIndex(s => s.id === studentId);
     if (index === -1) return res.status(404).json({ error: 'Student not found' });
-    const body = req.body || {};
     db.students[index] = {
       ...db.students[index],
       ...data,
-      status: body.status || db.students[index].status,
+      status: hasStatus ? body.status : db.students[index].status,
     };
     writeDb(db);
     res.json({ status: 'success', student: db.students[index] });
@@ -1133,14 +1276,31 @@ app.delete('/api/students/:id', async (req, res) => {
       return res.status(404).json({ error: 'Student not found' });
     }
     if (chabokan.isMysqlEnabled()) {
+      // Read the file paths first: the rows are gone after the delete.
+      const student = (await loadStudents()).find(s => Number(s.id) === studentId);
+      const enrollments = (await loadEnrollments()).filter(e => Number(e.student_id) === studentId);
       await chabokan.deleteStudent(studentId);
+      removeStudentFiles(student, enrollments);
       return res.json({ success: true });
     }
     const db = readDb();
+    const student = db.students.find(s => s.id === studentId) as any;
+    const enrollments = db.enrollments.filter(e => e.student_id === studentId);
     db.students = db.students.filter(s => s.id !== studentId);
     db.enrollments = db.enrollments.filter(e => e.student_id !== studentId);
     db.payments = db.payments.filter(p => p.student_id !== studentId);
+    // Chat history and outbox entries belong to the student too (matched by id, phone or Rubika chat).
+    const phone = normalizeMobile(student?.phone_number);
+    const chatId = student?.rubika_chat_id ? String(student.rubika_chat_id) : '';
+    const isTheirs = (m: any) =>
+      (m.student_id !== undefined && m.student_id !== null && String(m.student_id) === String(studentId)) ||
+      (!!phone && (normalizeMobile(m.recipient) === phone || normalizeMobile(m.sender_phone) === phone)) ||
+      (!!chatId && String(m.chat_id || '') === chatId);
+    for (const key of ['messages', 'outbox']) {
+      if (Array.isArray((db as any)[key])) (db as any)[key] = (db as any)[key].filter((m: any) => !isTheirs(m));
+    }
     writeDb(db);
+    removeStudentFiles(student, enrollments);
     res.json({ success: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -1150,26 +1310,31 @@ app.post('/api/students/:id/photos', uploadStudentMedia.fields([
   { name: 'idCard', maxCount: 1 },
   { name: 'personal', maxCount: 1 }
 ]), async (req, res) => {
-  const studentId = parseInt(req.params.id);
-  const db = readDb();
-  const index = db.students.findIndex(s => s.id === studentId);
   const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-  if (!chabokan.isMysqlEnabled() && index === -1) {
-    removeUploadedFiles(files);
-    return res.status(404).json({ error: 'Student not found' });
-  }
+  try {
+    const studentId = parseInt(req.params.id);
+    const db = readDb();
+    const index = db.students.findIndex(s => s.id === studentId);
+    if (!chabokan.isMysqlEnabled() && index === -1) {
+      removeUploadedFiles(files);
+      return res.status(404).json({ error: 'Student not found' });
+    }
 
-  const idCardPath = files?.idCard?.[0] ? publicPathFromFile(files.idCard[0]) : undefined;
-  const personalPath = files?.personal?.[0] ? publicPathFromFile(files.personal[0]) : undefined;
-  if (chabokan.isMysqlEnabled()) {
-    await chabokan.updateStudentPhotos(studentId, idCardPath, personalPath);
-    const student = await chabokan.listStudents().then((list) => list.find((s: any) => s.id === studentId));
-    return res.json(student || { id: studentId, id_card_photo_url: idCardPath, personal_photo_url: personalPath });
+    const idCardPath = files?.idCard?.[0] ? publicPathFromFile(files.idCard[0]) : undefined;
+    const personalPath = files?.personal?.[0] ? publicPathFromFile(files.personal[0]) : undefined;
+    if (chabokan.isMysqlEnabled()) {
+      await chabokan.updateStudentPhotos(studentId, idCardPath, personalPath);
+      const student = await chabokan.listStudents().then((list) => list.find((s: any) => s.id === studentId));
+      return res.json(student || { id: studentId, id_card_photo_url: idCardPath, personal_photo_url: personalPath });
+    }
+    if (idCardPath) db.students[index].id_card_photo_url = idCardPath;
+    if (personalPath) db.students[index].personal_photo_url = personalPath;
+    writeDb(db);
+    res.json(db.students[index]);
+  } catch (err: any) {
+    removeUploadedFiles(files);
+    res.status(500).json({ error: err.message });
   }
-  if (idCardPath) db.students[index].id_card_photo_url = idCardPath;
-  if (personalPath) db.students[index].personal_photo_url = personalPath;
-  writeDb(db);
-  res.json(db.students[index]);
 });
 
 /** Welcome SMS after registration: only when the toggle is on and an SMS gateway is configured. */
@@ -1214,7 +1379,9 @@ app.post('/api/enrollments', async (req, res) => {
     } else {
       courseNumber = numbers.length > 0 ? Math.max(...numbers) : null;
     }
-    if (enrollments.some(e => Number(e.student_id) === studentId && Number(e.course_id) === courseId && Number(e.course_number) === courseNumber)) {
+    // A missing class number (null) must still match another enrollment without one.
+    const sameClass = (e: any) => (e.course_number === null || e.course_number === undefined || e.course_number === '' ? null : Number(e.course_number)) === courseNumber;
+    if (enrollments.some(e => Number(e.student_id) === studentId && Number(e.course_id) === courseId && sameClass(e))) {
       return res.status(409).json({ error: 'این کارآموز قبلاً در همین دوره و کلاس ثبت‌نام شده است.' });
     }
 
@@ -1292,7 +1459,8 @@ app.post('/api/payments', async (req, res) => {
     const paymentData = req.body;
     const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
     if (!studentId) return res.status(400).json({ error: 'student_id is required' });
-    const amount = parseFloat(paymentData.amount);
+    const rawAmount = paymentData.amount;
+    const amount = typeof rawAmount === 'number' || typeof rawAmount === 'string' ? Math.round(Number(rawAmount)) : NaN;
     if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount is required' });
     if (!(await loadStudents()).some(s => Number(s.id) === studentId)) {
       return res.status(404).json({ error: 'کارآموز یافت نشد.' });
@@ -1318,7 +1486,12 @@ app.post('/api/payments', async (req, res) => {
     if (chabokan.isMysqlEnabled()) {
       const rows = [];
       for (const part of parts) {
-        rows.push(await chabokan.insertPayment({ ...paymentData, student_id: studentId, enrollment_id: part.enrollmentId, amount: part.amount, pay_date_jalali: payDate }));
+        rows.push(await chabokan.insertPayment({
+          student_id: studentId, enrollment_id: part.enrollmentId, amount: part.amount, pay_date_jalali: payDate,
+          pay_method: sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos',
+          payment_kind: sanitizeString(paymentData.payment_kind, 40) || 'downpayment',
+          description: sanitizeString(paymentData.description ?? paymentData.notes, 400),
+        }));
       }
       return res.json({ ...rows[0], allocations: rows.length });
     }
@@ -1632,7 +1805,7 @@ app.get('/api/enrollments/:id/report-context', (req, res) => {
     student: student || null,
     course: course || null,
     payments,
-    settings: db.settings,
+    settings: publicSettings(db.settings),
     timestamp: new Date().toISOString(),
   });
 });
@@ -1652,6 +1825,7 @@ app.post('/api/enrollments/:id/receipt', uploadReceipt.single('pdf'), async (req
   const receiptPath = publicPathFromFile(req.file);
   try {
     if (chabokan.isMysqlEnabled()) {
+      if (!(await loadEnrollments()).some(e => Number(e.id) === enrollmentId)) return reject(404, 'Enrollment not found');
       await chabokan.updateEnrollmentReceipt(enrollmentId, receiptPath);
       return res.json({ receipt_pdf_path: receiptPath });
     }
@@ -1664,6 +1838,7 @@ app.post('/api/enrollments/:id/receipt', uploadReceipt.single('pdf'), async (req
     writeDb(db);
     res.json({ receipt_pdf_path: receiptPath });
   } catch (err: any) {
+    removeUploadedFiles(req.file);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1677,8 +1852,7 @@ app.get('/api/expenses', async (req, res) => {
 });
 
 app.post('/api/expenses', async (req, res) => {
-  const db = readDb();
-  const expenseData = req.body;
+  const expenseData = req.body || {};
   const title = sanitizeString(expenseData.title ?? expenseData.expenseTitle, 160);
   const amount = parseFloat(expenseData.amount ?? expenseData.expenseAmount);
   if (!title || !Number.isFinite(amount) || amount <= 0) {
@@ -1687,10 +1861,13 @@ app.post('/api/expenses', async (req, res) => {
   try {
   if (chabokan.isMysqlEnabled()) {
     return res.json(await chabokan.insertExpense({
-      ...expenseData, title, amount,
+      title, amount,
+      pay_method: sanitizeString(expenseData.pay_method ?? expenseData.category, 80),
+      description: sanitizeString(expenseData.description ?? expenseData.notes, 400),
       pay_date_jalali: normalizeJalaliDate(sanitizeString(expenseData.pay_date_jalali ?? expenseData.expenseDate ?? expenseData.expensedate, 20)) || jalaliNow(),
     }));
   }
+  const db = readDb();
   const newExpense = {
     id: db.expenses.length > 0 ? Math.max(...db.expenses.map(ex => ex.id)) + 1 : 1,
     title,
@@ -1733,10 +1910,6 @@ app.get('/api/messenger/threads', (req, res) => {
   res.json({ success: true, threads: (db as any).threads || [] });
 });
 
-const publicSettings = (settings: any) => {
-  const { admin_password_hash, gateways, ...rest } = settings || {};
-  return rest;
-};
 app.get('/api/settings/academy', (req, res) => {
   res.json(publicSettings(readDb().settings));
 });
@@ -1847,5 +2020,9 @@ async function startServer() {
     console.log(`Server started successfully on http://0.0.0.0:${PORT}`);
   });
 }
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
 
 startServer();

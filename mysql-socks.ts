@@ -350,8 +350,13 @@ export async function insertStudent(body: any) {
   const address = String(body.address || '').trim();
   const fatherName = String(body.father_name || '').trim();
   const birthDate = String(body.birth_date_jalali || '').trim();
-  const idCard = body.id_card_photo_url || body.national_card_path || null;
-  const personalPhoto = body.personal_photo_url || body.personal_photo_path || null;
+  // Photo paths are set by the server's upload handler; a client-supplied value is only kept when it points into StudentFiles/.
+  const ownFile = (v: unknown) => {
+    const p = typeof v === 'string' ? v.trim() : '';
+    return /^\/?StudentFiles\//.test(p) && !p.includes('..') ? p : null;
+  };
+  const idCard = ownFile(body.id_card_photo_url) || ownFile(body.national_card_path);
+  const personalPhoto = ownFile(body.personal_photo_url) || ownFile(body.personal_photo_path);
 
   if (nationalCode) {
     const dup = await sql('SELECT student_id AS id FROM students WHERE national_code = ? LIMIT 1', [nationalCode]);
@@ -426,13 +431,26 @@ export async function updateStudent(id: number, body: any) {
 }
 
 export async function deleteStudent(id: number) {
-  await sqlExec('DELETE FROM payments WHERE student_id = ?', [id]);
-  await sqlExec('DELETE FROM enrollments WHERE student_id = ?', [id]);
-  await sqlExec('DELETE FROM students WHERE student_id = ?', [id]);
+  // The legacy row is matched by national code (its StudentID is not guaranteed to equal ours).
+  const found = await sql<any>('SELECT national_code FROM students WHERE student_id = ? LIMIT 1', [id]);
+  const nationalCode = String(found[0]?.national_code || '').trim();
+  const conn = await getConn();
+  await conn.beginTransaction();
   try {
-    await sqlExec('DELETE FROM TblStudents WHERE StudentID = ?', [id]);
-  } catch (err: any) {
-    console.warn('Sync delete from TblStudents warning:', err.message);
+    await conn.query('DELETE FROM payments WHERE student_id = ?', [id]);
+    await conn.query('DELETE FROM enrollments WHERE student_id = ?', [id]);
+    await conn.query('DELETE FROM students WHERE student_id = ?', [id]);
+    if (nationalCode) {
+      try {
+        await conn.query('DELETE FROM TblStudents WHERE Ncode = ?', [nationalCode]);
+      } catch (err: any) {
+        console.warn('Sync delete from TblStudents warning:', err.message);
+      }
+    }
+    await conn.commit();
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    throw err;
   }
 }
 
