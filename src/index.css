@@ -311,24 +311,6 @@ input[type="number"]::-webkit-outer-spin-button {
   font-weight: 500;
 }
 
-/* Animated Pulse Dot */
-.pulse-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-
-.pulse-dot.green  { background: #10b981; box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
-.pulse-dot.blue   { background: #0ea5e9; box-shadow: 0 0 0 0 rgba(14,165,233,0.4); }
-.pulse-dot.red    { background: #f43f5e; box-shadow: 0 0 0 0 rgba(244,63,94,0.4); }
-
-@keyframes pulse-glow {
-  0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
-  70%  { box-shadow: 0 0 0 6px transparent; opacity: 0.8; }
-  100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
-}
-
 /* Loading Spinner */
 .carla-spinner {
   width: 40px; height: 40px;
@@ -421,12 +403,6 @@ input[type="number"]::-webkit-outer-spin-button {
 @keyframes slide-in {
   from { opacity: 0; transform: translateX(16px); }
   to   { opacity: 1; transform: translateX(0); }
-}
-
-/* Premium footer */
-.carla-footer {
-  background: white;
-  border-top: 1px solid #f1f5f9;
 }
 
 /* Recharts override */

@@ -293,7 +293,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     { id: 'courses', label: 'لیست دوره‌ها', icon: BookOpen, count: courses.length, color: 'violet' },
     { id: 'gateways', label: 'وب‌سرویس و درگاه‌ها', icon: Cpu, color: 'teal' },
     { id: 'database', label: 'دیتابیس Cloud', icon: Database, color: 'amber' },
-    { id: 'payment', label: 'درگاه‌های بانکی', icon: CreditCard, color: 'emerald' },
+    { id: 'payment', label: 'روش‌های پرداخت', icon: CreditCard, color: 'emerald' },
     { id: 'users', label: 'کاربران و دسترسی‌ها', icon: Users, color: 'rose' },
   ];
 
@@ -487,7 +487,11 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                         <td className="p-3 font-mono font-bold text-violet-700">{c.tuition.toLocaleString('fa-IR')} تومان</td>
                         <td className="p-3 text-slate-600">{c.duration_weeks} هفته</td>
                         <td className="p-3">
-                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">فعال</span>
+                          {c.active ? (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">فعال</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">غیرفعال</span>
+                          )}
                         </td>
                         <td className="p-3 text-center">
                           <button onClick={() => handleEditCourse(c)} className="p-1.5 text-violet-600 hover:bg-violet-50 rounded-lg transition inline-flex items-center gap-1 font-bold">
@@ -619,7 +623,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
             <div className="space-y-4 fade-in">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-emerald-600" />درگاه‌های بانکی و متدهای پرداخت
+                  <CreditCard className="w-4 h-4 text-emerald-600" />روش‌های دریافت وجه
                 </h3>
               </div>
 
@@ -628,7 +632,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   <div key={m.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
                     <div className="text-xs font-bold text-slate-800">{m.name}</div>
                     <div className="text-[10px] text-slate-400 font-mono">شناسه: {m.code}</div>
-                    <span className="inline-block mt-2 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">فعال</span>
                   </div>
                 ))}
               </div>
@@ -644,7 +647,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <Users className="w-4 h-4 text-rose-600" />کاربران سیستم و سطح دسترسی
                 </h3>
-                <span className="text-[10px] text-slate-400">منبع: فایل محلی — بعداً به MySQL وصل می‌شود</span>
               </div>
 
               {staffError && (

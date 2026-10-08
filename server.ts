@@ -260,9 +260,9 @@ interface DatabaseSchema {
 const initialDb: DatabaseSchema = {
   settings: {
     academy_name: 'آموزشگاه رانندگی کارلا (Carla)',
-    logo_url: 'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&q=80&w=200',
-    phone_number: '۰۲۱-۸۸۸۸۴۴۴۴',
-    address: 'تهران، خیابان ولیعصر، نرسیده به میدان ونک، پلاک ۱۲۰',
+    logo_url: '',
+    phone_number: '',
+    address: '',
     header_text: 'رسید رسمی ثبت‌نام کارآموز - سیستم جامع مدیریت رانندگی کارلا',
     footer_text: 'خواهشمند است جهت هماهنگی کلاس‌ها و آزمون‌ها ۲۴ ساعت قبل با آموزشگاه تماس بگیرید.',
   },

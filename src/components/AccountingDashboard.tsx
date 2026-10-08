@@ -103,8 +103,8 @@ export default function AccountingDashboard({
 
   /* Default to 'all' so no data is filtered out on first load! */
   const [dateFilterMode, setDateFilterMode]   = useState<'all' | 'this_month' | 'custom'>('all');
-  const [customStartDate, setCustomStartDate] = useState('1405/01/01');
-  const [customEndDate, setCustomEndDate]     = useState('1405/12/29');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate]     = useState('');
 
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [expenseTitle, setExpenseTitle]             = useState('');
@@ -255,6 +255,15 @@ export default function AccountingDashboard({
             </button>
           </div>
 
+          {dateFilterMode === 'custom' && (
+            <div className="flex items-center gap-1.5 text-xs">
+              <input type="text" value={customStartDate} onChange={e => setCustomStartDate(e.target.value)} placeholder="از 1404/01/01"
+                className="w-28 px-2 py-1.5 border border-slate-200 rounded-lg font-mono text-center focus:outline-none focus:border-sky-400" />
+              <input type="text" value={customEndDate} onChange={e => setCustomEndDate(e.target.value)} placeholder="تا 1404/12/29"
+                className="w-28 px-2 py-1.5 border border-slate-200 rounded-lg font-mono text-center focus:outline-none focus:border-sky-400" />
+            </div>
+          )}
+
           <button onClick={() => setIsExpenseModalOpen(true)}
             className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs">
             <Plus className="w-4 h-4" />ثبت هزینه جدید
@@ -333,9 +342,6 @@ export default function AccountingDashboard({
             <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
               <Activity className="w-4 h-4 text-sky-500" />نمودار روند جریان درآمد در برابر هزینه‌ها
             </h3>
-            <span className="text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-100">
-              پنج ماه اخیر
-            </span>
           </div>
 
           <div className="h-64">
@@ -369,9 +375,6 @@ export default function AccountingDashboard({
             <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-emerald-500" />نمودار مقایسه‌ای کل شهریه و میزان وصولی دوره‌ها
             </h3>
-            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-              تصل تفکیکی
-            </span>
           </div>
 
           <div className="h-64">

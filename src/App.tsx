@@ -5,14 +5,10 @@ import {
   BarChart3,
   Settings as SettingsIcon,
   Calendar,
-  Bell,
-  FileText,
   Menu,
   LayoutDashboard,
   MessageSquare,
-  ChevronLeft,
   RefreshCw,
-  Wifi,
   LogOut,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
@@ -232,7 +228,6 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-white text-base font-bold tracking-tight leading-tight">Carla CRM</h1>
-              
             </div>
           </div>
         </div>
@@ -283,21 +278,8 @@ export default function App() {
 
         {/* Sidebar Footer */}
         <div className="p-4 border-t border-white/5">
-          {/* Server Status */}
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 mb-3">
-            <div className="pulse-dot green" />
-            <span className="text-[10px] text-slate-400 font-medium flex-1">سرور فعال</span>
-            <Wifi className="h-3 w-3 text-slate-600" />
-          </div>
           {/* User Card */}
           <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/5">
-            <div className="h-8 w-8 rounded-xl overflow-hidden border border-white/10 shrink-0">
-              <img
-                src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=64&h=64&q=80"
-                alt="اپراتور"
-                className="h-full w-full object-cover"
-              />
-            </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-300 leading-tight truncate">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
               <div className="text-[9px] text-slate-600 leading-tight">{ROLE_LABEL[role]}</div>
@@ -335,8 +317,6 @@ export default function App() {
 
             {/* Breadcrumb */}
             <div className="flex items-center gap-1.5 text-sm">
-              
-              <ChevronLeft className="h-3.5 w-3.5 text-slate-300" />
               {activeNavItem && (
                 <div className="flex items-center gap-1.5">
                   <activeNavItem.icon className={`h-4 w-4 ${ICON_COLOR_MAP[activeNavItem.color]}`} />
@@ -360,23 +340,11 @@ export default function App() {
             {/* Separator */}
             <div className="h-6 w-px bg-slate-200" />
 
-            {/* Online Badge */}
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 rounded-full border border-emerald-100">
-              <span className="pulse-dot green" style={{ width: 7, height: 7 }} />
-              <span className="text-[10px] font-bold text-emerald-700">API متصل</span>
-            </div>
-
             {/* Date */}
             <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
               <Calendar className="h-3.5 w-3.5 text-sky-400" />
               <span className="font-bold font-mono text-[11px] text-slate-600">{jalaliDate}</span>
             </div>
-
-            {/* Notification */}
-            <button className="relative p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all">
-              <Bell className="h-4.5 w-4.5" />
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 bg-rose-500 rounded-full ring-2 ring-white" />
-            </button>
 
             {/* Separator */}
             <div className="h-6 w-px bg-slate-200" />
@@ -386,13 +354,6 @@ export default function App() {
               <div className="hidden md:block text-right">
                 <div className="text-xs font-bold text-slate-700 leading-tight">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
                 <div className="text-[9px] text-slate-400">{ROLE_LABEL[role]}</div>
-              </div>
-              <div className="h-8 w-8 rounded-xl overflow-hidden border-2 border-sky-100 ring-1 ring-sky-200/50">
-                <img
-                  src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=64&h=64&q=80"
-                  alt="اپراتور"
-                  className="h-full w-full object-cover"
-                />
               </div>
             </div>
           </div>
@@ -470,23 +431,6 @@ export default function App() {
           )}
         </div>
 
-        {/* ── FOOTER ── */}
-        <footer
-          className="carla-footer px-6 py-2.5 flex items-center justify-between shrink-0"
-          id="app-footer"
-        >
-          <div className="flex items-center gap-4 text-[10px] text-slate-400">
-            <span className="flex items-center gap-1">
-              <span className="pulse-dot green" style={{ width: 6, height: 6 }} />
-              درگاه: متصل
-            </span>
-            <span>آرشیو رسید: فعال</span>
-            <span>Carla CRM v2.4.0</span>
-          </div>
-          <div className="text-[10px] text-slate-400">
-            سیستم مدیریت
-          </div>
-        </footer>
       </main>
     </div>
   );

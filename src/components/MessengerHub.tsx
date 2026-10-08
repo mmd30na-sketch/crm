@@ -15,12 +15,10 @@ import {
   Check,
   Search,
   Zap,
-  Radio,
   User,
   Phone,
   Paperclip,
   CheckCheck,
-  ShieldCheck,
   RefreshCw,
   Plus,
   Tag,
@@ -377,9 +375,6 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black text-slate-900">مرکز ارتباطی و پیام‌رسان کارلا</h2>
-              <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                <Radio className="w-2.5 h-2.5 text-emerald-500 animate-pulse" />درگاه متصل
-              </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">مدیریت گفتگوهای روبیکا، بله، ایتا و پنل پیامک انبوه کشوری</p>
           </div>
@@ -524,7 +519,6 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
             {/* Footer Summary */}
             <div className="p-3 border-t border-slate-200 bg-white text-[10px] text-slate-400 flex justify-between items-center">
               <span>{threads.length} گفتگوی فعال</span>
-              <span className="text-emerald-600 font-bold">همگام با CRM</span>
             </div>
           </div>
 
@@ -545,11 +539,13 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded-md">
-                      پرونده #{activeThread.studentId ?? '۱۰۱'}
-                    </span>
-                  </div>
+                  {activeThread.studentId !== undefined && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded-md">
+                        پرونده #{activeThread.studentId}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Chat Messages Stream Area */}
@@ -779,24 +775,6 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
 
             {/* Right: Gateway Config & Recent SMS Logs (5 cols) */}
             <div className="lg:col-span-5 space-y-4">
-              {/* Gateway config box */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center gap-1.5"><ShieldCheck className="w-4 h-4 text-emerald-500" />وضعیت درگاه پیامکی</span>
-                  <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">IPPanel Active</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px] pt-1">
-                  <div className="bg-white p-2 rounded-lg border border-slate-100">
-                    <span className="text-slate-400 block mb-0.5">خط اختصاصی:</span>
-                    <span className="font-mono font-bold text-slate-700">5000400070</span>
-                  </div>
-                  <div className="bg-white p-2 rounded-lg border border-slate-100">
-                    <span className="text-slate-400 block mb-0.5">اعتبار پنل:</span>
-                    <span className="font-mono font-bold text-emerald-600">۴,۲۵۰,۰۰۰ تومان</span>
-                  </div>
-                </div>
-              </div>
-
               {/* Logs */}
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
