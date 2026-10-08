@@ -26,6 +26,7 @@ import { Course, Student, Enrollment, WebsiteRegistration } from '../types';
 import * as api from '../api/client';
 import { checkScanner, scanWithScanner, ScannerState } from '../api/scanner';
 import { drawContractPage } from '../utils/pdf';
+import { analyzeCardImage, rotateImage90, CardImageQuality } from '../utils/cardImageQuality';
 import { jsPDF } from 'jspdf';
 
 interface StudentRegistrationFormProps {
@@ -36,9 +37,9 @@ interface StudentRegistrationFormProps {
 }
 
 function Field({
-  label, required = false, error, hint, children,
+  label, required = false, error, hint, warning, children,
 }: {
-  label: string; required?: boolean; error?: string | null; hint?: string; children: React.ReactNode;
+  label: string; required?: boolean; error?: string | null; hint?: string; warning?: string | null; children: React.ReactNode;
 }) {
   return (
     <div>
@@ -52,7 +53,12 @@ function Field({
           <AlertCircle className="w-3 h-3 shrink-0" />{error}
         </p>
       )}
-      {!error && hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
+      {!error && warning && (
+        <p className="flex items-center gap-1 text-[11px] text-amber-600 mt-1">
+          <AlertCircle className="w-3 h-3 shrink-0" />{warning}
+        </p>
+      )}
+      {!error && !warning && hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
     </div>
   );
 }
@@ -64,11 +70,11 @@ function toLatinDigits(v: string): string {
 }
 
 function Input({
-  icon: Icon, value, onChange, placeholder, type = 'text', mono = false, error = false,
+  icon: Icon, value, onChange, placeholder, type = 'text', mono = false, error = false, warn = false,
   inputMode, autoComplete, id, maxLength, disabled = false, currency = false,
 }: {
   icon: React.ElementType; value: string | number; onChange: (v: string) => void;
-  placeholder?: string; type?: string; mono?: boolean; error?: boolean;
+  placeholder?: string; type?: string; mono?: boolean; error?: boolean; warn?: boolean;
   inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
   autoComplete?: string; id?: string; maxLength?: number; disabled?: boolean;
   /** Numeric amount: shown with thousands separators, emitted as plain digits. */
@@ -94,7 +100,9 @@ function Input({
         className={`w-full min-h-[52px] pr-11 pl-4 text-sm font-medium border rounded-2xl focus:outline-none focus:ring-2 focus:ring-offset-1 transition-all shadow-sm disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed ${
           error
             ? 'border-rose-300 bg-rose-50/40 focus:border-rose-400 focus:ring-rose-100'
-            : 'border-slate-200 bg-white focus:border-sky-400 focus:ring-sky-100'
+            : warn
+              ? 'border-amber-300 bg-amber-50/60 focus:border-amber-400 focus:ring-amber-100'
+              : 'border-slate-200 bg-white focus:border-sky-400 focus:ring-sky-100'
         } ${mono ? 'font-mono' : ''}`}
       />
     </div>
@@ -196,6 +204,32 @@ function downscaleImageFile(file: File, maxSide = 2400): Promise<File> {
   });
 }
 
+const OCR_WARNING_HINTS: Record<string, string> = {
+  national_code_checksum_failed: 'کد ملی معتبر نیست؛ لطفاً با کارت مطابقت دهید',
+  national_code_invalid_length: 'کد ملی ۱۰ رقم نیست؛ لطفاً با کارت مطابقت دهید',
+  birth_date_invalid: 'تاریخ تولد معتبر نیست؛ لطفاً با کارت مطابقت دهید',
+  low_confidence: 'اطمینان خواندن کم است؛ لطفاً با کارت مطابقت دهید',
+  name_too_long: 'مقدار خوانده‌شده نامعتبر است؛ دستی وارد کنید',
+  missing: 'خوانده نشد؛ لطفاً از روی کارت وارد کنید',
+};
+
+/** First Persian hint for a field's OCR warnings, or null. */
+function ocrHint(warnings: Record<string, string[]>, key: string): string | null {
+  const list = warnings[key];
+  if (!list || list.length === 0) return null;
+  for (const code of list) if (OCR_WARNING_HINTS[code] && code !== 'low_confidence') return OCR_WARNING_HINTS[code];
+  return list.includes('low_confidence') ? OCR_WARNING_HINTS.low_confidence : null;
+}
+
+function isValidIranNationalCode(code: string): boolean {
+  if (!/^\d{10}$/.test(code) || /^(\d)\1{9}$/.test(code)) return false;
+  const d = code.split('').map(Number);
+  let s = 0;
+  for (let i = 0; i < 9; i++) s += d[i] * (10 - i);
+  const r = s % 11;
+  return r < 2 ? d[9] === r : d[9] === 11 - r;
+}
+
 function splitFullName(fullName: string) {
   const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
   return { first: parts[0] || '', last: parts.slice(1).join(' ') };
@@ -286,6 +320,13 @@ export default function StudentRegistrationForm({
   const [idCardPreview, setIdCardPreview] = useState<string | null>(null);
   const [isScanningOCR, setIsScanningOCR] = useState(false);
   const [ocrSuccess,    setOcrSuccess]    = useState(false);
+  /** Per-field OCR warnings, cleared field by field when staff edit the value. */
+  const [ocrWarnings,   setOcrWarnings]   = useState<Record<string, string[]>>({});
+  const [ocrNeedsReview, setOcrNeedsReview] = useState(false);
+  const [ocrConfirmed,  setOcrConfirmed]  = useState(false);
+  const [ocrExpiry,     setOcrExpiry]     = useState<{ date: string; expired: boolean } | null>(null);
+  /** Photo-quality warning shown before upload; staff may retake, rotate or continue anyway. */
+  const [qualityNotice, setQualityNotice] = useState<{ file: File; q: CardImageQuality } | null>(null);
 
   const [personalPhotoFile,    setPersonalPhotoFile]    = useState<File | null>(null);
   const [personalPhotoPreview, setPersonalPhotoPreview] = useState<string | null>(null);
@@ -394,11 +435,7 @@ export default function StudentRegistrationForm({
     if (nationalCode.length !== 10 || !/^\d+$/.test(nationalCode)) {
       setNationalCodeError('باید دقیقاً ۱۰ رقم باشد'); return;
     }
-    const d = nationalCode.split('').map(Number);
-    let s = 0;
-    for (let i = 0; i < 9; i++) s += d[i] * (10 - i);
-    const r = s % 11;
-    const valid = r < 2 ? d[9] === r : d[9] === 11 - r;
+    const valid = isValidIranNationalCode(nationalCode);
     setNationalCodeError(valid ? null : 'رقم کنترلی معتبر نیست');
   }, [nationalCode]);
 
@@ -459,8 +496,7 @@ export default function StudentRegistrationForm({
       if (target === 'idCard') {
         setIdCardFile(file);
         setIdCardPreview(previewUrl);
-        setOcrSuccess(false);
-        void runOcr(file);
+        void prepareIdCard(file);
       } else {
         setPersonalPhotoFile(file);
         setPersonalPhotoPreview(previewUrl);
@@ -503,11 +539,45 @@ export default function StudentRegistrationForm({
     }
   };
 
+  /** Check photo quality first; on a problem show the notice instead of calling OCR (staff can still continue). */
+  const prepareIdCard = async (file: File) => {
+    setQualityNotice(null);
+    setOcrSuccess(false); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null);
+    const q = await analyzeCardImage(file);
+    if (q && (q.lowResolution || q.blurry || q.portrait)) {
+      setQualityNotice({ file, q });
+      return;
+    }
+    void runOcr(file);
+  };
+
   const assignIdCard = (file: File) => {
     setIdCardFile(file);
     setIdCardPreview(URL.createObjectURL(file));
-    setOcrSuccess(false);
-    void runOcr(file);
+    void prepareIdCard(file);
+  };
+
+  const rotateNoticeCard = async () => {
+    if (!qualityNotice) return;
+    const rotated = await rotateImage90(qualityNotice.file);
+    setIdCardFile(rotated);
+    setIdCardPreview(URL.createObjectURL(rotated));
+    void prepareIdCard(rotated);
+  };
+
+  const continueWithNoticeCard = () => {
+    if (!qualityNotice) return;
+    const f = qualityNotice.file;
+    setQualityNotice(null);
+    void runOcr(f);
+  };
+
+  const clearOcrWarning = (key: string) => {
+    setOcrWarnings((w) => {
+      if (!w[key]) return w;
+      const { [key]: _drop, ...rest } = w;
+      return rest;
+    });
   };
 
   const assignPersonalPhoto = async (file: File) => {
@@ -520,7 +590,7 @@ export default function StudentRegistrationForm({
   const runOcr = async (file?: File | null) => {
     const target = file || idCardFile;
     if (!target) return;
-    setIsScanningOCR(true); setOcrSuccess(false); setOcrError(null);
+    setIsScanningOCR(true); setOcrSuccess(false); setOcrError(null); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null);
     try {
       const result = await api.ocrNationalCard(await downscaleImageFile(target));
       const hasAny = !!(result.first_name || result.last_name || result.national_code);
@@ -533,6 +603,10 @@ export default function StudentRegistrationForm({
       if (result.last_name) setLastName(result.last_name);
       if (result.national_code) setNationalCode(result.national_code);
       if (result.birth_date_jalali) setBirthDate(result.birth_date_jalali);
+      setOcrWarnings(result.field_warnings || {});
+      setOcrNeedsReview(result.needs_review);
+      setOcrConfirmed(false);
+      setOcrExpiry(result.card_expiry_jalali ? { date: result.card_expiry_jalali, expired: result.card_expired } : null);
       setOcrSuccess(true);
       setOcrError(null);
     } catch (err: any) {
@@ -716,6 +790,9 @@ export default function StudentRegistrationForm({
     if (nationalCodeError || phoneError) {
       setStepError('خطاهای اعتبارسنجی را برطرف کنید.'); return;
     }
+    if (ocrNeedsReview && !ocrConfirmed) {
+      setStepError('اطلاعات خوانده‌شده از کارت نیاز به بررسی دارد؛ پس از مطابقت با کارت، گزینه «اطلاعات را با کارت تطبیق دادم» را بزنید.'); return;
+    }
     if (!activeCourses.some(c => c.id === selectedCourseId)) {
       setStepError('دوره آموزشی را انتخاب کنید.'); return;
     }
@@ -859,7 +936,8 @@ export default function StudentRegistrationForm({
     setPersonalPhotoFile(null); setPersonalPhotoPreview(null);
     setPayAmount(0); setPayDesc(''); setPaymentType('full'); setHasDiscount(false); setDiscountAmount(0);
     setCreatedStudent(null); setCreatedEnrollmentId(null); setPdfPath(null);
-    setOcrSuccess(false); setOcrError(null); setStepError(null); setIsSuccess(false); setExistingNotice(null);
+    setOcrSuccess(false); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null); setQualityNotice(null);
+    setOcrError(null); setStepError(null); setIsSuccess(false); setExistingNotice(null);
     courseNumberTouched.current = false;
     setCourseNumber(Math.max(currentMax, courseNumber));
     setShowNewCoursePrompt(false);
@@ -1063,8 +1141,42 @@ export default function StudentRegistrationForm({
                     <Sparkles className="w-3.5 h-3.5" />استخراج اطلاعات از کارت
                   </button>
                 )}
+                {qualityNotice && (
+                  <div className="mt-2 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-[11px] space-y-2">
+                    <p className="font-bold flex items-start gap-1.5"><AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>
+                        {qualityNotice.q.blurry && 'عکس تار است، دوباره بگیرید. '}
+                        {qualityNotice.q.lowResolution && 'وضوح عکس کم است؛ نزدیک‌تر و واضح‌تر بگیرید. '}
+                        {qualityNotice.q.portrait && 'عکس عمودی است؛ کارت باید افقی باشد. '}
+                      </span>
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {qualityNotice.q.portrait && (
+                        <button type="button" onClick={() => void rotateNoticeCard()}
+                          className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg font-bold flex items-center gap-1">
+                          <RotateCw className="w-3 h-3" />چرخاندن ۹۰ درجه
+                        </button>
+                      )}
+                      <button type="button" onClick={continueWithNoticeCard}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold">
+                        ادامه با همین عکس
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {ocrSuccess && (
-                  <p className="mt-2 text-[11px] text-emerald-600 font-semibold text-center">اطلاعات کارت در فیلدها پر شد. در صورت نیاز اصلاح کنید.</p>
+                  <p className="mt-2 text-[11px] text-emerald-600 font-semibold text-center">
+                    {ocrNeedsReview ? 'اطلاعات خوانده شد ولی نیاز به بررسی دارد؛ حتماً با کارت مطابقت دهید.' : 'اطلاعات کارت در فیلدها پر شد. در صورت نیاز اصلاح کنید.'}
+                  </p>
+                )}
+                {ocrSuccess && ocrExpiry?.expired && (
+                  <p className="mt-1.5 text-[10px] text-amber-600 text-center">تاریخ پایان اعتبار کارت گذشته است ({ocrExpiry.date})</p>
+                )}
+                {ocrSuccess && ocrNeedsReview && (
+                  <button type="button" onClick={() => setOcrConfirmed((v) => !v)} aria-pressed={ocrConfirmed}
+                    className={`mt-2 w-full py-2 text-xs font-bold rounded-xl border transition flex items-center justify-center gap-1.5 ${ocrConfirmed ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'}`}>
+                    <CheckCircle className="w-3.5 h-3.5" />{ocrConfirmed ? 'اطلاعات با کارت تطبیق داده شد' : 'اطلاعات را با کارت تطبیق دادم'}
+                  </button>
                 )}
               </div>
 
@@ -1118,17 +1230,24 @@ export default function StudentRegistrationForm({
             <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-xs">
               <SectionHeader icon={User} label="اطلاعات شخصی کارآموز" color="sky" />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
-                <Field label="نام" required>
-                  <Input icon={User} value={firstName} onChange={setFirstName} placeholder="نام" />
+                <Field label="نام" required warning={ocrHint(ocrWarnings, 'first_name')}>
+                  <Input icon={User} value={firstName} onChange={(v) => { clearOcrWarning('first_name'); setFirstName(v); }} placeholder="نام" warn={!!ocrHint(ocrWarnings, 'first_name')} />
                 </Field>
-                <Field label="نام خانوادگی" required>
-                  <Input icon={User} value={lastName} onChange={setLastName} placeholder="نام خانوادگی" />
+                <Field label="نام خانوادگی" required warning={ocrHint(ocrWarnings, 'last_name')}>
+                  <Input icon={User} value={lastName} onChange={(v) => { clearOcrWarning('last_name'); setLastName(v); }} placeholder="نام خانوادگی" warn={!!ocrHint(ocrWarnings, 'last_name')} />
                 </Field>
-                <Field label="کد ملی" required error={nationalCodeError}>
-                  <Input icon={CreditCard} value={nationalCode} onChange={setNationalCode} placeholder="کد ملی ده رقمی" mono error={!!nationalCodeError} inputMode="numeric" maxLength={10} autoComplete="off" />
+                <Field label="کد ملی" required error={nationalCodeError} warning={ocrHint(ocrWarnings, 'national_code')}>
+                  <div className="relative">
+                    <Input icon={CreditCard} value={nationalCode} onChange={(v) => { clearOcrWarning('national_code'); setNationalCode(toLatinDigits(v)); }} placeholder="کد ملی ده رقمی" mono error={!!nationalCodeError} warn={!!ocrHint(ocrWarnings, 'national_code')} inputMode="numeric" maxLength={10} autoComplete="off" />
+                    {nationalCode.length === 10 && !nationalCodeError && (
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[11px] font-bold text-emerald-600 pointer-events-none">
+                        <CheckCircle className="w-4 h-4" />معتبر
+                      </span>
+                    )}
+                  </div>
                 </Field>
-                <Field label="تاریخ تولد">
-                  <Input icon={Calendar} value={birthDate} onChange={setBirthDate} placeholder="مثال: ۱۳۷۰/۰۵/۲۴" mono />
+                <Field label="تاریخ تولد" warning={ocrHint(ocrWarnings, 'birth_date_jalali')}>
+                  <Input icon={Calendar} value={birthDate} onChange={(v) => { clearOcrWarning('birth_date_jalali'); setBirthDate(v); }} placeholder="مثال: ۱۳۷۰/۰۵/۲۴" mono warn={!!ocrHint(ocrWarnings, 'birth_date_jalali')} />
                 </Field>
               </div>
             </div>

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "scanner": "node scripts/scanner-bridge.mjs"
+    "scanner": "node scripts/scanner-bridge.mjs",
+    "test:ocr": "node --import tsx scripts/test-ocr-validate.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

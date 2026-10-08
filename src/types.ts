@@ -92,7 +92,15 @@ export interface NationalCardOcrResult {
   national_code: string;
   father_name: string;
   birth_date_jalali: string;
+  /** پایان اعتبار کارت (yyyy/mm/dd, Latin digits), '' when not read. */
+  card_expiry_jalali: string;
+  /** Informational only: the printed expiry date is in the past. */
+  card_expired: boolean;
   confidence: number;
+  /** Per-field warning codes, e.g. national_code_checksum_failed, birth_date_invalid, low_confidence; '_overall' for whole-card ones. */
+  field_warnings: Record<string, string[]>;
+  /** True when staff must compare the fields with the card before continuing. */
+  needs_review: boolean;
 }
 
 export interface ReceiptSettings {

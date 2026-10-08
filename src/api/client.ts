@@ -566,7 +566,12 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
     national_code:     data.national_code ?? '',
     father_name:       data.father_name ?? '',
     birth_date_jalali: data.birth_date_jalali ?? '',
-    confidence:        data.confidence ?? 0.9,
+    card_expiry_jalali: data.card_expiry_jalali ?? '',
+    card_expired:      !!data.card_expired,
+    confidence:        data.confidence ?? 0,
+    field_warnings:    data.field_warnings ?? {},
+    // Older servers do not send the flag: stay on the safe side only when a field is missing.
+    needs_review:      data.needs_review ?? !(data.first_name && data.last_name && data.national_code),
   };
 }
 

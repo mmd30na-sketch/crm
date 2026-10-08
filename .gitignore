@@ -8,3 +8,5 @@ coverage/
 !.env.example
 .crm-jwt-secret
 *.bak
+
+ocr-eval-data/

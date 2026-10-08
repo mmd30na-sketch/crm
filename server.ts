@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
+import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config(); // fallback to .env
@@ -1519,30 +1520,8 @@ app.get('/api/payments', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-type IranIdOcr = {
-  first_name: string;
-  last_name: string;
-  national_code: string;
-  father_name: string;
-  birth_date_jalali: string;
-  confidence: number;
-  provider?: string;
-};
-
-function toEnglishDigits(s: string) {
-  return String(s || '')
-    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
-    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
-}
-
-function validNationalCode(code: string) {
-  if (!/^\d{10}$/.test(code) || /^(\d)\1{9}$/.test(code)) return false;
-  const d = code.split('').map(Number);
-  let s = 0;
-  for (let i = 0; i < 9; i++) s += d[i] * (10 - i);
-  const r = s % 11;
-  return r < 2 ? d[9] === r : d[9] === 11 - r;
-}
+const toEnglishDigits = ocrLatinDigits;
+const validNationalCode = isValidNationalCode;
 
 function cleanPersonName(s: string) {
   return String(s || '')
@@ -1596,24 +1575,6 @@ function parseIranIdText(raw: string): IranIdOcr {
   const hits = [out.first_name, out.last_name, out.national_code, out.father_name, out.birth_date_jalali].filter(Boolean).length;
   out.confidence = Number((hits / 5).toFixed(2));
   return out;
-}
-
-function mergeOcr(primary: Partial<IranIdOcr>, fallback: IranIdOcr): IranIdOcr {
-  const pick = (k: keyof IranIdOcr) => String(primary[k] || fallback[k] || '');
-  const merged: IranIdOcr = {
-    first_name: pick('first_name'),
-    last_name: pick('last_name'),
-    national_code: pick('national_code'),
-    father_name: pick('father_name'),
-    birth_date_jalali: pick('birth_date_jalali'),
-    confidence: Number(primary.confidence || fallback.confidence || 0),
-    provider: String(primary.provider || fallback.provider || ''),
-  };
-  if (merged.national_code) merged.national_code = toEnglishDigits(merged.national_code).replace(/\D/g, '').slice(0, 10);
-  if (merged.birth_date_jalali) merged.birth_date_jalali = toEnglishDigits(merged.birth_date_jalali);
-  const hits = [merged.first_name, merged.last_name, merged.national_code, merged.father_name, merged.birth_date_jalali].filter(Boolean).length;
-  merged.confidence = Math.max(merged.confidence, Number((hits / 5).toFixed(2)));
-  return merged;
 }
 
 let gcpTokenCache: { token: string; exp: number } | null = null;
@@ -1671,20 +1632,56 @@ async function ocrWithCloudVision(fileBuffer: Buffer): Promise<IranIdOcr | null>
   return parsed;
 }
 
-async function ocrWithGemini(fileBuffer: Buffer, mimeType: string): Promise<IranIdOcr | null> {
-  if (!ai) return null;
-  const prompt = `این تصویر کارت ملی هوشمند ایران است. فقط JSON برگردان، بدون توضیح.
+const OCR_FIELDS_PROMPT = `این تصویر کارت ملی هوشمند ایران است (افقی). فقط یک JSON برگردان، بدون توضیح و بدون markdown.
+جای فیلدها: برچسب‌های فارسی در سمت راست هر سطر چاپ شده‌اند و مقدار هر فیلد در سمت چپ همان برچسب است:
+- «شماره ملی» (۱۰ رقم)
+- «نام» (ممکن است یک کلمهٔ مرکب باشد مثل محمدسینا؛ آن را جدا نکن)
+- «نام خانوادگی» (ممکن است دو کلمه با یک فاصله باشد؛ فاصله را حفظ کن)
+- «تاریخ تولد» (سال/ماه/روز شمسی)
+- «نام پدر»
+- «پایان اعتبار» (سال/ماه/روز شمسی)
+ارقام با یک فونت درشت و تزئینی چاپ شده‌اند (گلیف‌های فارسی-هندی؛ مثلا ۴ شبیه «ع»، ۵ شبیه قلب، ۲ شبیه r). رقم‌ها را یکی‌یکی و با دقت بخوان.
+رنگ پس‌زمینه، آرم و طرح کارت ممکن است متفاوت باشد؛ به آن‌ها توجه نکن. تصویر ممکن است تار یا دارای انعکاس نور باشد.
+national_code و تاریخ‌ها را با ارقام انگلیسی (لاتین) بنویس؛ تاریخ‌ها به شکل yyyy/mm/dd.
+اگر فیلدی را با اطمینان نخواندی، رشتهٔ خالی بگذار؛ هیچ مقداری را حدس نزن و رقمی را از خودت نساز.
+خروجی:
 {
-  "first_name": "نام کوچک به فارسی",
-  "last_name": "نام خانوادگی به فارسی",
-  "national_code": "۱۰ رقم انگلیسی",
-  "father_name": "نام پدر به فارسی",
-  "birth_date_jalali": "مثلا 1378/05/20",
-  "confidence": 0.95
+  "readable": true,
+  "first_name": "",
+  "last_name": "",
+  "national_code": "",
+  "father_name": "",
+  "birth_date_jalali": "",
+  "card_expiry_jalali": "",
+  "confidence": 0.0,
+  "field_confidence": { "first_name": 0.0, "last_name": 0.0, "national_code": 0.0, "father_name": 0.0, "birth_date_jalali": 0.0, "card_expiry_jalali": 0.0 }
 }
-اگر خوانده نشد رشته خالی بگذار. هیچ فیلدی را حدس نزن.`;
-  const models = [...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+readable را false بگذار اگر تصویر یک کارت ملی خوانا نیست. confidence و field_confidence عدد بین ۰ و ۱ هستند.`;
+
+const OCR_FOCUSED_PROMPT = `در این تصویر کارت ملی هوشمند ایران، فقط این سه مورد را دوباره و با دقت بخوان:
+۱) «شماره ملی» که ۱۰ رقم است و با فونت درشت و تزئینی چاپ شده (ارقام فارسی-هندی؛ مثلا ۴ شبیه «ع»، ۵ شبیه قلب، ۲ شبیه r). هر رقم را جداگانه، از راست به چپ بخوان.
+۲) «تاریخ تولد» شمسی.
+۳) «پایان اعتبار» شمسی.
+به رنگ پس‌زمینه و آرم کارت وابسته نباش. اگر رقمی را نمی‌توانی بخوانی، digit آن را رشتهٔ خالی و confidence را کم بگذار؛ حدس نزن.
+فقط JSON، تاریخ‌ها و ارقام با اعداد لاتین:
+{
+  "digits": [ { "digit": "", "confidence": 0.0 } ],
+  "national_code": "",
+  "birth_date_jalali": "yyyy/mm/dd",
+  "card_expiry_jalali": "yyyy/mm/dd",
+  "confidence": 0.0
+}
+آرایهٔ digits باید دقیقاً ۱۰ عنصر به ترتیب خواندن داشته باشد.`;
+
+/** One Gemini read of the card. `pass` picks the prompt; the focused pass tries the stronger model first. */
+async function ocrWithGemini(fileBuffer: Buffer, mimeType: string, pass: 'full' | 'focused' = 'full', deadlineMs = Infinity): Promise<Record<string, any> | null> {
+  if (!ai) return null;
+  const base = [...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+  const strong = process.env.GEMINI_MODEL_STRONG || 'gemini-2.5-pro';
+  const models = [...new Set(pass === 'focused' ? [strong, ...base] : base)];
+  const prompt = pass === 'focused' ? OCR_FOCUSED_PROMPT : OCR_FIELDS_PROMPT;
   for (const model of models) {
+    if (Date.now() > deadlineMs) break;
     try {
       const response = await ai.models.generateContent({
         model,
@@ -1730,29 +1727,29 @@ app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nati
   // The scan is only needed for this request; don't keep national-card images in /uploads.
   removeUploadedFiles(files); // the client sends the same scan under two field names
   try {
-    const [gemini, vision] = await Promise.all([
-      ocrWithGemini(fileBuffer, req.file.mimetype || 'image/jpeg'),
-      ocrWithCloudVision(fileBuffer),
-    ]);
-    const empty: IranIdOcr = { first_name: '', last_name: '', national_code: '', father_name: '', birth_date_jalali: '', confidence: 0 };
-    const merged = mergeOcr(gemini || {}, vision || empty);
-    if (gemini) merged.provider = vision ? `${gemini.provider}+cloud-vision` : gemini.provider;
-    else if (vision) merged.provider = 'cloud-vision';
-    const hasAny = !!(merged.first_name || merged.last_name || merged.national_code);
-    if (!hasAny) {
+    const mime = req.file.mimetype || 'image/jpeg';
+    const result = await runCardOcr({
+      gemini: (pass, deadline) => ocrWithGemini(fileBuffer, mime, pass, deadline),
+      vision: () => ocrWithCloudVision(fileBuffer),
+      today: jalaliNow(),
+    });
+    const hasAny = !!(result && (result.first_name || result.last_name || result.national_code));
+    if (!result || !hasAny) {
       return res.status(422).json({
         success: false,
         error: 'خواندن کارت ملی ناموفق بود. اطلاعات را دستی وارد کنید.',
-        ...empty,
+        first_name: '', last_name: '', national_code: '', father_name: '', birth_date_jalali: '', card_expiry_jalali: '',
+        card_expired: false, confidence: 0, field_warnings: {}, needs_review: true,
       });
     }
-    return res.json({ success: true, ...merged });
+    return res.json({ success: true, ...result });
   } catch (error) {
     console.error('National card OCR failed:', (error as any)?.message || error);
     return res.status(422).json({
       success: false,
       error: 'خواندن کارت ملی ناموفق بود. اطلاعات را دستی وارد کنید.',
-      first_name: '', last_name: '', national_code: '', father_name: '', birth_date_jalali: '', confidence: 0,
+      first_name: '', last_name: '', national_code: '', father_name: '', birth_date_jalali: '', card_expiry_jalali: '',
+      card_expired: false, confidence: 0, field_warnings: {}, needs_review: true,
     });
   }
 });
