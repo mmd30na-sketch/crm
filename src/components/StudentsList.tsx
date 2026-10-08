@@ -282,7 +282,7 @@ export default function StudentsList({
         <div
           key={selectedStudent?.id}
           ref={profileCardRef}
-          className="order-2 scroll-mt-4 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm"
+          className="order-1 scroll-mt-4 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm"
           id="student-profile-master-card"
           style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
         >
@@ -443,7 +443,7 @@ export default function StudentsList({
       {/* ══════════════════════════════════════════════
           SECTION 2 — TABLE WITH SEARCH & FILTERS
       ══════════════════════════════════════════════ */}
-      <div className="order-1 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm" id="students-datasheet-section"
+      <div className="order-2 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm" id="students-datasheet-section"
         style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.05)' }}>
 
         {/* ─── Toolbar ─── */}
