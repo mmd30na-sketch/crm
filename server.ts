@@ -739,6 +739,8 @@ if (process.env.GEMINI_API_KEY) {
     ai = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
+        // Optional relay/proxy endpoint for servers that cannot reach Google directly.
+        ...(process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : {}),
         headers: {
           'User-Agent': 'aistudio-build',
         },
@@ -1397,7 +1399,7 @@ async function ocrWithGemini(fileBuffer: Buffer, mimeType: string): Promise<Iran
   "confidence": 0.95
 }
 اگر خوانده نشد رشته خالی بگذار. هیچ فیلدی را حدس نزن.`;
-  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+  const models = [...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
   for (const model of models) {
     try {
       const response = await ai.models.generateContent({
@@ -1406,6 +1408,7 @@ async function ocrWithGemini(fileBuffer: Buffer, mimeType: string): Promise<Iran
           { inlineData: { data: fileBuffer.toString('base64'), mimeType } },
           { text: prompt },
         ],
+        config: { responseMimeType: 'application/json', temperature: 0 },
       });
       const responseText = response.text || '';
       const jsonStart = responseText.indexOf('{');
@@ -1434,7 +1437,14 @@ app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nati
     return res.status(400).json({ error: 'No file uploaded' });
   }
   (req as any).file = uploaded;
+  const visionConfigured = !!(process.env.GCP_CLIENT_ID && process.env.GCP_REFRESH_TOKEN && process.env.GCP_PROJECT_ID);
+  if (!ai && !visionConfigured) {
+    removeUploadedFiles(uploaded);
+    return res.status(503).json({ success: false, error: 'سرویس خواندن کارت ملی تنظیم نشده است (GEMINI_API_KEY). اطلاعات را دستی وارد کنید.' });
+  }
   const fileBuffer = fs.readFileSync(req.file.path);
+  // The scan is only needed for this request; don't keep national-card images in /uploads.
+  fs.unlink(req.file.path, () => {});
   try {
     const [gemini, vision] = await Promise.all([
       ocrWithGemini(fileBuffer, req.file.mimetype || 'image/jpeg'),

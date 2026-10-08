@@ -469,6 +469,13 @@ export async function createExpense(body: {
 // OCR
 // ─────────────────────────────────────────────────────────
 
+/** GET /api/ocr/status — is any OCR provider (Gemini / Cloud Vision) configured on the server? */
+export async function fetchOcrStatus(): Promise<{ gemini: boolean; vision: boolean; ready: boolean }> {
+  const res = await apiFetch(`/ocr/status`);
+  if (!res.ok) throw new Error('OCR status unavailable');
+  return res.json();
+}
+
 /** POST /api/students/ocr/national-card */
 export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult> {
   const formData = new FormData();

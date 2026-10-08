@@ -170,6 +170,30 @@ function cropImageFileToRatio(file: File, ratio: number): Promise<File> {
   });
 }
 
+/** Phone photos are often 5–12 MB; the OCR only needs ~1600px, so shrink before uploading. */
+function downscaleImageFile(file: File, maxSide = 1600): Promise<File> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      if (scale === 1 && file.size < 2 * 1024 * 1024) { resolve(file); return; }
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(file); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        resolve(blob ? new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }) : file);
+      }, 'image/jpeg', 0.9);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
 function splitFullName(fullName: string) {
   const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
   return { first: parts[0] || '', last: parts.slice(1).join(' ') };
@@ -269,6 +293,11 @@ export default function StudentRegistrationForm({
   const [phoneError,        setPhoneError]        = useState<string | null>(null);
   const [stepError,         setStepError]         = useState<string | null>(null);
   const [ocrError,          setOcrError]          = useState<string | null>(null);
+  const [ocrReady,          setOcrReady]          = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api.fetchOcrStatus().then((st) => setOcrReady(st.ready)).catch(() => setOcrReady(false));
+  }, []);
 
   // Courses may arrive after mount; fall back to the first one if the selection is unknown.
   useEffect(() => {
@@ -435,7 +464,7 @@ export default function StudentRegistrationForm({
     if (!target) return;
     setIsScanningOCR(true); setOcrSuccess(false); setOcrError(null);
     try {
-      const result = await api.ocrNationalCard(target);
+      const result = await api.ocrNationalCard(await downscaleImageFile(target));
       const hasAny = !!(result.first_name || result.last_name || result.national_code);
       if (!hasAny) {
         setOcrError('خواندن کارت ملی ناموفق بود. اطلاعات را دستی وارد کنید.');
@@ -835,10 +864,14 @@ export default function StudentRegistrationForm({
             <h2 className="text-lg font-black text-slate-900">ثبت‌نام هوشمند کارآموز</h2>
             
           </div>
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-sky-50 border border-sky-200 rounded-xl">
-            <Sparkles className="w-3.5 h-3.5 text-sky-500" />
-            <span className="text-xs font-bold text-sky-700">اسکن OCR فعال</span>
-          </div>
+          {ocrReady !== null && (
+            <div className={`flex items-center gap-1.5 px-3 py-1 border rounded-xl ${ocrReady ? 'bg-sky-50 border-sky-200' : 'bg-amber-50 border-amber-200'}`}>
+              <Sparkles className={`w-3.5 h-3.5 ${ocrReady ? 'text-sky-500' : 'text-amber-500'}`} />
+              <span className={`text-xs font-bold ${ocrReady ? 'text-sky-700' : 'text-amber-700'}`}>
+                {ocrReady ? 'اسکن OCR فعال' : 'اسکن OCR غیرفعال — ورود دستی'}
+              </span>
+            </div>
+          )}
         </div>
 
 
@@ -931,10 +964,10 @@ export default function StudentRegistrationForm({
                     <label htmlFor="idCardFirstUpload" className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 text-white text-sm font-extrabold rounded-xl cursor-pointer shadow-sm flex items-center justify-center gap-2">
                       <FolderOpen className="w-5 h-5" />انتخاب فایل اسکنشده (پیشفرض)
                     </label>
-                    <button type="button" onClick={() => alert('سرویس دسکتاپ اسکنر در حال توسعه است. فعلاً از انتخاب فایل استفاده کنید.')} disabled={isScanningOCR}
+                    <button type="button" onClick={() => startCamera('idCard')} disabled={isScanningOCR}
                       className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-2"
                     >
-                      {isScanningOCR ? <><Loader2 className="w-4 h-4 animate-spin text-sky-600" />در حال پردازش...</> : <><Camera className="w-4 h-4 text-slate-500" />اسکن مستقیم با دستگاه</>}
+                      {isScanningOCR ? <><Loader2 className="w-4 h-4 animate-spin text-sky-600" />در حال پردازش...</> : <><Camera className="w-4 h-4 text-slate-500" />عکس‌برداری با وب‌کم</>}
                     </button>
                   </>
                 )}
@@ -986,10 +1019,10 @@ export default function StudentRegistrationForm({
                     <label htmlFor="personalPhotoFirstUpload" className="w-full py-3 bg-gradient-to-l from-teal-600 to-teal-500 hover:from-teal-700 text-white text-sm font-extrabold rounded-xl cursor-pointer shadow-sm flex items-center justify-center gap-2">
                       <FolderOpen className="w-5 h-5" />انتخاب فایل ۳×۴ (پیشفرض)
                     </label>
-                    <button type="button" onClick={() => alert('سرویس دسکتاپ اسکنر در حال توسعه است. فعلاً از انتخاب فایل استفاده کنید.')}
+                    <button type="button" onClick={() => startCamera('personal')}
                       className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-2"
                     >
-                      <Camera className="w-4 h-4 text-slate-500" />اسکن مستقیم با دستگاه
+                      <Camera className="w-4 h-4 text-slate-500" />عکس‌برداری با وب‌کم
                     </button>
                   </>
                 )}
