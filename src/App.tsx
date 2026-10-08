@@ -107,7 +107,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>('supervisor');
   const [loading, setLoading] = useState<boolean>(true);
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  // On phones the sidebar overlays the content, so start collapsed there.
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => window.innerWidth >= 768);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const [students, setStudents] = useState<Student[]>([]);

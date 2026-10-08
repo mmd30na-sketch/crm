@@ -192,49 +192,6 @@ function SectionHeader({ icon: Icon, label, color = 'sky' }: {
   );
 }
 
-function WizardSteps({ step, onSelect }: { step: 1 | 2 | 3; onSelect: (s: 1 | 2 | 3) => void }) {
-  const items = [
-    { n: 1 as const, label: 'اطلاعات شخصی', icon: User },
-    { n: 2 as const, label: 'اطلاعات ارتباطی', icon: Phone },
-    { n: 3 as const, label: 'دوره آموزشی', icon: BookOpen },
-  ];
-  return (
-    <ol className="grid grid-cols-3 gap-2 mb-4">
-      {items.map((item) => {
-        const active = step === item.n;
-        const done = step > item.n;
-        const Icon = item.icon;
-        return (
-          <li key={item.n}>
-            <button
-              type="button"
-              onClick={() => { if (item.n < step) onSelect(item.n); }}
-              className={`w-full min-h-11 flex items-center gap-2 px-3 py-2.5 rounded-2xl border text-right transition ${
-                active
-                  ? 'bg-sky-600 text-white border-sky-600 shadow-sm'
-                  : done
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                    : 'bg-white text-slate-400 border-slate-200'
-              }`}
-            >
-              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${
-                active ? 'bg-white/20 text-white' : done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'
-              }`}>
-                {done ? <CheckCircle className="w-3.5 h-3.5" /> : item.n}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[10px] opacity-70">گام {item.n}</span>
-                <span className="block text-xs font-bold truncate">{item.label}</span>
-              </span>
-              <Icon className="w-3.5 h-3.5 mr-auto opacity-70 shrink-0" />
-            </button>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
 export default function StudentRegistrationForm({
   courses,
   enrollments,
@@ -253,7 +210,6 @@ export default function StudentRegistrationForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitMode, setSubmitMode] = useState<'new'|'print'>('new');
   const [isSuccess,    setIsSuccess]    = useState(false);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [createdStudent, setCreatedStudent] = useState<Student | null>(null);
   const [createdEnrollmentId, setCreatedEnrollmentId] = useState<number | null>(null);
   const [pdfPath, setPdfPath] = useState<string | null>(null);
@@ -704,30 +660,6 @@ export default function StudentRegistrationForm({
     }
   };
 
-  const goNext = () => {
-    if (step === 1) {
-      if (!firstName || !lastName || !nationalCode) {
-        setStepError('نام، نام خانوادگی و کد ملی را تکمیل کنید.'); return;
-      }
-      if (nationalCodeError) {
-        setStepError('کد ملی معتبر نیست.'); return;
-      }
-      setStepError(null);
-      setStep(2);
-      return;
-    }
-    if (step === 2) {
-      if (!phoneNumber) {
-        setStepError('شماره همراه را وارد کنید.'); return;
-      }
-      if (phoneError) {
-        setStepError('شماره همراه معتبر نیست.'); return;
-      }
-      setStepError(null);
-      setStep(3);
-    }
-  };
-
   const handleSubmit = async (mode: 'new'|'print', newCourseConfirmed = false) => {
     setSubmitMode(mode);
     if (!firstName || !lastName || !nationalCode || !phoneNumber) {
@@ -837,7 +769,6 @@ export default function StudentRegistrationForm({
     courseNumberTouched.current = false;
     setCourseNumber(Math.max(currentMax, courseNumber));
     setShowNewCoursePrompt(false);
-    setStep(1);
     onRefresh();
   };
 
@@ -1172,15 +1103,15 @@ export default function StudentRegistrationForm({
             </div>
           </div>
 
-        <div className="flex flex-col md:flex-row items-center justify-end gap-4 mt-8 pt-6 border-t border-slate-200/80">
-          <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit('new')}
-             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-white border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:grayscale text-sm font-black rounded-2xl transition-all shadow-sm">
-             {isSubmitting && submitMode === 'new' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><User className="w-4 h-4" />ثبت و جدید</>}
-          </button>
-          
+        <div className="flex flex-col md:flex-row items-center justify-start gap-4 mt-8 pt-6 border-t border-slate-200/80">
           <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit('print')}
             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 disabled:opacity-50 disabled:grayscale text-white text-sm md:text-base font-black rounded-2xl transition-all shadow-lg shadow-sky-500/30">
             {isSubmitting && submitMode === 'print' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><FileText className="w-4 h-4" />ثبت و چاپ رسید</>}
+          </button>
+
+          <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit('new')}
+             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-white border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:grayscale text-sm font-black rounded-2xl transition-all shadow-sm">
+             {isSubmitting && submitMode === 'new' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><User className="w-4 h-4" />ثبت و جدید</>}
           </button>
         </div>
       </form>
