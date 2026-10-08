@@ -501,7 +501,7 @@ export default function StudentsList({
                     { label: 'دوره آموزشی', hideCls: '' },
                     { label: 'کلاس', hideCls: 'hidden lg:table-cell' },
                     { label: 'وضعیت مالی', hideCls: 'hidden sm:table-cell' },
-                    { label: 'وضعیت', hideCls: '' },
+                    { label: 'وضعیت', hideCls: 'hidden sm:table-cell' },
                   ].map(({ label, hideCls }) => (
                     <th key={label} className={`px-3 py-3 text-xs font-bold text-slate-600 tracking-wider whitespace-nowrap border-b border-slate-200 ${hideCls}`}>
                       {label}
@@ -542,6 +542,7 @@ export default function StudentsList({
                               {s.first_name} {s.last_name}
                             </div>
                             <div className="text-[10px] text-slate-400 font-mono">#{String(s.id).padStart(4, '0')}</div>
+                            <div className="sm:hidden mt-1"><StatusBadge status={s.status} /></div>
                           </div>
                         </div>
                       </td>
@@ -587,8 +588,8 @@ export default function StudentsList({
                         </div>
                       </td>
 
-                      {/* Status */}
-                      <td className="px-3 py-3">
+                      {/* Status (on phones it is shown under the name instead) */}
+                      <td className="px-3 py-3 hidden sm:table-cell">
                         <StatusBadge status={s.status} />
                       </td>
                     </tr>
