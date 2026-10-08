@@ -281,7 +281,6 @@ export default function StudentsList({
                   <h2 className="text-xl font-black text-slate-900 tracking-tight">
                     {selectedStudent?.first_name} {selectedStudent?.last_name}
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">فرزند {selectedStudent?.father_name || '—'}</p>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <InfoCell icon={FileText}  label="کد ملی"       value={selectedStudent?.national_code}             mono accent="sky" />

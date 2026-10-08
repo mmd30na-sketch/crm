@@ -228,7 +228,6 @@ export default function StudentRegistrationForm({
   /* ── Personal Info ── */
   const [firstName,    setFirstName]    = useState('');
   const [lastName,     setLastName]     = useState('');
-  const [fatherName,   setFatherName]   = useState('');
   const [nationalCode, setNationalCode] = useState('');
   const [phoneNumber,  setPhoneNumber]  = useState('');
   const [birthDate,    setBirthDate]    = useState('');
@@ -446,7 +445,6 @@ export default function StudentRegistrationForm({
       if (result.first_name) setFirstName(result.first_name);
       if (result.last_name) setLastName(result.last_name);
       if (result.national_code) setNationalCode(result.national_code);
-      if (result.father_name) setFatherName(result.father_name);
       if (result.birth_date_jalali) setBirthDate(result.birth_date_jalali);
       setOcrSuccess(true);
       setOcrError(null);
@@ -691,7 +689,6 @@ export default function StudentRegistrationForm({
         last_name: lastName,
         national_code: nationalCode,
         phone_number: phoneNumber,
-        father_name: fatherName,
         birth_date_jalali: birthDate,
         address,
       });
@@ -758,7 +755,7 @@ export default function StudentRegistrationForm({
   };
 
   const handleReset = () => {
-    setFirstName(''); setLastName(''); setFatherName('');
+    setFirstName(''); setLastName('');
     setNationalCode(''); setPhoneNumber(''); setBirthDate(''); setAddress('');
     setSelectedRegId(null); setRegQuery('');
     setIdCardFile(null); setIdCardPreview(null);
@@ -1011,14 +1008,9 @@ export default function StudentRegistrationForm({
                 <Field label="کد ملی" required error={nationalCodeError}>
                   <Input icon={CreditCard} value={nationalCode} onChange={setNationalCode} placeholder="کد ملی ده رقمی" mono error={!!nationalCodeError} inputMode="numeric" maxLength={10} autoComplete="off" />
                 </Field>
-                <Field label="نام پدر">
-                  <Input icon={User} value={fatherName} onChange={setFatherName} placeholder="نام پدر" />
+                <Field label="تاریخ تولد">
+                  <Input icon={Calendar} value={birthDate} onChange={setBirthDate} placeholder="مثال: ۱۳۷۰/۰۵/۲۴" mono />
                 </Field>
-                <div className="sm:col-span-2">
-                  <Field label="تاریخ تولد">
-                    <Input icon={Calendar} value={birthDate} onChange={setBirthDate} placeholder="مثال: ۱۳۷۰/۰۵/۲۴" mono />
-                  </Field>
-                </div>
               </div>
             </div>
           </div>
