@@ -123,7 +123,8 @@ export async function fetchCourses(): Promise<Course[]> {
     code:           c.code ?? c.title?.slice(0, 8).replace(/\s/g, '-').toUpperCase() ?? 'COURSE',
     tuition:        Number(c.price ?? c.tuition ?? 0),
     duration_weeks: Number(c.duration_days ? Math.ceil(c.duration_days / 7) : c.duration_weeks ?? 8),
-    active:         c.is_active !== undefined ? !!c.is_active : c.active !== false,
+    // MySQL returns 0/1 for the flag, the JSON store true/false
+    active:         !((c.is_active ?? c.active) === false || (c.is_active ?? c.active) === 0 || (c.is_active ?? c.active) === '0'),
   }));
 }
 

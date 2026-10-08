@@ -932,7 +932,11 @@ function jalaliNow(): string {
   return normalizeJalaliDate(new Date().toLocaleDateString('fa-IR'));
 }
 const coursePrice = (c: any): number => Number(c?.price ?? c?.tuition ?? 0);
-const courseIsActive = (c: any): boolean => (c?.is_active !== undefined ? !!c.is_active : c?.active !== false);
+/** MySQL returns 0/1 (not false/true) for the active flag. */
+const courseIsActive = (c: any): boolean => {
+  const v = c?.is_active ?? c?.active;
+  return !(v === false || v === 0 || v === '0');
+};
 
 function isValidIranNationalCode(code: string): boolean {
   if (!/^\d{10}$/.test(code) || /^(\d)\1{9}$/.test(code)) return false;
@@ -1095,7 +1099,15 @@ app.put('/api/students/:id', async (req, res) => {
       if (clash) return res.status(409).json({ error: 'کارآموز دیگری با این کد ملی ثبت شده است.' });
     }
     if (chabokan.isMysqlEnabled()) {
-      const student = await chabokan.updateStudent(studentId, { ...(req.body || {}), ...data });
+      // updateStudent writes every column, so start from the stored record and apply only what was sent.
+      const current = (await loadStudents()).find(s => Number(s.id) === studentId);
+      if (!current) return res.status(404).json({ error: 'Student not found' });
+      const student = await chabokan.updateStudent(studentId, {
+        first_name: current.first_name, last_name: current.last_name, national_code: current.national_code,
+        phone_number: current.phone_number, address: current.address, father_name: current.father_name,
+        birth_date_jalali: current.birth_date_jalali,
+        ...data,
+      });
       if (!student) return res.status(404).json({ error: 'Student not found' });
       return res.json({ status: 'success', student });
     }
