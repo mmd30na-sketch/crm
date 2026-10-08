@@ -779,12 +779,15 @@ app.use('/uploads', requireStaff, (req, res, next) => {
   next();
 }, express.static(uploadsDir));
 
-// Initialize Gemini API
-let ai: GoogleGenAI | null = null;
-if (process.env.GEMINI_API_KEY) {
+// Initialize Gemini API. GEMINI_API_KEYS (comma/space separated) and/or GEMINI_API_KEY; when one key hits its
+// quota the OCR call moves on to the next key.
+const geminiKeys = [...new Set(`${process.env.GEMINI_API_KEYS || ''},${process.env.GEMINI_API_KEY || ''}`.split(/[\s,]+/).filter(Boolean))];
+const geminiClients: GoogleGenAI[] = [];
+const geminiCooldownUntil: number[] = [];
+for (const apiKey of geminiKeys) {
   try {
-    ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
+    geminiClients.push(new GoogleGenAI({
+      apiKey,
       httpOptions: {
         // Optional relay/proxy endpoint for servers that cannot reach Google directly.
         ...(process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : {}),
@@ -792,12 +795,14 @@ if (process.env.GEMINI_API_KEY) {
           'User-Agent': 'aistudio-build',
         },
       },
-    });
-    console.log('Gemini API initialized successfully.');
+    }));
+    geminiCooldownUntil.push(0);
   } catch (e) {
-    console.error('Failed to initialize Gemini API:', e);
+    console.error('Failed to initialize a Gemini API key:', e);
   }
 }
+const ai: GoogleGenAI | null = geminiClients[0] || null;
+if (ai) console.log(`Gemini API initialized successfully (${geminiClients.length} key${geminiClients.length > 1 ? 's' : ''}).`);
 
 // ------------------- MESSENGER & ACCESS IMPORT ENDPOINTS -------------------
 
@@ -1676,29 +1681,37 @@ const OCR_FOCUSED_PROMPT = `در این تصویر کارت ملی هوشمند 
 /** One Gemini read of the card. `pass` picks the prompt; the focused pass tries the stronger model first. */
 async function ocrWithGemini(fileBuffer: Buffer, mimeType: string, pass: 'full' | 'focused' = 'full', deadlineMs = Infinity): Promise<Record<string, any> | null> {
   if (!ai) return null;
-  const base = [...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
-  const models = [...new Set(base)];
+  const models = [...new Set([...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'])];
   const prompt = pass === 'focused' ? OCR_FOCUSED_PROMPT : OCR_FIELDS_PROMPT;
-  for (const model of models) {
-    if (Date.now() > deadlineMs) break;
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: [
-          { inlineData: { data: fileBuffer.toString('base64'), mimeType } },
-          { text: prompt },
-        ],
-        config: { responseMimeType: 'application/json', temperature: 0 },
-      });
-      const responseText = response.text || '';
-      const jsonStart = responseText.indexOf('{');
-      const jsonEnd = responseText.lastIndexOf('}');
-      if (jsonStart === -1 || jsonEnd === -1) continue;
-      const parsed = JSON.parse(responseText.slice(jsonStart, jsonEnd + 1));
-      parsed.provider = `gemini:${model}`;
-      return parsed;
-    } catch (err: any) {
-      console.warn('Gemini OCR model failed', model, err?.message || err);
+  for (let k = 0; k < geminiClients.length; k++) {
+    if (Date.now() < geminiCooldownUntil[k]) continue;
+    for (const model of models) {
+      if (Date.now() > deadlineMs) return null;
+      try {
+        const response = await geminiClients[k].models.generateContent({
+          model,
+          contents: [
+            { inlineData: { data: fileBuffer.toString('base64'), mimeType } },
+            { text: prompt },
+          ],
+          config: { responseMimeType: 'application/json', temperature: 0 },
+        });
+        const responseText = response.text || '';
+        const jsonStart = responseText.indexOf('{');
+        const jsonEnd = responseText.lastIndexOf('}');
+        if (jsonStart === -1 || jsonEnd === -1) continue;
+        const parsed = JSON.parse(responseText.slice(jsonStart, jsonEnd + 1));
+        parsed.provider = `gemini:${model}`;
+        return parsed;
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        console.warn('Gemini OCR failed', `key#${k + 1}`, model, msg.slice(0, 160));
+        // Quota / invalid key: park this key for a while and try the next one.
+        if (/429|RESOURCE_EXHAUSTED|quota|API key|\b(401|403)\b/i.test(msg)) {
+          geminiCooldownUntil[k] = Date.now() + 10 * 60 * 1000;
+          break;
+        }
+      }
     }
   }
   return null;
