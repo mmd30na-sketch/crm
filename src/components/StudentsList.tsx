@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
   Edit3,
@@ -22,6 +22,8 @@ import {
   ChevronDown,
   DollarSign,
   SlidersHorizontal,
+  ChevronRight,
+  ChevronLeft,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
@@ -34,6 +36,9 @@ interface StudentsListProps {
   onRefresh?: () => void;
   onActiveTabChange?: (tab: string, enrollmentIdOrStudentId?: number) => void;
 }
+
+const PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 250;
 
 /* ────────────────────────────────────────────
    SUB-COMPONENTS
@@ -107,6 +112,9 @@ export default function StudentsList({
 
 
   const [searchTerm,          setSearchTerm]          = useState('');
+  const [debouncedSearch,     setDebouncedSearch]     = useState('');
+  const [page,                setPage]                = useState(1);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [courseFilter,        setCourseFilter]        = useState('all');
   const [courseNumberFilter,  setCourseNumberFilter]  = useState('all');
   const [financialFilter,     setFinancialFilter]     = useState<'all' | 'settled' | 'debtors'>('all');
@@ -129,6 +137,12 @@ export default function StudentsList({
   const [messageError,          setMessageError]          = useState<string | null>(null);
   const [isSendingMessage,      setIsSendingMessage]      = useState(false);
   const [messageResult,         setMessageResult]         = useState<string>('');
+
+  // Filtering runs on the debounced text so typing stays responsive on big lists.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
   /* ── Finance helper ── */
   const getStudentFinance = (studentId: number) => {
@@ -157,14 +171,26 @@ export default function StudentsList({
   /* ── Filtered list ── */
   const filteredStudents = useMemo(() => studentsList.filter(s => {
     const nm = `${s.first_name} ${s.last_name}`.toLowerCase();
-    if (!nm.includes(searchTerm.toLowerCase()) && !s.national_code.includes(searchTerm) && !s.phone_number.includes(searchTerm)) return false;
+    if (!nm.includes(debouncedSearch.toLowerCase()) && !s.national_code.includes(debouncedSearch) && !s.phone_number.includes(debouncedSearch)) return false;
     const fin = getStudentFinance(s.id);
     if (courseFilter !== 'all' && !fin.courses.some(c => c.courseTitle === courseFilter)) return false;
     if (courseNumberFilter !== 'all' && !fin.courses.some(c => String(c.courseNumber) === courseNumberFilter)) return false;
     if (financialFilter === 'settled' && !fin.isSettled) return false;
     if (financialFilter === 'debtors' && (fin.debt <= 0 || fin.totalTuition === 0)) return false;
     return true;
-  }).sort((a, b) => b.id - a.id), [studentsList, enrollmentsList, paymentsList, coursesList, searchTerm, courseFilter, courseNumberFilter, financialFilter]);
+  }).sort((a, b) => b.id - a.id), [studentsList, enrollmentsList, paymentsList, coursesList, debouncedSearch, courseFilter, courseNumberFilter, financialFilter]);
+
+  /* ── Pagination ── */
+  const totalPages  = Math.max(1, Math.ceil(filteredStudents.length / PAGE_SIZE));
+  // Clamp on read so a delete (or refresh) that shrinks the list never leaves us on an empty page.
+  const currentPage = Math.min(page, totalPages);
+  const pageStart   = (currentPage - 1) * PAGE_SIZE;
+  const pagedStudents = useMemo(() => filteredStudents.slice(pageStart, pageStart + PAGE_SIZE), [filteredStudents, pageStart]);
+
+  // Any search/filter change starts again from the first page.
+  useEffect(() => { setPage(1); }, [debouncedSearch, courseFilter, courseNumberFilter, financialFilter]);
+  useEffect(() => { if (page !== currentPage) setPage(currentPage); }, [page, currentPage]);
+  useEffect(() => { tableScrollRef.current?.scrollTo({ top: 0 }); }, [currentPage]);
 
     React.useEffect(() => {
     if (!hasAutoSelected && filteredStudents.length > 0) {
@@ -491,7 +517,7 @@ export default function StudentsList({
 
               {/* Clear Filters */}
               {hasActiveFilters && (
-                <button onClick={() => { setSearchTerm(''); setCourseFilter('all'); setCourseNumberFilter('all'); setFinancialFilter('all'); }}
+                <button onClick={() => { setSearchTerm(''); setDebouncedSearch(''); setCourseFilter('all'); setCourseNumberFilter('all'); setFinancialFilter('all'); }}
                   className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition cursor-pointer">
                   <X className="w-3 h-3" />پاک‌سازی
                 </button>
@@ -508,7 +534,7 @@ export default function StudentsList({
             <p className="text-xs">فیلترها یا عبارت جستجو را تغییر دهید</p>
           </div>
         ) : (
-          <div className="overflow-auto max-h-[60vh]">
+          <div ref={tableScrollRef} className="overflow-auto max-h-[60vh]">
             <table className="w-full text-right">
               <thead className="sticky top-0 z-10 bg-slate-50">
                                 <tr className="border-b border-slate-200 bg-slate-50/80">
@@ -528,7 +554,7 @@ export default function StudentsList({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filteredStudents.map(s => {
+                {pagedStudents.map(s => {
                   const fin       = getStudentFinance(s.id);
                   const isSelected= selectedStudent?.id === s.id;
                   const progress  = pct(fin.totalPaid, fin.totalTuition);
@@ -620,10 +646,29 @@ export default function StudentsList({
 
         {/* ─── Table Footer ─── */}
         {filteredStudents.length > 0 && (
-          <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between">
+          <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400">
-              نمایش <strong className="text-slate-600">{filteredStudents.length}</strong> از <strong className="text-slate-600">{studentsList.length}</strong> کارآموز
+              نمایش <strong className="text-slate-600">{(pageStart + 1).toLocaleString('fa-IR')}</strong> تا <strong className="text-slate-600">{(pageStart + pagedStudents.length).toLocaleString('fa-IR')}</strong> از <strong className="text-slate-600">{filteredStudents.length.toLocaleString('fa-IR')}</strong> کارآموز
+              {filteredStudents.length !== studentsList.length && <> (کل: {studentsList.length.toLocaleString('fa-IR')})</>}
             </span>
+
+            {/* Pager: in RTL "previous" sits on the right and points right */}
+            {totalPages > 1 && (
+              <nav className="flex items-center gap-2" aria-label="صفحه‌بندی">
+                <button onClick={() => setPage(currentPage - 1)} disabled={currentPage <= 1}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer">
+                  <ChevronRight className="w-3.5 h-3.5" />قبلی
+                </button>
+                <span className="text-xs text-slate-500 font-mono">
+                  صفحه <strong className="text-slate-700">{currentPage.toLocaleString('fa-IR')}</strong> از {totalPages.toLocaleString('fa-IR')}
+                </span>
+                <button onClick={() => setPage(currentPage + 1)} disabled={currentPage >= totalPages}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer">
+                  بعدی<ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+              </nav>
+            )}
+
             <span className="text-[10px] text-slate-300">برای مشاهده پرونده روی هر ردیف کلیک کنید</span>
           </div>
         )}
