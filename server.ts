@@ -1889,19 +1889,134 @@ app.get('/api/registrations', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/registrations/:id/approve', async (req, res) => {
+// ── Website registrations (MySQL `registrations`; the JSON store has none) ──────────────────────────
+const SITE_UPLOADS_DEFAULT = '/project/kermanshahcart/site/app/uploads/registrations';
+function siteUploadsDir() {
+  return path.resolve(process.env.SITE_UPLOADS_DIR || SITE_UPLOADS_DEFAULT);
+}
+
+/** Resolves a stored site upload path to a real image file inside SITE_UPLOADS_DIR, or null (missing, unsafe, not an image). */
+function resolveSiteFile(stored: unknown): string | null {
+  if (typeof stored !== 'string' || !stored.trim()) return null;
+  let rel = stored.split(/[?#]/)[0];
+  try { rel = decodeURIComponent(rel); } catch { return null; }
+  if (rel.includes('\0') || rel.split(/[\\/]/).includes('..')) return null;
+  const marker = rel.match(/(?:^|\/)uploads\/registrations\/(.+)$/i);
+  rel = marker ? marker[1] : rel.replace(/^[\\/]+/, '');
+  if (!rel || !IMAGE_EXTENSIONS.has(path.extname(rel).toLowerCase())) return null;
   try {
-    const registrationId = parseInt(req.params.id, 10);
-    const studentId = parseInt(req.body?.student_id, 10);
-    if (!registrationId || !studentId) {
-      return res.status(400).json({ error: 'registration id and student_id are required' });
-    }
-    if (!chabokan.isMysqlEnabled()) {
-      return res.status(503).json({ error: 'MySQL is not enabled' });
-    }
-    const row = await chabokan.linkWebsiteRegistration(registrationId, studentId, 'approved');
-    res.json({ success: true, registration: row });
+    const base = fs.realpathSync(siteUploadsDir());
+    const abs = fs.realpathSync(path.resolve(base, rel));
+    if (!abs.startsWith(base + path.sep) || !fs.statSync(abs).isFile()) return null;
+    return abs;
+  } catch { return null; }
+}
+
+/** Copies a registration's site photos into StudentFiles with the same names the CRM photo upload uses. */
+async function copyRegistrationFiles(
+  reg: { national_card_path?: string | null; personal_photo_path?: string | null },
+  t: { studentId: number; lastName: string; courseNumber: number; wantIdCard: boolean; wantPersonal: boolean },
+) {
+  const out: { idCard?: string; personal?: string; created: string[] } = { created: [] };
+  try {
+    const dir = path.join(studentFilesBase, safeSegment(t.courseNumber, 'unsorted'), `${safeSegment(t.lastName, 'student')}_${safeSegment(t.studentId, String(Date.now()))}`);
+    const copy = (stored: string | null | undefined, suffix: 'ID' | 'Photo'): string | undefined => {
+      const src = resolveSiteFile(stored);
+      if (!src) return undefined;
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        const dest = path.join(dir, `${safeSegment(t.lastName, 'Student')}_${safeSegment(t.studentId, String(Date.now()))}_${suffix}${path.extname(src) || '.jpg'}`);
+        fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+        out.created.push(dest);
+        return `/${path.relative(process.cwd(), dest).split(path.sep).join('/')}`;
+      } catch (err: any) {
+        console.warn('Registration photo copy skipped:', err?.message || err);
+        return undefined;
+      }
+    };
+    if (t.wantIdCard) out.idCard = copy(reg.national_card_path, 'ID');
+    if (t.wantPersonal) out.personal = copy(reg.personal_photo_path, 'Photo');
+  } catch (err: any) { console.warn('Registration photo copy skipped:', err?.message || err); }
+  return out;
+}
+
+function requireRegistrationStore(res: express.Response): boolean {
+  if (chabokan.isMysqlEnabled()) return true;
+  res.status(501).json({ error: 'ثبت‌نام‌های وبسایت فقط با پایگاه داده MySQL پشتیبانی می‌شود.' });
+  return false;
+}
+
+// Streams a site-uploaded document (before approval it only exists in the site's uploads dir).
+app.get('/api/registrations/:code/file/:kind', async (req, res) => {
+  try {
+    if (!requireRegistrationStore(res)) return;
+    const kind = req.params.kind;
+    if (kind !== 'national_card' && kind !== 'personal_photo') return res.status(400).json({ error: 'نوع فایل نامعتبر است.' });
+    const row = await chabokan.getWebsiteRegistrationFiles(sanitizeString(req.params.code, 50));
+    if (!row) return res.status(404).json({ error: 'ثبت‌نام یافت نشد.' });
+    const file = resolveSiteFile(kind === 'national_card' ? row.national_card_path : row.personal_photo_path);
+    if (!file) return res.status(404).json({ error: 'فایل یافت نشد.' });
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.sendFile(file, { dotfiles: 'allow' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// Approves a website registration: student (new or reused) + enrollment + photos + status, in one transaction.
+app.post('/api/registrations/:code/approve', async (req, res) => {
+  try {
+    if (!requireRegistrationStore(res)) return;
+    const b = req.body || {};
+    const code = sanitizeString(req.params.code, 50);
+    const courseId = parseInt(b.course_id, 10);
+    if (!code) return res.status(400).json({ error: 'کد پیگیری الزامی است.' });
+    if (!courseId) return res.status(400).json({ error: 'course_id الزامی است.' });
+
+    const hasPrice = b.final_price !== undefined && b.final_price !== null && b.final_price !== '';
+    const finalPrice = hasPrice ? Number(b.final_price) : null;
+    if (hasPrice && (!Number.isFinite(finalPrice) || (finalPrice as number) < 0)) return res.status(400).json({ error: 'شهریه نامعتبر است.' });
+    let courseNumber: number | null = null;
+    if (b.course_number !== undefined && b.course_number !== null && b.course_number !== '') {
+      courseNumber = parseInt(b.course_number, 10);
+      if (!Number.isInteger(courseNumber) || courseNumber <= 0) return res.status(400).json({ error: 'شماره دوره نامعتبر است.' });
+    }
+
+    const { data, error } = parseStudentInput({ ...b, national_code: undefined }, true);
+    if (error) return res.status(400).json({ error });
+    delete data.national_code;
+    delete data.father_name;
+
+    const result = await chabokan.approveWebsiteRegistration({
+      trackingCode: code,
+      staffUsername: String((req as any).user?.username || ''),
+      courseId,
+      courseNumber,
+      finalPrice,
+      signupDate: normalizeJalaliDate(sanitizeString(b.signup_date_jalali, 20)) || jalaliNow(),
+      overrides: data,
+      updateExisting: b.update_existing === true,
+      copyFiles: copyRegistrationFiles,
+    });
+    const course = (await loadCourses()).find(c => Number(c.id) === courseId);
+    void notifyRegistration(result.student, course);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+  }
+});
+
+app.post('/api/registrations/:code/reject', async (req, res) => {
+  try {
+    if (!requireRegistrationStore(res)) return;
+    const code = sanitizeString(req.params.code, 50);
+    if (!code) return res.status(400).json({ error: 'کد پیگیری الزامی است.' });
+    const registration = await chabokan.rejectWebsiteRegistration(code, String((req as any).user?.username || ''));
+    const reason = sanitizeString(req.body?.reason, 300);
+    if (reason) console.log(`Registration ${code} rejected by ${(req as any).user?.username}: ${reason}`);
+    res.json({ success: true, registration });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+  }
 });
 
 

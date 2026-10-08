@@ -1,3 +1,4 @@
+import fs from 'fs';
 import net from 'net';
 import mysql from 'mysql2/promise';
 
@@ -91,8 +92,31 @@ export async function initMysql(): Promise<boolean> {
   }
 }
 
-async function getConn(): Promise<mysql.Connection> {
+/** Opens a new connection (also used for transactions that must not share the long-lived one). */
+async function createConn(): Promise<mysql.Connection> {
   const { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, useSocks } = getDbConfig();
+  if (useSocks) {
+    return mysql.createConnection({
+      user: DB_USER,
+      password: DB_PASSWORD,
+      database: DB_NAME,
+      stream: await socksSocket(),
+      connectTimeout: 20000,
+      charset: 'utf8mb4',
+    });
+  }
+  return mysql.createConnection({
+    host: DB_HOST,
+    port: DB_PORT,
+    user: DB_USER,
+    password: DB_PASSWORD,
+    database: DB_NAME,
+    connectTimeout: 20000,
+    charset: 'utf8mb4',
+  });
+}
+
+async function getConn(): Promise<mysql.Connection> {
   if (live) {
     try {
       await live.query('SELECT 1');
@@ -102,26 +126,7 @@ async function getConn(): Promise<mysql.Connection> {
       live = null;
     }
   }
-  if (useSocks) {
-    live = await mysql.createConnection({
-      user: DB_USER,
-      password: DB_PASSWORD,
-      database: DB_NAME,
-      stream: await socksSocket(),
-      connectTimeout: 20000,
-      charset: 'utf8mb4',
-    });
-  } else {
-    live = await mysql.createConnection({
-      host: DB_HOST,
-      port: DB_PORT,
-      user: DB_USER,
-      password: DB_PASSWORD,
-      database: DB_NAME,
-      connectTimeout: 20000,
-      charset: 'utf8mb4',
-    });
-  }
+  live = await createConn();
   live.on('error', () => {
     live = null;
   });
@@ -439,6 +444,12 @@ export async function deleteStudent(id: number) {
   try {
     await conn.query('DELETE FROM payments WHERE student_id = ?', [id]);
     await conn.query('DELETE FROM enrollments WHERE student_id = ?', [id]);
+    // A website registration that was approved into this student goes back to the pending queue.
+    await conn.query(
+      `UPDATE registrations SET status = 'pending', student_id = NULL, approved_by = NULL, approved_at = NULL
+       WHERE student_id = ?`,
+      [id]
+    );
     await conn.query('DELETE FROM students WHERE student_id = ?', [id]);
     if (nationalCode) {
       try {
@@ -595,23 +606,230 @@ export async function listWebsiteRegistrations() {
   return sql(
     `SELECT registration_id AS id, tracking_code, national_code, full_name, phone_number,
             category, academic_degree, military_status, has_temp_permit,
-            national_card_path, personal_photo_path, status, source, student_id, created_at
+            national_card_path, personal_photo_path, status, source, student_id,
+            approved_by, approved_at, created_at
      FROM registrations ORDER BY registration_id DESC`
   );
 }
 
-export async function linkWebsiteRegistration(registrationId: number, studentId: number, status = 'approved') {
-  await sqlExec(
-    `UPDATE registrations
-     SET status = ?, student_id = ?, approved_at = NOW()
-     WHERE registration_id = ?`,
-    [status, studentId, registrationId]
-  );
+export async function getWebsiteRegistrationFiles(trackingCode: string) {
   const rows = await sql(
-    `SELECT registration_id AS id, tracking_code, national_code, full_name, phone_number,
-            category, status, student_id, created_at
-     FROM registrations WHERE registration_id = ?`,
-    [registrationId]
+    'SELECT national_card_path, personal_photo_path FROM registrations WHERE tracking_code = ? LIMIT 1',
+    [trackingCode]
+  );
+  return rows[0] || null;
+}
+
+function httpError(status: number, message: string, code?: string) {
+  const err: any = new Error(message);
+  err.status = status;
+  if (code) err.code = code;
+  return err;
+}
+
+const toLatinDigits = (v: unknown) =>
+  String(v ?? '')
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .trim();
+
+export type ApproveRegistrationInput = {
+  trackingCode: string;
+  staffUsername: string;
+  courseId: number;
+  courseNumber?: number | null;
+  finalPrice?: number | null;
+  signupDate: string;
+  /** Validated student fields from the request body (only the ones that were sent). */
+  overrides: { first_name?: string; last_name?: string; phone_number?: string; address?: string; birth_date_jalali?: string };
+  /** When false an existing student keeps their name/phone/address; the overrides only apply to a new record. */
+  updateExisting: boolean;
+  /**
+   * Copies the site upload files into StudentFiles. Must not throw; lists every file it created in
+   * `created` so the caller can delete them when the transaction rolls back.
+   */
+  copyFiles: (
+    reg: { national_card_path?: string | null; personal_photo_path?: string | null },
+    target: { studentId: number; lastName: string; courseNumber: number; wantIdCard: boolean; wantPersonal: boolean }
+  ) => Promise<{ idCard?: string; personal?: string; created: string[] }>;
+};
+
+/**
+ * Approves a website registration in one transaction on a dedicated connection: student (new or reused),
+ * enrollment, photo files and the registration row all commit or roll back together.
+ */
+export async function approveWebsiteRegistration(input: ApproveRegistrationInput) {
+  const conn = await createConn();
+  let created: string[] = [];
+  let committed = false;
+  let result: { studentId: number; enrollmentId: number; photos: boolean; isNewStudent: boolean; student: any } | null = null;
+  try {
+    await conn.beginTransaction();
+
+    const [regRows] = await conn.query(
+      'SELECT * FROM registrations WHERE tracking_code = ? LIMIT 1 FOR UPDATE',
+      [input.trackingCode]
+    );
+    const reg = (regRows as any[])[0];
+    if (!reg) throw httpError(404, 'ثبت‌نام یافت نشد.');
+    if (reg.status !== 'pending' || reg.student_id) throw httpError(409, 'این ثبت‌نام قبلاً پردازش شده است.', 'already_processed');
+
+    const [courseRows] = await conn.query(
+      'SELECT course_id, price, is_active FROM courses WHERE course_id = ? LIMIT 1',
+      [input.courseId]
+    );
+    const course = (courseRows as any[])[0];
+    if (!course) throw httpError(404, 'دوره آموزشی یافت نشد.');
+    if (Number(course.is_active) !== 1) throw httpError(409, 'این دوره غیرفعال است و ثبت‌نام جدید ندارد.');
+    const finalPrice = input.finalPrice === undefined || input.finalPrice === null ? Number(course.price || 0) : Number(input.finalPrice);
+    if (!Number.isFinite(finalPrice) || finalPrice < 0) throw httpError(400, 'شهریه نامعتبر است.');
+
+    let courseNumber = input.courseNumber ?? null;
+    if (courseNumber === null) {
+      const [maxRows] = await conn.query('SELECT MAX(course_number) AS m FROM enrollments');
+      courseNumber = Number((maxRows as any[])[0]?.m) > 0 ? Number((maxRows as any[])[0].m) : 1;
+    }
+
+    const nationalCode = toLatinDigits(reg.national_code).replace(/[\s-]/g, '');
+    if (!nationalCode) throw httpError(400, 'کد ملی ثبت‌نام خالی است.');
+    const [stuRows] = await conn.query('SELECT * FROM students WHERE national_code = ? LIMIT 1 FOR UPDATE', [nationalCode]);
+    let student = (stuRows as any[])[0];
+    const isNewStudent = !student;
+    const o = input.overrides;
+
+    if (student) {
+      if (input.updateExisting) {
+        const sets: string[] = [];
+        const params: any[] = [];
+        const map: Array<[string, string | undefined, boolean]> = [
+          ['first_name', o.first_name, true], ['last_name', o.last_name, true], ['phone_number', o.phone_number, true],
+          ['address', o.address, true], ['birth_date_jalali', o.birth_date_jalali, studentHasBirthDate],
+        ];
+        for (const [col, val, ok] of map) {
+          if (ok && val !== undefined) { sets.push(`${col} = ?`); params.push(val); }
+        }
+        if (sets.length) {
+          params.push(student.student_id);
+          await conn.query(`UPDATE students SET ${sets.join(', ')} WHERE student_id = ?`, params);
+        }
+      }
+    } else {
+      const parts = String(reg.full_name || '').trim().split(/\s+/).filter(Boolean);
+      const firstName = o.first_name ?? (parts[0] || '');
+      const lastName = o.last_name ?? parts.slice(1).join(' ');
+      const phone = o.phone_number ?? toLatinDigits(reg.phone_number).replace(/[\s-]/g, '');
+      if (!firstName || !lastName) throw httpError(400, 'نام و نام خانوادگی کارآموز مشخص نیست؛ آن‌ها را وارد کنید.');
+      if (!phone) throw httpError(400, 'شماره همراه کارآموز مشخص نیست.');
+      const columns = ['first_name', 'last_name', 'national_code', 'phone_number', 'address'];
+      const values: any[] = [firstName, lastName, nationalCode, phone, o.address ?? ''];
+      if (studentHasBirthDate && o.birth_date_jalali) { columns.push('birth_date_jalali'); values.push(o.birth_date_jalali); }
+      const [ins] = await conn.query(
+        `INSERT INTO students (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        values
+      );
+      const [fresh] = await conn.query('SELECT * FROM students WHERE student_id = ?', [(ins as mysql.ResultSetHeader).insertId]);
+      student = (fresh as any[])[0];
+    }
+    const studentId = Number(student.student_id);
+
+    const [dup] = await conn.query(
+      'SELECT enrollment_id FROM enrollments WHERE student_id = ? AND course_id = ? AND course_number = ? LIMIT 1',
+      [studentId, input.courseId, courseNumber]
+    );
+    if ((dup as any[]).length) throw httpError(409, 'این کارآموز قبلاً در همین دوره و کلاس ثبت‌نام شده است.');
+
+    const [enr] = await conn.query(
+      `INSERT INTO enrollments (student_id, course_id, course_number, signup_date_jalali, final_price, amount_paid)
+       VALUES (?, ?, ?, ?, ?, 0)`,
+      [studentId, input.courseId, courseNumber, input.signupDate || jalaliToday(), finalPrice]
+    );
+    const enrollmentId = (enr as mysql.ResultSetHeader).insertId;
+
+    // Never replace a photo the student already has.
+    const copied = await input.copyFiles(reg, {
+      studentId,
+      lastName: String(student.last_name || ''),
+      courseNumber,
+      wantIdCard: !student.id_card_photo,
+      wantPersonal: !student.personal_photo,
+    });
+    created = copied.created;
+    if (copied.idCard) await conn.query('UPDATE students SET id_card_photo = ? WHERE student_id = ?', [copied.idCard, studentId]);
+    if (copied.personal) await conn.query('UPDATE students SET personal_photo = ? WHERE student_id = ?', [copied.personal, studentId]);
+
+    const [staffRows] = await conn.query('SELECT user_id FROM staff_users WHERE username = ? LIMIT 1', [input.staffUsername]);
+    const approvedBy = (staffRows as any[])[0]?.user_id ?? null;
+    await conn.query(
+      `UPDATE registrations SET status = 'approved', student_id = ?, approved_by = ?, approved_at = NOW()
+       WHERE registration_id = ?`,
+      [studentId, approvedBy, reg.registration_id]
+    );
+
+    await conn.commit();
+    committed = true;
+    result = { studentId, enrollmentId, photos: Boolean(copied.idCard || copied.personal), isNewStudent, student };
+    const out = result;
+    // The legacy table is updated best-effort after the commit, like the other student writes.
+    try {
+      const row = await fetchStudentById(out.studentId);
+      if (row) {
+        await syncTblStudent({
+          studentId: out.studentId, firstName: row.first_name, lastName: row.last_name, nationalCode: row.national_code,
+          phoneNumber: row.phone_number, address: row.address || '',
+          idCard: row.id_card_photo_url, personalPhoto: row.personal_photo_url,
+          photosOnly: !out.isNewStudent,
+        });
+      }
+    } catch (err: any) {
+      console.warn('Sync approved registration to TblStudents warning:', err.message);
+    }
+    const [enrRows] = await conn.query(
+      `SELECT enrollment_id AS id, student_id, course_id, course_number, signup_date_jalali, final_price, amount_paid
+       FROM enrollments WHERE enrollment_id = ?`,
+      [enrollmentId]
+    );
+    const [regOut] = await conn.query(
+      `SELECT registration_id AS id, tracking_code, national_code, full_name, phone_number, category, status,
+              student_id, approved_by, approved_at, created_at
+       FROM registrations WHERE registration_id = ?`,
+      [reg.registration_id]
+    );
+    return {
+      student: await fetchStudentById(studentId),
+      enrollment: (enrRows as any[])[0],
+      registration: (regOut as any[])[0],
+      photos: out.photos,
+      student_created: out.isNewStudent,
+    };
+  } catch (err) {
+    if (!committed) {
+      try { await conn.rollback(); } catch {}
+      created.forEach((f) => { try { fs.unlinkSync(f); } catch {} });
+    }
+    throw err;
+  } finally {
+    try { await conn.end(); } catch {}
+  }
+}
+
+export async function rejectWebsiteRegistration(trackingCode: string, staffUsername: string) {
+  const r = await sqlExec(
+    `UPDATE registrations
+     SET status = 'rejected', approved_at = NOW(),
+         approved_by = (SELECT user_id FROM staff_users WHERE username = ? LIMIT 1)
+     WHERE tracking_code = ? AND status = 'pending' AND student_id IS NULL`,
+    [staffUsername, trackingCode]
+  );
+  if (r.affectedRows === 0) {
+    const rows = await sql('SELECT status FROM registrations WHERE tracking_code = ? LIMIT 1', [trackingCode]);
+    if (!rows[0]) throw httpError(404, 'ثبت‌نام یافت نشد.');
+    throw httpError(409, 'این ثبت‌نام قبلاً پردازش شده است.', 'already_processed');
+  }
+  const rows = await sql(
+    `SELECT registration_id AS id, tracking_code, national_code, full_name, phone_number, category, status,
+            student_id, approved_by, approved_at, created_at
+     FROM registrations WHERE tracking_code = ?`,
+    [trackingCode]
   );
   return rows[0];
 }

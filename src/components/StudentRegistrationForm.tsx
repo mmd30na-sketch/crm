@@ -201,6 +201,25 @@ function splitFullName(fullName: string) {
   return { first: parts[0] || '', last: parts.slice(1).join(' ') };
 }
 
+/** Website category -> CRM course (by id when that course is active, else by title). */
+const REGISTRATION_COURSES: Record<string, { id: number; hint: string }> = {
+  cargo_freight: { id: 1, hint: 'باری' },
+  hazardous_materials: { id: 2, hint: 'خطرناک' },
+  passenger_bus: { id: 3, hint: 'مسافر' },
+  passenger_transport: { id: 3, hint: 'مسافر' },
+  ceo_company: { id: 4, hint: 'مدیرعامل' },
+  technical_manager: { id: 6, hint: 'مسئول فنی' },
+};
+
+function courseForCategory(category: string | undefined, courses: Course[]): number | null {
+  const key = String(category || '').trim();
+  const active = courses.filter(c => c.active !== false);
+  const entry = REGISTRATION_COURSES[key]
+    ?? Object.values(REGISTRATION_COURSES).find(e => key.includes(e.hint));
+  if (!entry) return null;
+  return (active.find(c => c.id === entry.id) ?? active.find(c => c.title.includes(entry.hint)))?.id ?? null;
+}
+
 function SectionHeader({ icon: Icon, label, color = 'sky' }: {
   icon: React.ElementType; label: string; color?: 'sky' | 'teal' | 'violet' | 'amber';
 }) {
@@ -457,13 +476,30 @@ export default function StudentRegistrationForm({
     setLastName(names.last);
     setNationalCode(reg.national_code || '');
     setPhoneNumber(reg.phone_number || '');
-    if (reg.national_card_path) {
-      setIdCardPreview(reg.national_card_path);
-      setIdCardFile(null);
+    setIdCardFile(null);
+    setPersonalPhotoFile(null);
+    setIdCardPreview(null);
+    setPersonalPhotoPreview(null);
+    const suggested = courseForCategory(reg.category, courses);
+    if (suggested) setSelectedCourseId(suggested);
+    // The site files are only reachable through the authenticated CRM route.
+    if (reg.tracking_code) {
+      void api.fetchRegistrationFileUrl(reg.tracking_code, 'national_card').then((u) => { if (u) setIdCardPreview(u); });
+      void api.fetchRegistrationFileUrl(reg.tracking_code, 'personal_photo').then((u) => { if (u) setPersonalPhotoPreview(u); });
     }
-    if (reg.personal_photo_path) {
-      setPersonalPhotoPreview(reg.personal_photo_path);
-      setPersonalPhotoFile(null);
+  };
+
+  const handleRejectRegistration = async () => {
+    const reg = pendingRegs.find((r) => r.id === selectedRegId);
+    if (!reg) return;
+    if (!window.confirm(`ثبت‌نام «${reg.full_name || reg.tracking_code}» رد شود؟`)) return;
+    try {
+      await api.rejectRegistration(reg.tracking_code);
+      setPendingRegs((rows) => rows.filter((r) => r.id !== reg.id));
+      handleReset();
+    } catch (err: any) {
+      setStepError(err?.message || 'رد ثبت‌نام ناموفق بود.');
+      if (err?.status === 409) setPendingRegs((rows) => rows.filter((r) => r.id !== reg.id));
     }
   };
 
@@ -698,66 +734,96 @@ export default function StudentRegistrationForm({
     setIsSubmitting(true);
     try {
       const today = jalaliToday();
-      const studentRes = await api.createStudent({
-        first_name: firstName,
-        last_name: lastName,
-        national_code: nationalCode,
-        phone_number: phoneNumber,
-        birth_date_jalali: birthDate,
-        address,
-      });
-      let studentObj = studentRes.student;
-      if (studentRes.already_exists) {
-        // Same national code = same person registering again: keep their file, refresh the contact details just typed.
-        try {
-          studentObj = await api.updateStudent({
-            ...studentObj,
-            phone_number: phoneNumber || studentObj.phone_number,
-            address: address || studentObj.address,
-            birth_date_jalali: birthDate || studentObj.birth_date_jalali,
-          });
-        } catch (updErr) { console.warn('Could not refresh existing student details:', updErr); }
-        setExistingNotice('این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+      let studentObj: Student;
+      let enrollmentObj: Enrollment;
+      const selectedReg = selectedRegId ? pendingRegs.find((r) => r.id === selectedRegId) : undefined;
+      if (selectedReg) {
+        // Website registration: the server creates/reuses the student, enrolls, copies the site photos and marks it approved atomically.
+        const approved = await api.approveRegistration(selectedReg.tracking_code, {
+          course_id: selectedCourseId,
+          course_number: courseNumber,
+          signup_date_jalali: signupDate,
+          final_price: finalPrice,
+          first_name: firstName,
+          last_name: lastName,
+          phone_number: phoneNumber,
+          address,
+          birth_date_jalali: birthDate,
+        });
+        studentObj = approved.student;
+        enrollmentObj = approved.enrollment;
+        setPendingRegs((rows) => rows.filter((r) => r.id !== selectedReg.id));
+        setExistingNotice(approved.studentCreated ? null : 'این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+        setCreatedStudent(studentObj);
+        if (idCardFile || personalPhotoFile) {
+          // Photos picked by hand in the form replace the ones copied from the site.
+          try {
+            const uploaded = await api.uploadStudentPhotos(
+              studentObj.id,
+              { idCard: idCardFile, personal: personalPhotoFile },
+              { last_name: lastName, course_number: courseNumber },
+            );
+            studentObj = { ...studentObj, id_card_photo_url: uploaded.id_card_photo_url ?? studentObj.id_card_photo_url, personal_photo_url: uploaded.personal_photo_url ?? studentObj.personal_photo_url };
+            setCreatedStudent(studentObj);
+          } catch (photoErr: any) {
+            console.warn('Photo upload failed, registration was still approved:', photoErr);
+            setStepError(photoErr?.message || 'ثبت‌نام تایید شد ولی بارگذاری عکس ناموفق بود.');
+          }
+        }
       } else {
-        setExistingNotice(null);
-      }
-      setCreatedStudent(studentObj);
-      if (idCardFile || personalPhotoFile) {
-        try {
-          const uploaded = await api.uploadStudentPhotos(
-            studentObj.id,
-            { idCard: idCardFile, personal: personalPhotoFile },
-            { last_name: lastName, course_number: courseNumber },
-          );
-          studentObj = {
-            ...studentObj,
-            ...uploaded,
-            first_name: uploaded.first_name || studentObj.first_name,
-            last_name: uploaded.last_name || studentObj.last_name,
-            national_code: uploaded.national_code || studentObj.national_code,
-            phone_number: uploaded.phone_number || studentObj.phone_number,
-          };
-          setCreatedStudent(studentObj);
-        } catch (photoErr: any) {
-          console.warn('Photo upload failed, student record was still created:', photoErr);
-          setStepError(photoErr?.message || 'پرونده ثبت شد ولی بارگذاری عکس ناموفق بود.');
+        const studentRes = await api.createStudent({
+          first_name: firstName,
+          last_name: lastName,
+          national_code: nationalCode,
+          phone_number: phoneNumber,
+          birth_date_jalali: birthDate,
+          address,
+        });
+        studentObj = studentRes.student;
+        if (studentRes.already_exists) {
+          // Same national code = same person registering again: keep their file, refresh the contact details just typed.
+          try {
+            studentObj = await api.updateStudent({
+              ...studentObj,
+              phone_number: phoneNumber || studentObj.phone_number,
+              address: address || studentObj.address,
+              birth_date_jalali: birthDate || studentObj.birth_date_jalali,
+            });
+          } catch (updErr) { console.warn('Could not refresh existing student details:', updErr); }
+          setExistingNotice('این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+        } else {
+          setExistingNotice(null);
         }
-      }
-      if (selectedRegId) {
-        try {
-          await api.approveRegistration(selectedRegId, studentObj.id);
-          setPendingRegs((rows) => rows.filter((r) => r.id !== selectedRegId));
-        } catch (regErr) {
-          console.warn('Could not mark website registration approved:', regErr);
+        setCreatedStudent(studentObj);
+        if (idCardFile || personalPhotoFile) {
+          try {
+            const uploaded = await api.uploadStudentPhotos(
+              studentObj.id,
+              { idCard: idCardFile, personal: personalPhotoFile },
+              { last_name: lastName, course_number: courseNumber },
+            );
+            studentObj = {
+              ...studentObj,
+              ...uploaded,
+              first_name: uploaded.first_name || studentObj.first_name,
+              last_name: uploaded.last_name || studentObj.last_name,
+              national_code: uploaded.national_code || studentObj.national_code,
+              phone_number: uploaded.phone_number || studentObj.phone_number,
+            };
+            setCreatedStudent(studentObj);
+          } catch (photoErr: any) {
+            console.warn('Photo upload failed, student record was still created:', photoErr);
+            setStepError(photoErr?.message || 'پرونده ثبت شد ولی بارگذاری عکس ناموفق بود.');
+          }
         }
+        enrollmentObj = await api.createEnrollment({
+          student_id: studentObj.id,
+          course_id: selectedCourseId,
+          course_number: courseNumber,
+          signup_date_jalali: signupDate,
+          final_price: finalPrice,
+        });
       }
-      const enrollmentObj = await api.createEnrollment({
-        student_id: studentObj.id,
-        course_id: selectedCourseId,
-        course_number: courseNumber,
-        signup_date_jalali: signupDate,
-        final_price: finalPrice,
-      });
       setCreatedEnrollmentId(enrollmentObj.id);
       if (payAmount > 0) {
         await api.createPayment({
@@ -777,6 +843,9 @@ export default function StudentRegistrationForm({
       if (mode === 'new') { handleReset(); return; }
       setIsSuccess(true);
     } catch (err: any) {
+      if (err instanceof api.RegistrationError && err.message === api.REGISTRATION_ALREADY_PROCESSED && selectedRegId) {
+        setPendingRegs((rows) => rows.filter((r) => r.id !== selectedRegId));
+      }
       setStepError(err?.message || 'ثبت‌نام با خطا مواجه شد. اتصال را بررسی کنید.');
     }
     finally { setIsSubmitting(false); }
@@ -888,6 +957,15 @@ export default function StudentRegistrationForm({
               <div className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-800">
                 <Inbox className="w-3.5 h-3.5" />
                 ثبت‌نام‌های در انتظار وبسایت ({pendingRegs.length})
+                {selectedRegId && (
+                  <button
+                    type="button"
+                    onClick={handleRejectRegistration}
+                    className="mr-2 px-2.5 py-1 rounded-lg border border-rose-300 bg-white text-rose-700 text-[11px] font-bold hover:bg-rose-50 transition"
+                  >
+                    رد ثبت‌نام انتخاب‌شده
+                  </button>
+                )}
               </div>
               <input
                 value={regQuery}

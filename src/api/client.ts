@@ -288,8 +288,9 @@ export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
     academic_degree: r.academic_degree ?? '',
     military_status: r.military_status ?? '',
     has_temp_permit: r.has_temp_permit,
-    national_card_path: protectedFileUrl(r.national_card_path),
-    personal_photo_path: protectedFileUrl(r.personal_photo_path),
+    // Site uploads are not served directly; use fetchRegistrationFileUrl() to preview them.
+    national_card_path: r.national_card_path || undefined,
+    personal_photo_path: r.personal_photo_path || undefined,
     status: r.status ?? 'pending',
     source: r.source ?? 'website',
     student_id: r.student_id ?? null,
@@ -297,18 +298,79 @@ export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
   }));
 }
 
-export async function approveRegistration(registrationId: number, studentId: number): Promise<WebsiteRegistration> {
-  const res = await apiFetch(`/registrations/${registrationId}/approve`, {
+/** Error from the registration endpoints; `code` is 'already_processed' for a 409 on a handled registration. */
+export class RegistrationError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export const REGISTRATION_ALREADY_PROCESSED = 'این ثبت‌نام قبلاً پردازش شده است';
+
+async function registrationError(res: Response, fallback: string): Promise<RegistrationError> {
+  const err = await res.json().catch(() => ({}));
+  const processed = res.status === 409 && (err.code === 'already_processed' || !err.error);
+  return new RegistrationError(processed ? REGISTRATION_ALREADY_PROCESSED : (err.error ?? fallback), res.status, err.code);
+}
+
+/** POST /api/registrations/:code/approve: student + enrollment + photos + status in one server transaction. */
+export async function approveRegistration(trackingCode: string, body: {
+  course_id: number;
+  course_number?: number | null;
+  final_price?: number;
+  signup_date_jalali?: string;
+  first_name?: string;
+  last_name?: string;
+  phone_number?: string;
+  address?: string;
+  birth_date_jalali?: string;
+  update_existing?: boolean;
+}): Promise<{ student: Student; enrollment: Enrollment; photos: boolean; studentCreated: boolean }> {
+  const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ student_id: studentId }),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error ?? 'تایید ثبت‌نام وبسایت ناموفق بود');
-  }
+  if (!res.ok) throw await registrationError(res, 'تایید ثبت‌نام وبسایت ناموفق بود');
   const data = await res.json();
-  return data.registration ?? data;
+  const e = data.enrollment ?? {};
+  return {
+    student: normaliseStudent(data.student),
+    enrollment: {
+      id:                 e.enrollment_id ?? e.id,
+      student_id:         e.student_id,
+      course_id:          e.course_id,
+      course_number:      e.course_number ?? null,
+      signup_date_jalali: e.signup_date_jalali ?? '',
+      final_price:        Number(e.final_price ?? 0),
+    },
+    photos: Boolean(data.photos),
+    studentCreated: Boolean(data.student_created),
+  };
+}
+
+export async function rejectRegistration(trackingCode: string, reason?: string): Promise<void> {
+  const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw await registrationError(res, 'رد ثبت‌نام ناموفق بود');
+}
+
+/** Loads a site-uploaded document through the authenticated route; returns a blob URL, or null when it is missing. */
+export async function fetchRegistrationFileUrl(trackingCode: string, kind: 'national_card' | 'personal_photo'): Promise<string | null> {
+  try {
+    const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/file/${kind}`);
+    if (!res.ok) return null;
+    return URL.createObjectURL(await res.blob());
+  } catch {
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────
