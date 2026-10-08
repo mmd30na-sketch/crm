@@ -86,6 +86,25 @@ function fileUrl(path?: string | null): string | undefined {
   return `${API_ORIGIN}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+/**
+ * Uploaded files (/uploads, /StudentFiles) need a login. <img> and <a> cannot send an
+ * Authorization header, so the session token is passed in the query string instead.
+ */
+function protectedFileUrl(path?: string | null): string | undefined {
+  const url = fileUrl(path);
+  const token = getAuthToken();
+  if (!url || !token || typeof window === 'undefined') return url;
+  try {
+    const u = new URL(url, window.location.origin);
+    const apiOrigin = new URL(API_ORIGIN || window.location.origin, window.location.origin).origin;
+    if (u.origin !== apiOrigin || !/^\/(uploads|StudentFiles)\//.test(u.pathname)) return url;
+    u.searchParams.set('token', token);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 // ─────────────────────────────────────────────────────────
 // COURSES
 // ─────────────────────────────────────────────────────────
@@ -161,8 +180,8 @@ function normaliseStudent(s: any): Student {
     phone_number:       s.phone_number ?? '',
     birth_date_jalali:  s.birth_date_jalali ?? '',
     address:            s.address ?? '',
-    id_card_photo_url:  fileUrl(s.national_card_path || s.id_card_photo_url),
-    personal_photo_url: fileUrl(s.personal_photo_path || s.personal_photo_url),
+    id_card_photo_url:  protectedFileUrl(s.national_card_path || s.id_card_photo_url),
+    personal_photo_url: protectedFileUrl(s.personal_photo_path || s.personal_photo_url),
     status:             (s.status ?? s.registration_status ?? 'active') as Student['status'],
     created_at:         s.created_at ?? new Date().toISOString(),
     // Extra fields from backend join (used in StudentsList)
@@ -259,8 +278,8 @@ export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
     academic_degree: r.academic_degree ?? '',
     military_status: r.military_status ?? '',
     has_temp_permit: r.has_temp_permit,
-    national_card_path: fileUrl(r.national_card_path),
-    personal_photo_path: fileUrl(r.personal_photo_path),
+    national_card_path: protectedFileUrl(r.national_card_path),
+    personal_photo_path: protectedFileUrl(r.personal_photo_path),
     status: r.status ?? 'pending',
     source: r.source ?? 'website',
     student_id: r.student_id ?? null,
@@ -299,7 +318,7 @@ export async function fetchEnrollments(): Promise<Enrollment[]> {
     course_number:       e.course_number ?? null,
     signup_date_jalali:  e.signup_date_jalali ?? e.enrolled_at ?? '',
     final_price:         Number(e.final_price ?? 0),
-    receipt_pdf_path:    e.receipt_pdf_path ?? undefined,
+    receipt_pdf_path:    protectedFileUrl(e.receipt_pdf_path),
   }));
 }
 
@@ -558,7 +577,8 @@ export async function uploadEnrollmentReceipt(
     // Non-critical — receipt upload failure shouldn't block registration
     return { receipt_pdf_path: '' };
   }
-  return res.json();
+  const data = await res.json();
+  return { receipt_pdf_path: protectedFileUrl(data.receipt_pdf_path) ?? '' };
 }
 
 // ─────────────────────────────────────────────────────────

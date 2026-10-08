@@ -133,7 +133,36 @@ const studentPhotoStorage = multer.diskStorage({
     cb(null, `${lastName}_${studentId}_${isIdCard ? 'ID' : 'Photo'}${ext}`);
   },
 });
-const uploadStudentMedia = multer({ storage: studentPhotoStorage });
+class UploadError extends Error {
+  status = 400;
+}
+
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+function imageFileFilter(_req: express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(ext) || !String(file.mimetype).startsWith('image/')) {
+    return cb(new UploadError('فقط تصویر با فرمت JPG، PNG یا WEBP مجاز است.'));
+  }
+  cb(null, true);
+}
+function pdfFileFilter(_req: express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (ext !== '.pdf' || file.mimetype !== 'application/pdf') {
+    return cb(new UploadError('فقط فایل PDF مجاز است.'));
+  }
+  cb(null, true);
+}
+function removeUploadedFiles(files: Express.Multer.File | Express.Multer.File[] | { [field: string]: Express.Multer.File[] } | undefined) {
+  if (!files) return;
+  const list = Array.isArray(files) ? files : 'path' in files ? [files as Express.Multer.File] : Object.values(files).flat();
+  for (const f of list) fs.unlink(f.path, () => {});
+}
+
+const uploadStudentMedia = multer({
+  storage: studentPhotoStorage,
+  fileFilter: imageFileFilter,
+  limits: { fileSize: 8 * 1024 * 1024, files: 2 },
+});
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -145,8 +174,11 @@ const uploadsStorage = multer.diskStorage({
     cb(null, `${Date.now()}_${crypto.randomBytes(6).toString('hex')}${ext}`);
   },
 });
-const upload = multer({ storage: uploadsStorage });
-app.use('/StudentFiles', express.static(studentFilesBase));
+// OCR scans (images) and receipt PDFs share the same storage but not the same rules.
+const upload = multer({ storage: uploadsStorage, fileFilter: imageFileFilter, limits: { fileSize: 8 * 1024 * 1024, files: 2 } });
+const uploadReceipt = multer({ storage: uploadsStorage, fileFilter: pdfFileFilter, limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+// Student documents (national card, photos) are personal data: staff login required.
+app.use('/StudentFiles', (req, res, next) => requireStaff(req, res, next), express.static(studentFilesBase));
 
 // Database File Path
 const DB_PATH = path.join(process.cwd(), 'db_store.json');
@@ -451,6 +483,14 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
   next();
 }
 
+/** Any signed-in staff role. Used for uploaded files, which <img>/<a> load with ?token=. */
+function requireStaff(req: express.Request, res: express.Response, next: express.NextFunction) {
+  requireAuth(req, res, () => {
+    if (!currentRole(req)) return res.status(401).json({ error: 'Unauthorized' });
+    next();
+  });
+}
+
 app.post('/api/auth/login', async (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
@@ -690,7 +730,7 @@ app.put('/api/staff/:id', requireAdmin, async (req, res) => {
 });
 
 // Serve uploads statically
-app.use('/uploads', express.static(uploadsDir));
+app.use('/uploads', requireStaff, express.static(uploadsDir));
 
 // Initialize Gemini API
 let ai: GoogleGenAI | null = null;
@@ -845,6 +885,81 @@ app.post('/api/imports/access', (req, res) => {
 // ------------------- API ROUTES -------------------
 
 // 1. GET active courses
+// ─────────────────────────────────────────────────────────────
+// INPUT VALIDATION HELPERS (students / enrollments / payments)
+// ─────────────────────────────────────────────────────────────
+function toLatinDigits(v: string): string {
+  return v
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
+function isValidIranNationalCode(code: string): boolean {
+  if (!/^\d{10}$/.test(code) || /^(\d)\1{9}$/.test(code)) return false;
+  const d = code.split('').map(Number);
+  const sum = d.slice(0, 9).reduce((acc, x, i) => acc + x * (10 - i), 0);
+  const r = sum % 11;
+  return r < 2 ? d[9] === r : d[9] === 11 - r;
+}
+
+type StudentFields = {
+  first_name?: string; last_name?: string; national_code?: string; phone_number?: string;
+  father_name?: string; birth_date_jalali?: string; address?: string;
+};
+
+/** Cleans and validates student input. `partial` (updates) only checks fields that were sent. */
+function parseStudentInput(body: any, partial: boolean): { data: StudentFields; error?: string } {
+  const b = body && typeof body === 'object' ? body : {};
+  const data: StudentFields = {};
+  const sent = (k: string) => b[k] !== undefined && b[k] !== null && String(b[k]).trim() !== '';
+
+  for (const [key, label] of [['first_name', 'نام'], ['last_name', 'نام خانوادگی']] as const) {
+    if (sent(key)) data[key] = sanitizeString(b[key], 80);
+    else if (!partial) return { data, error: `${label} الزامی است.` };
+  }
+  if (sent('national_code')) {
+    const code = toLatinDigits(sanitizeString(b.national_code, 20)).replace(/[\s-]/g, '');
+    if (!isValidIranNationalCode(code)) return { data, error: 'کد ملی معتبر نیست.' };
+    data.national_code = code;
+  } else if (!partial) return { data, error: 'کد ملی الزامی است.' };
+  if (sent('phone_number')) {
+    const phone = toLatinDigits(sanitizeString(b.phone_number, 20)).replace(/[\s-]/g, '');
+    if (!/^09\d{9}$/.test(phone)) return { data, error: 'شماره همراه باید ۱۱ رقم و با ۰۹ شروع شود.' };
+    data.phone_number = phone;
+  } else if (!partial) return { data, error: 'شماره همراه الزامی است.' };
+  if (sent('father_name')) data.father_name = sanitizeString(b.father_name, 80);
+  if (sent('birth_date_jalali')) data.birth_date_jalali = sanitizeString(b.birth_date_jalali, 20);
+  if (sent('address')) data.address = sanitizeString(b.address, 400);
+  return { data };
+}
+
+async function loadStudents(): Promise<any[]> {
+  return chabokan.isMysqlEnabled() ? chabokan.listStudents() : readDb().students;
+}
+async function loadCourses(): Promise<any[]> {
+  return chabokan.isMysqlEnabled() ? chabokan.listCourses() : readDb().courses;
+}
+async function loadEnrollments(): Promise<any[]> {
+  return chabokan.isMysqlEnabled() ? chabokan.listEnrollments() : readDb().enrollments;
+}
+const enrollmentId = (e: any): number => Number(e.enrollment_id ?? e.id);
+
+/** Outstanding tuition for a student (optionally limited to one enrollment). */
+async function remainingBalance(studentId: number, forEnrollmentId?: number | null): Promise<number> {
+  if (chabokan.isMysqlEnabled()) {
+    const row = (await chabokan.listStudents()).find((s: any) => Number(s.id) === studentId);
+    return Math.max(0, Number(row?.remaining_debt ?? 0));
+  }
+  const db = readDb();
+  const enrollments = db.enrollments.filter(e => e.student_id === studentId);
+  const payments = db.payments.filter(p => p.student_id === studentId);
+  const studentRemaining = enrollments.reduce((a, e) => a + (e.final_price || 0), 0) - payments.reduce((a, p) => a + p.amount, 0);
+  if (!forEnrollmentId) return Math.max(0, studentRemaining);
+  const enr = enrollments.find(e => e.id === forEnrollmentId);
+  const enrRemaining = (enr?.final_price || 0) - payments.filter(p => p.enrollment_id === forEnrollmentId).reduce((a, p) => a + p.amount, 0);
+  return Math.max(0, Math.min(studentRemaining, enrRemaining));
+}
+
 app.get('/api/courses', async (req, res) => {
   try {
     if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listCourses());
@@ -897,21 +1012,27 @@ app.get('/api/students', async (req, res) => {
 
 app.post('/api/students', async (req, res) => {
   try {
+    const { data, error } = parseStudentInput(req.body, false);
+    if (error) return res.status(400).json({ error });
+
+    // Same national code = same person (e.g. a second course): reuse the existing record.
+    const existing = (await loadStudents()).find(s => String(s.national_code) === data.national_code);
+    if (existing) return res.json({ status: 'success', already_exists: true, student: existing });
+
     if (chabokan.isMysqlEnabled()) {
-      const student = await chabokan.insertStudent(req.body);
+      const student = await chabokan.insertStudent({ ...req.body, ...data });
       return res.json({ status: 'success', student });
     }
     const db = readDb();
-    const studentData = req.body;
     const newStudent: Student = {
       id: db.students.length > 0 ? Math.max(...db.students.map(s => s.id)) + 1 : 1,
-      first_name: studentData.first_name,
-      last_name: studentData.last_name,
-      father_name: studentData.father_name || '',
-      national_code: studentData.national_code || '',
-      phone_number: studentData.phone_number || '',
-      birth_date_jalali: studentData.birth_date_jalali || '',
-      address: studentData.address || '',
+      first_name: data.first_name!,
+      last_name: data.last_name!,
+      father_name: data.father_name || '',
+      national_code: data.national_code!,
+      phone_number: data.phone_number!,
+      birth_date_jalali: data.birth_date_jalali || '',
+      address: data.address || '',
       status: 'active',
       created_at: new Date().toISOString(),
     };
@@ -925,8 +1046,14 @@ app.post('/api/students', async (req, res) => {
 app.put('/api/students/:id', async (req, res) => {
   try {
     const studentId = parseInt(req.params.id, 10);
+    const { data, error } = parseStudentInput(req.body, true);
+    if (error) return res.status(400).json({ error });
+    if (data.national_code) {
+      const clash = (await loadStudents()).find(s => String(s.national_code) === data.national_code && Number(s.id) !== studentId);
+      if (clash) return res.status(409).json({ error: 'کارآموز دیگری با این کد ملی ثبت شده است.' });
+    }
     if (chabokan.isMysqlEnabled()) {
-      const student = await chabokan.updateStudent(studentId, req.body || {});
+      const student = await chabokan.updateStudent(studentId, { ...(req.body || {}), ...data });
       if (!student) return res.status(404).json({ error: 'Student not found' });
       return res.json({ status: 'success', student });
     }
@@ -936,13 +1063,7 @@ app.put('/api/students/:id', async (req, res) => {
     const body = req.body || {};
     db.students[index] = {
       ...db.students[index],
-      first_name: sanitizeString(body.first_name, 80) || db.students[index].first_name,
-      last_name: sanitizeString(body.last_name, 80) || db.students[index].last_name,
-      father_name: sanitizeString(body.father_name, 80) || db.students[index].father_name,
-      national_code: sanitizeString(body.national_code, 20) || db.students[index].national_code,
-      phone_number: sanitizeString(body.phone_number, 20) || db.students[index].phone_number,
-      birth_date_jalali: sanitizeString(body.birth_date_jalali, 20) || db.students[index].birth_date_jalali,
-      address: sanitizeString(body.address, 400) || db.students[index].address,
+      ...data,
       status: body.status || db.students[index].status,
     };
     writeDb(db);
@@ -953,7 +1074,10 @@ app.put('/api/students/:id', async (req, res) => {
 // 4. CASCADE DELETE student
 app.delete('/api/students/:id', async (req, res) => {
   try {
-    const studentId = parseInt(req.params.id);
+    const studentId = parseInt(req.params.id, 10);
+    if (!studentId || !(await loadStudents()).some(s => Number(s.id) === studentId)) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
     if (chabokan.isMysqlEnabled()) {
       await chabokan.deleteStudent(studentId);
       return res.json({ success: true });
@@ -975,11 +1099,11 @@ app.post('/api/students/:id/photos', uploadStudentMedia.fields([
   const studentId = parseInt(req.params.id);
   const db = readDb();
   const index = db.students.findIndex(s => s.id === studentId);
+  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
   if (!chabokan.isMysqlEnabled() && index === -1) {
+    removeUploadedFiles(files);
     return res.status(404).json({ error: 'Student not found' });
   }
-
-  const files = req.files as { [fieldname: string]: Express.Multer.File[] };
 
   const idCardPath = files?.idCard?.[0] ? publicPathFromFile(files.idCard[0]) : undefined;
   const personalPath = files?.personal?.[0] ? publicPathFromFile(files.personal[0]) : undefined;
@@ -997,16 +1121,46 @@ app.post('/api/students/:id/photos', uploadStudentMedia.fields([
 // 6. POST enrollment
 app.post('/api/enrollments', async (req, res) => {
   try {
-    if (chabokan.isMysqlEnabled()) return res.json(await chabokan.insertEnrollment(req.body));
+    const b = req.body || {};
+    const studentId = parseInt(b.student_id, 10);
+    const courseId = parseInt(b.course_id, 10);
+    if (!studentId || !courseId) return res.status(400).json({ error: 'student_id و course_id الزامی است.' });
+
+    const [students, courses, enrollments] = await Promise.all([loadStudents(), loadCourses(), loadEnrollments()]);
+    if (!students.some(s => Number(s.id) === studentId)) return res.status(404).json({ error: 'کارآموز یافت نشد.' });
+    const course = courses.find(c => Number(c.id) === courseId);
+    if (!course) return res.status(404).json({ error: 'دوره آموزشی یافت نشد.' });
+
+    const hasPrice = b.final_price !== undefined && b.final_price !== null && b.final_price !== '';
+    const finalPrice = hasPrice ? Number(b.final_price) : Number(course.tuition || 0);
+    if (!Number.isFinite(finalPrice) || finalPrice < 0) return res.status(400).json({ error: 'شهریه نامعتبر است.' });
+
+    const numbers = enrollments.map(e => Number(e.course_number)).filter(n => Number.isFinite(n) && n > 0);
+    let courseNumber: number | null;
+    if (b.course_number !== undefined && b.course_number !== null && b.course_number !== '') {
+      courseNumber = parseInt(b.course_number, 10);
+      if (!Number.isInteger(courseNumber) || courseNumber <= 0) return res.status(400).json({ error: 'شماره دوره نامعتبر است.' });
+    } else {
+      courseNumber = numbers.length > 0 ? Math.max(...numbers) : null;
+    }
+    if (enrollments.some(e => Number(e.student_id) === studentId && Number(e.course_id) === courseId && Number(e.course_number) === courseNumber)) {
+      return res.status(409).json({ error: 'این کارآموز قبلاً در همین دوره و کلاس ثبت‌نام شده است.' });
+    }
+
+    const signupDate = sanitizeString(b.signup_date_jalali, 20) || chabokan.jalaliToday();
+    if (chabokan.isMysqlEnabled()) {
+      return res.json(await chabokan.insertEnrollment({
+        ...b, student_id: studentId, course_id: courseId, course_number: courseNumber, final_price: finalPrice, signup_date_jalali: signupDate,
+      }));
+    }
     const db = readDb();
-    const enrollmentData = req.body;
     const newEnrollment = {
       id: db.enrollments.length > 0 ? Math.max(...db.enrollments.map(e => e.id)) + 1 : 1,
-      student_id: parseInt(enrollmentData.student_id),
-      course_id: parseInt(enrollmentData.course_id),
-      course_number: enrollmentData.course_number ? parseInt(enrollmentData.course_number) : Math.floor(Math.random() * 150) + 1,
-      signup_date_jalali: enrollmentData.signup_date_jalali || chabokan.jalaliToday(),
-      final_price: parseFloat(enrollmentData.final_price) || 0,
+      student_id: studentId,
+      course_id: courseId,
+      course_number: courseNumber as number,
+      signup_date_jalali: signupDate,
+      final_price: finalPrice,
     };
     db.enrollments.push(newEnrollment);
     writeDb(db);
@@ -1029,6 +1183,24 @@ app.post('/api/payments', async (req, res) => {
     if (!studentId) return res.status(400).json({ error: 'student_id is required' });
     const amount = parseFloat(paymentData.amount);
     if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount is required' });
+    if (!(await loadStudents()).some(s => Number(s.id) === studentId)) {
+      return res.status(404).json({ error: 'کارآموز یافت نشد.' });
+    }
+    const linkedEnrollmentId = paymentData.enrollment_id ? parseInt(paymentData.enrollment_id, 10) : null;
+    if (linkedEnrollmentId) {
+      const enr = (await loadEnrollments()).find(e => enrollmentId(e) === linkedEnrollmentId);
+      if (!enr || Number(enr.student_id) !== studentId) {
+        return res.status(404).json({ error: 'ثبت‌نام مربوط به این کارآموز یافت نشد.' });
+      }
+    }
+    const remaining = await remainingBalance(studentId, linkedEnrollmentId);
+    if (amount > remaining) {
+      return res.status(400).json({
+        error: remaining > 0
+          ? `مبلغ پرداختی از مانده شهریه (${remaining.toLocaleString('fa-IR')} تومان) بیشتر است.`
+          : 'برای این کارآموز مانده‌ای برای پرداخت وجود ندارد.',
+      });
+    }
     if (chabokan.isMysqlEnabled()) {
       return res.json(await chabokan.insertPayment({
         ...paymentData,
@@ -1345,11 +1517,17 @@ app.get('/api/enrollments/:id/report-context', (req, res) => {
 });
 
 // 12. Upload receipt PDF
-app.post('/api/enrollments/:id/receipt', upload.single('pdf'), async (req, res) => {
-  const enrollmentId = parseInt(req.params.id);
+app.post('/api/enrollments/:id/receipt', uploadReceipt.single('pdf'), async (req, res) => {
+  const enrollmentId = parseInt(req.params.id, 10);
   if (!req.file) {
     return res.status(400).json({ error: 'No PDF file uploaded' });
   }
+  const reject = (status: number, error: string) => { removeUploadedFiles(req.file); return res.status(status).json({ error }); };
+  if (!enrollmentId) return reject(400, 'Invalid enrollment id');
+  const header = Buffer.alloc(5);
+  const fd = fs.openSync(req.file.path, 'r');
+  try { fs.readSync(fd, header, 0, 5, 0); } finally { fs.closeSync(fd); }
+  if (header.toString('latin1') !== '%PDF-') return reject(400, 'فایل ارسالی PDF معتبر نیست.');
   const receiptPath = publicPathFromFile(req.file);
   try {
     if (chabokan.isMysqlEnabled()) {
@@ -1359,7 +1537,7 @@ app.post('/api/enrollments/:id/receipt', upload.single('pdf'), async (req, res) 
     const db = readDb();
     const index = db.enrollments.findIndex(e => e.id === enrollmentId);
     if (index === -1) {
-      return res.status(404).json({ error: 'Enrollment not found' });
+      return reject(404, 'Enrollment not found');
     }
     db.enrollments[index].receipt_pdf_path = receiptPath;
     writeDb(db);
@@ -1466,6 +1644,20 @@ app.get('/api/settings/gateways', (req, res) => {
 });
 app.post('/api/settings/gateways', (req, res) => {
   res.json({ success: true });
+});
+
+// JSON errors for bad bodies and rejected uploads (instead of Express' HTML 500 page)
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) return next(err);
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'JSON نامعتبر است.' });
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'حجم درخواست بیش از حد مجاز است.' });
+  if (err instanceof multer.MulterError) {
+    return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'حجم فایل بیش از حد مجاز است.' : 'آپلود نامعتبر است.',
+    });
+  }
+  if (err instanceof UploadError) return res.status(err.status).json({ error: err.message });
+  next(err);
 });
 
 // Vite Integration middleware & SPA fallback
