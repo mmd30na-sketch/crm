@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   TrendingUp,
   Users,
@@ -20,6 +20,7 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
+import * as api from '../api/client';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface SupervisorDashboardProps {
@@ -30,6 +31,14 @@ interface SupervisorDashboardProps {
   onRefresh: () => void;
   onActiveTabChange: (tab: string) => void;
   isSidebarOpen?: boolean;
+}
+
+interface CalendarEvent {
+  day: number;
+  month?: number;
+  year?: number;
+  title: string;
+  time: string;
 }
 
 interface Task {
@@ -63,10 +72,12 @@ function gregorianToJalali(date: Date) {
   return { jy, jm, jd };
 }
 
-function jalaliMonthLength(jm: number) {
+const isJalaliLeap = (jy: number) => [1, 5, 9, 13, 17, 22, 26, 30].includes(jy % 33);
+
+function jalaliMonthLength(jm: number, jy: number) {
   if (jm <= 6) return 31;
   if (jm <= 11) return 30;
-  return 29;
+  return isJalaliLeap(jy) ? 30 : 29;
 }
 
 export default function SupervisorDashboard({
@@ -79,29 +90,19 @@ export default function SupervisorDashboard({
   isSidebarOpen = true,
 }: SupervisorDashboardProps) {
 
-  // Persisted tasks
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem('carla_tasks');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
-    }
-    return [];
-  });
-
+  // To-do list and calendar events live on the server so every admin sees the same ones.
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskText, setNewTaskText] = useState('');
-
-  // Persisted calendar events
-  const [calendarEvents, setCalendarEvents] = useState(() => {
-    const saved = localStorage.getItem('carla_calendar_events');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
-    }
-    return [];
-  });
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const notesLoaded = useRef(false);
 
   const todayJalali = gregorianToJalali(new Date());
   const currentMonth = `${JALALI_MONTHS[todayJalali.jm - 1]} ${todayJalali.jy}`;
-  const daysInMonth = jalaliMonthLength(todayJalali.jm);
+  const daysInMonth = jalaliMonthLength(todayJalali.jm, todayJalali.jy);
+  // Persian weeks start on Saturday; getDay(): Sunday = 0 … Saturday = 6.
+  const todayWeekdayIndex = (new Date().getDay() + 1) % 7;
+  const firstDayOffset = (((todayWeekdayIndex - (todayJalali.jd - 1)) % 7) + 7) % 7;
+  const eventsOn = (day: number) => calendarEvents.filter(e => e.day === day && e.year === todayJalali.jy && e.month === todayJalali.jm);
   const weekdayLabel = new Date().toLocaleDateString('fa-IR', { weekday: 'long' });
 
   const [isCalendarOpen, setIsCalendarOpen]   = useState(false);
@@ -111,12 +112,33 @@ export default function SupervisorDashboard({
   const [newEventDay, setNewEventDay]         = useState(todayJalali.jd);
 
   useEffect(() => {
-    localStorage.setItem('carla_tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const notes = await api.fetchDashboardNotes();
+        let loadedTasks: Task[] = notes.tasks || [];
+        let loadedEvents: CalendarEvent[] = notes.events || [];
+        // One-time move of notes that were kept in this browser before they were shared.
+        if (loadedTasks.length === 0 && loadedEvents.length === 0) {
+          try {
+            loadedTasks = JSON.parse(localStorage.getItem('carla_tasks') || '[]');
+            loadedEvents = JSON.parse(localStorage.getItem('carla_calendar_events') || '[]');
+          } catch { /* ignore */ }
+        }
+        // Events saved before months were recorded belong to the current month.
+        loadedEvents = loadedEvents.map(e => ({ ...e, year: e.year || todayJalali.jy, month: e.month || todayJalali.jm }));
+        if (!cancelled) { setTasks(loadedTasks); setCalendarEvents(loadedEvents); }
+      } catch { /* not allowed or offline: start empty */ }
+      finally { notesLoaded.current = true; }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('carla_calendar_events', JSON.stringify(calendarEvents));
-  }, [calendarEvents]);
+    if (!notesLoaded.current) return;
+    const timer = setTimeout(() => { api.saveDashboardNotes({ tasks, events: calendarEvents }).catch(() => {}); }, 600);
+    return () => clearTimeout(timer);
+  }, [tasks, calendarEvents]);
 
   const handleToggleTask = (id: number) => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
@@ -141,7 +163,7 @@ export default function SupervisorDashboard({
     if (!newEventTitle.trim()) return;
     setCalendarEvents(prev => [
       ...prev,
-      { day: newEventDay, title: newEventTitle.trim(), time: newEventTime },
+      { day: newEventDay, month: todayJalali.jm, year: todayJalali.jy, title: newEventTitle.trim(), time: newEventTime },
     ]);
     setNewEventTitle('');
   };
@@ -156,7 +178,7 @@ export default function SupervisorDashboard({
   const courseDistribution = courses.map(course => {
     const count = enrollments.filter(e => e.course_id === course.id).length;
     return {
-      name: course.title.split(' ')[0] + '...',
+      name: course.title.length > 14 ? course.title.slice(0, 13) + '…' : course.title,
       fullTitle: course.title,
       'تعداد هنرجو': count,
     };
@@ -390,8 +412,8 @@ export default function SupervisorDashboard({
               <span className="text-[10px] font-bold text-slate-400 block">امروز:</span>
               <h4 className="text-sm font-extrabold text-slate-900">{weekdayLabel}، {todayJalali.jd} {currentMonth}</h4>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                {calendarEvents.filter(e => e.day === todayJalali.jd).length
-                  ? calendarEvents.filter(e => e.day === todayJalali.jd).map(e => e.title).join('، ')
+                {eventsOn(todayJalali.jd).length
+                  ? eventsOn(todayJalali.jd).map(e => e.title).join('، ')
                   : 'رویدادی ثبت نشده'}
               </p>
             </div>
@@ -415,9 +437,10 @@ export default function SupervisorDashboard({
             {/* Grid Days */}
             <div className="grid grid-cols-7 text-center gap-1.5 text-xs">
               {['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'].map(d => <div key={d} className="font-bold text-slate-400 py-1 text-[10px]">{d}</div>)}
+              {Array.from({ length: firstDayOffset }).map((_, i) => <div key={`blank-${i}`} />)}
               {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1;
-                const hasEvt = calendarEvents.some(e => e.day === day);
+                const hasEvt = eventsOn(day).length > 0;
                 const isSel = selectedDay === day;
                 return (
                   <button key={day} onClick={() => { setSelectedDay(day); setNewEventDay(day); }}
@@ -433,7 +456,7 @@ export default function SupervisorDashboard({
             {/* Events for selected day */}
             <div className="border-t border-slate-100 pt-3 space-y-2">
               <div className="text-xs font-bold text-slate-800">برنامه‌های روز {selectedDay} {currentMonth}:</div>
-              {calendarEvents.filter(e => e.day === selectedDay).map((evt, idx) => (
+              {eventsOn(selectedDay).map((evt, idx) => (
                 <div key={idx} className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs flex items-center justify-between">
                   <span className="font-semibold text-slate-800">{evt.title}</span>
                   <span className="font-mono text-[10px] text-sky-700 font-bold">{evt.time}</span>

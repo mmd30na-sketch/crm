@@ -120,20 +120,26 @@ export default function App() {
   const refreshAllData = async () => {
     setIsRefreshing(true);
     try {
-      const [stdData, crsData, enrData, payData, expData] = await Promise.all([
+      // Each dataset is loaded on its own: a role that may not read payments/expenses (e.g. the instructor)
+      // must still get students and courses, and a failed refresh keeps what is already on screen.
+      const results = await Promise.allSettled([
         api.fetchStudents(),
         api.fetchCourses(),
         api.fetchEnrollments(),
         api.fetchPayments(),
         api.fetchExpenses(),
       ]);
-      setStudents(stdData);
-      setCourses(crsData);
-      setEnrollments(enrData);
-      setPayments(payData);
-      setExpenses(expData);
-    } catch (err) {
-      console.error('Error fetching dashboard datasets:', err);
+      const apply = <T,>(r: PromiseSettledResult<T>, set: React.Dispatch<React.SetStateAction<T>>) => {
+        if (r.status === 'fulfilled') set(r.value);
+      };
+      apply(results[0] as PromiseSettledResult<Student[]>, setStudents);
+      apply(results[1] as PromiseSettledResult<Course[]>, setCourses);
+      apply(results[2] as PromiseSettledResult<Enrollment[]>, setEnrollments);
+      apply(results[3] as PromiseSettledResult<Payment[]>, setPayments);
+      apply(results[4] as PromiseSettledResult<Expense[]>, setExpenses);
+      results.forEach((r, i) => {
+        if (r.status === 'rejected' && !/403|Forbidden/i.test(String(r.reason))) console.error('Error fetching dataset', i, r.reason);
+      });
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -448,6 +454,9 @@ export default function App() {
               {activeTab === 'messenger' && (
                 <MessengerHub
                   students={students}
+                  courses={courses}
+                  enrollments={enrollments}
+                  payments={payments}
                   onRefresh={refreshAllData}
                 />
               )}

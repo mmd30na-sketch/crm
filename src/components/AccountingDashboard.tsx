@@ -55,6 +55,16 @@ const toEnglishDigits = (str: string): string => {
   return out;
 };
 
+/** "۱۴۰۵/۷/۱۶" → "1405/07/16": comparable text whatever digits/padding the record was saved with. */
+const normJalali = (raw?: string): string => {
+  const m = toEnglishDigits(raw || '').trim().match(/^(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  return m ? `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}` : '';
+};
+
+const PAY_METHOD_LABELS: Record<string, string> = {
+  pos: 'کارتخوان', cash: 'نقدی', card_transfer: 'کارت‌به‌کارت', online: 'آنلاین', cheque: 'چک',
+};
+
 function gregorianToJalali(date: Date) {
   const gy = date.getFullYear();
   const gm = date.getMonth() + 1;
@@ -105,31 +115,18 @@ export default function AccountingDashboard({
 
   const formatCurrency = (amount: number) => amount.toLocaleString('fa-IR') + ' تومان';
 
-  const filterPaymentsByDate = (payList: Payment[]) => {
-    if (dateFilterMode === 'all') return payList;
-    return payList.filter(p => {
-      const pdate = toEnglishDigits(p.pay_date_jalali || '');
-      if (!pdate) return true;
-      if (dateFilterMode === 'this_month') {
-        return pdate.startsWith(currentJalaliYearMonth());
-      }
-      if (dateFilterMode === 'custom' && customStartDate && customEndDate) {
-        return pdate >= toEnglishDigits(customStartDate) && pdate <= toEnglishDigits(customEndDate);
-      }
-      return true;
-    });
+  /** Records without a readable date can't belong to a period, so they only show under "all". */
+  const inPeriod = (rawDate?: string) => {
+    if (dateFilterMode === 'all') return true;
+    const d = normJalali(rawDate);
+    if (!d) return false;
+    if (dateFilterMode === 'this_month') return d.startsWith(currentJalaliYearMonth());
+    if (customStartDate && customEndDate) return d >= normJalali(customStartDate) && d <= normJalali(customEndDate);
+    return true;
   };
 
-  const filteredPayments = filterPaymentsByDate(payments);
-  const filteredExpenses = dateFilterMode === 'all' ? expenses : expenses.filter(ex => {
-    const pdate = toEnglishDigits(ex.pay_date_jalali || ex.expense_date || '');
-    if (!pdate) return false;
-    if (dateFilterMode === 'this_month') return pdate.startsWith(currentJalaliYearMonth());
-    if (dateFilterMode === 'custom' && customStartDate && customEndDate) {
-      return pdate >= toEnglishDigits(customStartDate) && pdate <= toEnglishDigits(customEndDate);
-    }
-    return true;
-  });
+  const filteredPayments = payments.filter(p => inPeriod(p.pay_date_jalali));
+  const filteredExpenses = expenses.filter(ex => inPeriod(ex.pay_date_jalali || ex.expense_date));
 
   /* Totals */
   const totalTuition     = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
@@ -144,11 +141,9 @@ export default function AccountingDashboard({
   monthNames.forEach(m => { monthlyMap[m] = { income: 0, expense: 0 }; });
 
   const monthFromJalali = (raw?: string): string | null => {
-    const d = toEnglishDigits(raw || '');
-    const m = d.match(/\d{4}\/(\d{1,2})/);
+    const m = normJalali(raw).match(/^\d{4}\/(\d{2})/);
     if (!m) return null;
-    const idx = Math.max(1, Math.min(12, parseInt(m[1], 10))) - 1;
-    return monthNames[idx];
+    return monthNames[Math.max(1, Math.min(12, parseInt(m[1], 10))) - 1];
   };
   filteredPayments.forEach(p => {
     const key = monthFromJalali(p.pay_date_jalali);
@@ -189,17 +184,17 @@ export default function AccountingDashboard({
         type: 'income' as const,
         title: st ? `شهریه کارآموز: ${st.first_name} ${st.last_name}` : 'دریافتی صندوق',
         amount: p.amount,
-        date: p.pay_date_jalali || '۱۴۰۵/۰۵/۲۸',
-        method: p.pay_method === 'pos' ? 'کارتخوان' : p.pay_method === 'cash' ? 'نقدی' : 'کارت‌به‌کارت',
+        date: normJalali(p.pay_date_jalali) || '—',
+        method: PAY_METHOD_LABELS[p.pay_method || ''] || p.pay_method || 'سایر',
         desc: p.description || 'ثبت قسط شهریه',
       };
     }),
-    ...expenses.map(ex => ({
+    ...filteredExpenses.map(ex => ({
       id: `exp_${ex.id}`,
       type: 'expense' as const,
       title: ex.title,
       amount: ex.amount,
-      date: ex.pay_date_jalali || ex.expense_date || '۱۴۰۵/۰۵/۲۸',
+      date: normJalali(ex.pay_date_jalali || ex.expense_date) || '—',
       method: ex.category || ex.pay_method || 'هزینه جاری',
       desc: ex.description || 'ثبت خروجی صندوق',
     })),
@@ -219,8 +214,8 @@ export default function AccountingDashboard({
       onRefresh();
       setIsExpenseModalOpen(false);
       setExpenseTitle(''); setExpenseAmount(''); setExpenseDesc('');
-    } catch {
-      alert('خطا در ثبت هزینه');
+    } catch (err: any) {
+      alert(err?.message || 'خطا در ثبت هزینه');
     } finally {
       setIsSubmittingExpense(false);
     }

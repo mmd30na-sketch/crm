@@ -133,6 +133,7 @@ export async function saveCourse(course: Course): Promise<Course> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title:         course.title,
+      code:          course.code,
       price:         course.tuition,
       duration_days: course.duration_weeks ? course.duration_weeks * 7 : null,
       is_active:     course.active,
@@ -148,11 +149,13 @@ export async function addCourse(course: Omit<Course, 'id'>): Promise<Course> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title:         course.title,
+      code:          course.code,
       price:         course.tuition,
       duration_days: course.duration_weeks ? course.duration_weeks * 7 : null,
+      is_active:     course.active !== false,
     }),
   });
-  if (!res.ok) throw new Error('Error adding course');
+  if (!res.ok) throw await serverError(res, 'افزودن دوره ناموفق بود.');
   const body = await res.json();
   return { ...course, id: body.insertId ?? body.id ?? Date.now() };
 }
@@ -201,7 +204,7 @@ export async function createStudent(body: {
   father_name?: string | null;
   birth_date_jalali?: string | null;
   address?: string | null;
-}): Promise<{ status: string; student: Student }> {
+}): Promise<{ status: string; student: Student; already_exists?: boolean }> {
   const res = await apiFetch(`/students`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -212,7 +215,13 @@ export async function createStudent(body: {
     throw new Error(err.error ?? 'Error creating student');
   }
   const data = await res.json();
-  return { status: 'success', student: normaliseStudent(data.student ?? data) };
+  return { status: 'success', student: normaliseStudent(data.student ?? data), already_exists: !!data.already_exists };
+}
+
+/** The message the server sent for a failed request (the API answers { error } in Persian). */
+async function serverError(res: Response, fallback: string): Promise<Error> {
+  const body = await res.json().catch(() => ({}));
+  return new Error(body?.error || fallback);
 }
 
 export async function updateStudent(student: Student): Promise<Student> {
@@ -221,14 +230,14 @@ export async function updateStudent(student: Student): Promise<Student> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(student),
   });
-  if (!res.ok) throw new Error('Error updating student');
+  if (!res.ok) throw await serverError(res, 'ذخیره تغییرات ناموفق بود.');
   const data = await res.json();
   return normaliseStudent(data.student ?? data);
 }
 
 export async function deleteStudentCascade(studentId: number): Promise<{ success: boolean }> {
   const res = await apiFetch(`/students/${studentId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Error deleting student');
+  if (!res.ok) throw await serverError(res, 'حذف پرونده ناموفق بود.');
   return res.json();
 }
 
@@ -595,9 +604,12 @@ export async function uploadEnrollmentReceipt(
 export async function fetchGatewaySettings(): Promise<{
   sms_provider: string;
   sms_api_key: string;
+  sms_api_key_set?: boolean;
   sms_sender_line: string;
   sms_auto_register: boolean;
+  sms_auto_exam?: boolean;
   rubika_bot_token: string;
+  rubika_bot_token_set?: boolean;
   rubika_channel_id: string;
   rubika_active: boolean;
 }> {
@@ -612,6 +624,7 @@ export async function saveGatewaySettings(settings: {
   sms_api_key?: string;
   sms_sender_line?: string;
   sms_auto_register?: boolean;
+  sms_auto_exam?: boolean;
   rubika_bot_token?: string;
   rubika_channel_id?: string;
   rubika_active?: boolean;
@@ -621,7 +634,7 @@ export async function saveGatewaySettings(settings: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
   });
-  if (!res.ok) throw new Error('Error saving gateway settings');
+  if (!res.ok) throw await serverError(res, 'ذخیره تنظیمات ناموفق بود.');
   return res.json();
 }
 
@@ -630,7 +643,8 @@ export async function sendMessengerMessage(body: {
   recipient: string;
   messageText: string;
   templateTitle?: string;
-}): Promise<{ success: boolean; result: any }> {
+  student_id?: number | string;
+}): Promise<{ success: boolean; status: string; message: string; message_id?: number; tracking_id?: string }> {
   const res = await apiFetch(`/messenger/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -640,9 +654,33 @@ export async function sendMessengerMessage(body: {
       message: body.messageText,
       messageText: body.messageText,
       templateTitle: body.templateTitle,
+      student_id: body.student_id,
     }),
   });
-  if (!res.ok) throw new Error('Error sending messenger message');
+  if (!res.ok) throw await serverError(res, 'ارسال پیام ناموفق بود.');
+  return res.json();
+}
+
+export type DashboardNotes = { tasks: any[]; events: any[] };
+
+export async function fetchDashboardNotes(): Promise<DashboardNotes> {
+  const res = await apiFetch(`/dashboard-notes`);
+  if (!res.ok) throw new Error('Error fetching dashboard notes');
+  return res.json();
+}
+
+export async function saveDashboardNotes(notes: DashboardNotes): Promise<void> {
+  const res = await apiFetch(`/dashboard-notes`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(notes),
+  });
+  if (!res.ok) throw new Error('Error saving dashboard notes');
+}
+
+export async function fetchHealth(): Promise<{ ok: boolean; db: string }> {
+  const res = await fetch(`${API_BASE}/health`);
+  if (!res.ok) throw new Error('health check failed');
   return res.json();
 }
 

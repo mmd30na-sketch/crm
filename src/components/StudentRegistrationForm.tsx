@@ -25,6 +25,7 @@ import {
 import { Course, Student, Enrollment, WebsiteRegistration } from '../types';
 import * as api from '../api/client';
 import { checkScanner, scanWithScanner, ScannerState } from '../api/scanner';
+import { drawContractPage } from '../utils/pdf';
 import { jsPDF } from 'jspdf';
 
 interface StudentRegistrationFormProps {
@@ -277,7 +278,8 @@ export default function StudentRegistrationForm({
   const [isPortrait, setIsPortrait] = useState(false);
 
   /* Course & Payment */
-  const [selectedCourseId, setSelectedCourseId] = useState<number>(courses[0]?.id || 1);
+  const activeCourses = courses.filter(c => c.active !== false);
+  const [selectedCourseId, setSelectedCourseId] = useState<number>((courses.find(c => c.active !== false) || courses[0])?.id || 1);
   const [signupDate, setSignupDate] = useState(() => {
     const d = new Date();
     return d.toLocaleDateString('fa-IR-u-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
@@ -295,6 +297,7 @@ export default function StudentRegistrationForm({
   const [stepError,         setStepError]         = useState<string | null>(null);
   const [ocrError,          setOcrError]          = useState<string | null>(null);
   const [ocrReady,          setOcrReady]          = useState<boolean | null>(null);
+  const [existingNotice,    setExistingNotice]    = useState<string | null>(null);
   const [scannerState,      setScannerState]      = useState<ScannerState>('unknown');
   const [isScanning,        setIsScanning]        = useState(false);
 
@@ -320,8 +323,8 @@ export default function StudentRegistrationForm({
 
   // Courses may arrive after mount; fall back to the first one if the selection is unknown.
   useEffect(() => {
-    if (courses.length > 0 && !courses.some(c => c.id === selectedCourseId)) {
-      setSelectedCourseId(courses[0].id);
+    if (activeCourses.length > 0 && !activeCourses.some(c => c.id === selectedCourseId)) {
+      setSelectedCourseId(activeCourses[0].id);
     }
   }, [courses, selectedCourseId]);
 
@@ -521,6 +524,7 @@ export default function StudentRegistrationForm({
         canvas.height = 1754;
         const ctx = canvas.getContext('2d');
         if (!ctx) return '';
+        ctx.direction = 'rtl';
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, 1240, 1754);
         renderContent(ctx);
@@ -640,55 +644,17 @@ export default function StudentRegistrationForm({
         doc.addImage(p2Img, 'JPEG', 0, 0, 210, 297);
       }
 
-      // Page 3: Contract
+      // Page 3: official contract / tuition receipt
       const p3Img = renderPage((ctx) => {
-        ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 6;
-        ctx.strokeRect(40, 40, 1160, 1674);
-
-        ctx.fillStyle = '#f1f5f9';
-        ctx.fillRect(43, 43, 1154, 140);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 34px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText('قرارداد ثبت نام دوره آموزشی', 620, 135);
-
-        ctx.fillStyle = '#0f172a';
-        ctx.textAlign = 'right';
-        ctx.font = 'bold 24px Tahoma';
-        ctx.fillText(`تاریخ قرارداد: ${today}`, 1120, 250);
-        ctx.fillText(`شماره دوره / کلاس: ${courseNumber || enrollmentId}`, 1120, 300);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`نام کارآموز: ${studentObj.first_name} ${studentObj.last_name}`, 1120, 380);
-        ctx.fillText(`شماره ملی: ${studentObj.national_code}`, 1120, 430);
-        ctx.fillText(`موضوع دوره: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 480);
-        ctx.fillText(`مبلغ قرارداد: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 530);
-
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(60, 590);
-        ctx.lineTo(1180, 590);
-        ctx.stroke();
-
-        ctx.fillStyle = '#334155';
-        ctx.font = '20px Tahoma';
-        const terms = [
-          '۱. کارآموز متعهد است ضوابط و مقررات آموزشی و انضباطی آموزشگاه را رعایت فرماید.',
-          '۲. حضور به موقع در کلاس های نظری و مهارت عملی الزامی می باشد.',
-          '۳. تسویه حساب کامل قبل از معرفی به آزمون پایانی دوره الزامی است.',
-          '۴. آموزشگاه هیچگونه مسئولیتی در قبال مدارک و اشیاء مفقودی هنرجویان ندارد.'
-        ];
-        terms.forEach((line, idx) => {
-          ctx.fillText(line, 1120, 660 + idx * 55);
+        drawContractPage(ctx, {
+          today,
+          courseNumber,
+          enrollmentId,
+          studentName: `${studentObj.first_name} ${studentObj.last_name}`.trim(),
+          nationalCode: studentObj.national_code,
+          courseTitle: courseObj?.title || '',
+          paid,
         });
-
-        ctx.font = 'bold 22px Tahoma';
-        ctx.fillText('امضاء و اثر انگشت کارآموز:', 1100, 1400);
-        ctx.textAlign = 'left';
-        ctx.fillText('مهر و امضاء امور ثبت نام مدیریت آموزشگاه:', 150, 1400);
       });
       if (p3Img) {
         doc.addPage();
@@ -714,7 +680,7 @@ export default function StudentRegistrationForm({
     if (nationalCodeError || phoneError) {
       setStepError('خطاهای اعتبارسنجی را برطرف کنید.'); return;
     }
-    if (!courses.some(c => c.id === selectedCourseId)) {
+    if (!activeCourses.some(c => c.id === selectedCourseId)) {
       setStepError('دوره آموزشی را انتخاب کنید.'); return;
     }
     if (!courseNumber || courseNumber <= 0) {
@@ -741,6 +707,20 @@ export default function StudentRegistrationForm({
         address,
       });
       let studentObj = studentRes.student;
+      if (studentRes.already_exists) {
+        // Same national code = same person registering again: keep their file, refresh the contact details just typed.
+        try {
+          studentObj = await api.updateStudent({
+            ...studentObj,
+            phone_number: phoneNumber || studentObj.phone_number,
+            address: address || studentObj.address,
+            birth_date_jalali: birthDate || studentObj.birth_date_jalali,
+          });
+        } catch (updErr) { console.warn('Could not refresh existing student details:', updErr); }
+        setExistingNotice('این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+      } else {
+        setExistingNotice(null);
+      }
       setCreatedStudent(studentObj);
       if (idCardFile || personalPhotoFile) {
         try {
@@ -810,7 +790,7 @@ export default function StudentRegistrationForm({
     setPersonalPhotoFile(null); setPersonalPhotoPreview(null);
     setPayAmount(0); setPayDesc(''); setPaymentType('full'); setHasDiscount(false); setDiscountAmount(0);
     setCreatedStudent(null); setCreatedEnrollmentId(null); setPdfPath(null);
-    setOcrSuccess(false); setOcrError(null); setStepError(null); setIsSuccess(false);
+    setOcrSuccess(false); setOcrError(null); setStepError(null); setIsSuccess(false); setExistingNotice(null);
     courseNumberTouched.current = false;
     setCourseNumber(Math.max(currentMax, courseNumber));
     setShowNewCoursePrompt(false);
@@ -834,6 +814,7 @@ export default function StudentRegistrationForm({
               <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
                 پرونده کارآموز ایجاد شد و رسید PDF تولید گردید.
               </p>
+              {existingNotice && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2 max-w-xs mx-auto">{existingNotice}</p>}
             </div>
 
             <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 text-right space-y-2 max-w-xs mx-auto">
@@ -1098,7 +1079,7 @@ export default function StudentRegistrationForm({
                       <BookOpen className="w-5 h-5 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <select value={selectedCourseId} onChange={e => setSelectedCourseId(+e.target.value)}
                         className="w-full min-h-[52px] pr-11 pl-4 text-sm border border-slate-200 rounded-2xl focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 focus:ring-offset-1 transition-all shadow-sm appearance-none bg-white font-medium cursor-pointer">
-                        {courses.map(c => (
+                        {activeCourses.map(c => (
                           <option key={c.id} value={c.id}>{c.title}</option>
                         ))}
                       </select>

@@ -13,69 +13,24 @@ import * as chabokan from './mysql-socks';
 dotenv.config({ path: '.env.local' });
 dotenv.config(); // fallback to .env
 
-import { exec } from 'child_process';
 
 // ─────────────────────────────────────────────────────────────
 // RUBIKA INTEGRATION (USER ACCOUNT / SELF-BOT & BOT API)
 // ─────────────────────────────────────────────────────────────
 const RUBIKA_BOT_TOKEN = process.env.RUBIKA_BOT_TOKEN || '';
-const RUBIKA_AUTH_TOKEN = process.env.RUBIKA_AUTH_TOKEN || process.env.RUBIKA_USER_HASH || '';
-
-// 1. Send via Personal User Account (Userbot / Hash ID)
-function sendRubikaUserAccountMessage(target: string, text: string): Promise<any> {
-  return new Promise((resolve) => {
-    const tokenFile = path.join(process.cwd(), 'rubika_user_token.json');
-    let authToken = RUBIKA_AUTH_TOKEN;
-
-    if (!authToken && fs.existsSync(tokenFile)) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(tokenFile, 'utf-8'));
-        authToken = parsed.auth || parsed.auth_token || '';
-      } catch {}
-    }
-
-    if (!authToken) {
-      return resolve({ ok: false, error: 'RUBIKA_AUTH_TOKEN یا اکانت شخصی فعال روبیکا یافت نشد.' });
-    }
-
-    const pyScript = `
-import asyncio, json
-try:
-    from rubpy import Client
-    async def run():
-        async with Client(name="rubika_user_session", auth="${authToken}") as client:
-            res = await client.send_message("${target}", """${text.replace(/"/g, '\\"')}""")
-            print(json.dumps({"ok": True, "res": str(res)}))
-    asyncio.run(run())
-except Exception as e:
-    print(json.dumps({"ok": False, "error": str(e)}))
-`;
-
-    const pyCmd = process.platform === 'win32' ? 'py' : 'python3';
-    exec(`${pyCmd} -c "${pyScript.replace(/\n/g, ' ')}"`, { timeout: 15000 }, (err, stdout) => {
-      if (err || !stdout) {
-        return resolve({ ok: false, error: err ? err.message : 'No output from python script' });
-      }
-      try {
-        resolve(JSON.parse(stdout.trim()));
-      } catch {
-        resolve({ ok: true, raw: stdout });
-      }
-    });
-  });
-}
 
 // 2. Send via Official Bot API
 function sendRubikaMessage(chatId: string, text: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    if (!RUBIKA_BOT_TOKEN) {
+    const botToken = getGateways().rubika_bot_token;
+    if (!botToken) {
       return reject(new Error('RUBIKA_BOT_TOKEN تنظیم نشده است.'));
     }
     const body = JSON.stringify({ chat_id: chatId, text });
     const options = {
       hostname: 'botapi.rubika.ir',
       port: 443,
-      path: `/v3/${RUBIKA_BOT_TOKEN}/sendMessage`,
+      path: `/v3/${botToken}/sendMessage`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -97,6 +52,8 @@ function sendRubikaMessage(chatId: string, text: string): Promise<any> {
 
 const app = express();
 app.disable('x-powered-by');
+// Behind nginx/Cloudflare: use the real client IP for rate limiting.
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000);
 
 // Set up storage directory for uploads
@@ -354,26 +311,42 @@ const initialDb: DatabaseSchema = {
 };
 
 // Helper function to read/write DB
-function readDb(): typeof initialDb {
-  try {
-    if (fs.existsSync(DB_PATH)) {
-      const data = fs.readFileSync(DB_PATH, 'utf8');
-      const parsed = JSON.parse(data);
-      if (!Array.isArray(parsed.staff_users)) parsed.staff_users = [];
-      return parsed;
-    }
-  } catch (err) {
-    console.error('Error reading database file, using in-memory store instead.', err);
-  }
-  return initialDb;
+function parseDbFile(file: string): typeof initialDb {
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!Array.isArray(parsed.staff_users)) parsed.staff_users = [];
+  return parsed;
 }
 
-function writeDb(data: typeof initialDb) {
+let corruptCopySaved = false;
+function readDb(): typeof initialDb {
+  if (!fs.existsSync(DB_PATH)) return initialDb;
   try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
+    return parseDbFile(DB_PATH);
   } catch (err) {
-    console.error('Error writing to database file.', err);
+    console.error('db_store.json is unreadable:', err);
+    if (!corruptCopySaved) {
+      corruptCopySaved = true;
+      try { fs.copyFileSync(DB_PATH, `${DB_PATH}.corrupt-${Date.now()}`); } catch {}
+    }
+    // Never fall back to the demo data: it would overwrite the real records on the next write.
+    try {
+      if (fs.existsSync(`${DB_PATH}.bak`)) {
+        console.warn('Using db_store.json.bak');
+        return parseDbFile(`${DB_PATH}.bak`);
+      }
+    } catch {}
+    throw new Error('فایل پایگاه‌داده محلی (db_store.json) خراب است؛ برای جلوگیری از از دست رفتن اطلاعات عملیات متوقف شد.');
   }
+}
+
+/** Atomic write (temp file + rename) that keeps the previous version as .bak. Throws on failure. */
+function writeDb(data: typeof initialDb) {
+  const tmp = `${DB_PATH}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+  if (fs.existsSync(DB_PATH)) {
+    try { fs.copyFileSync(DB_PATH, `${DB_PATH}.bak`); } catch {}
+  }
+  fs.renameSync(tmp, DB_PATH);
 }
 
 // Seed if not exists
@@ -755,35 +728,47 @@ if (process.env.GEMINI_API_KEY) {
 // ------------------- MESSENGER & ACCESS IMPORT ENDPOINTS -------------------
 
 // ── Rubika Webhook: دریافت پیام‌های ورودی و ثبت chat_id هر کاربر ──
+const MAX_STORED_MESSAGES = 2000;
+function webhookAuthorized(req: express.Request): boolean {
+  const secret = process.env.MESSENGER_WEBHOOK_SECRET || '';
+  if (!secret) return false;
+  const given = Buffer.from(String(req.headers['x-webhook-secret'] || ''));
+  const expected = Buffer.from(secret);
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
 app.post('/api/messenger/webhook', (req, res) => {
-  const { sender, message, channel, chat_id, sender_phone } = req.body;
-  console.log(`[Messenger Webhook] دریافت پیام از ${sender} via ${channel || 'rubika'}: ${message}`);
+  if (process.env.MESSENGER_WEBHOOK_SECRET && !webhookAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const { sender, message, channel, chat_id, sender_phone } = req.body || {};
+  if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required' });
 
   const db = readDb();
   if (!(db as any).messages) (db as any).messages = [];
 
-  // ثبت chat_id روبیکا روی پروفایل دانش‌آموز (از طریق شماره تلفن)
-  if (channel === 'rubika' && chat_id && sender_phone) {
+  // The chat_id <-> student link decides who receives that student's messages, so it is only
+  // accepted from a caller that knows the shared secret (MESSENGER_WEBHOOK_SECRET).
+  if (channel === 'rubika' && chat_id && sender_phone && webhookAuthorized(req)) {
     const phone = String(sender_phone).replace(/^\+98/, '0');
     const student = db.students.find((s: any) =>
       String(s.phone_number || '').replace(/^\+98/, '0') === phone
     );
     if (student) {
-      (student as any).rubika_chat_id = chat_id;
-      writeDb(db);
-      console.log(`[Rubika] chat_id ذخیره شد برای ${student.first_name} ${student.last_name}: ${chat_id}`);
+      (student as any).rubika_chat_id = String(chat_id).slice(0, 100);
+      console.log(`[Rubika] chat_id ذخیره شد برای ${student.first_name} ${student.last_name}`);
     }
   }
 
-  (db as any).messages.push({
-    id: Date.now(),
-    sender,
-    channel: channel || 'rubika',
-    chat_id,
-    sender_phone,
-    message,
+  const messages = (db as any).messages as any[];
+  messages.push({
+    id: Date.now() * 1000 + Math.floor(Math.random() * 1000),
+    sender: sanitizeString(sender, 100),
+    channel: sanitizeString(channel, 20) || 'rubika',
+    chat_id: sanitizeString(chat_id, 100),
+    sender_phone: sanitizeString(sender_phone, 20),
+    message: sanitizeString(message, 2000),
     received_at: new Date().toISOString(),
   });
+  if (messages.length > MAX_STORED_MESSAGES) messages.splice(0, messages.length - MAX_STORED_MESSAGES);
   writeDb(db);
 
   res.json({ success: true, status: 'RECEIVED_AND_STORED' });
@@ -795,83 +780,124 @@ app.get('/api/messenger/messages', (req, res) => {
   res.json({ success: true, messages: (db as any).messages || [] });
 });
 
-// ── POST: ارسال پیام از طریق روبیکا یا پیامک ──
-app.post('/api/messenger/send', async (req, res) => {
-  const { recipient, channel, student_id } = req.body;
-  const message = req.body.message || req.body.messageText;
-  if (!recipient || !message) {
-    return res.status(400).json({ error: 'گیرنده و متن پیام الزامی است.' });
-  }
-
-  const trackingId = `MSG-${Date.now()}`;
-  const db = readDb();
-  if (!(db as any).outbox) (db as any).outbox = [];
-
-  const logEntry: any = {
-    id: trackingId,
-    recipient,
-    channel: channel || 'sms',
-    message,
-    student_id,
-    sent_at: new Date().toISOString(),
-    status: 'pending',
+// ── Gateway settings (stored on the server; secrets are never sent back to the browser) ──
+type Gateways = {
+  sms_provider: string; sms_api_key: string; sms_sender_line: string;
+  sms_auto_register: boolean; sms_auto_exam: boolean;
+  rubika_bot_token: string; rubika_channel_id: string; rubika_active: boolean;
+};
+function getGateways(): Gateways {
+  let g: any = {};
+  try { g = (readDb().settings as any)?.gateways || {}; } catch { /* unreadable DB: fall back to env */ }
+  return {
+    sms_provider: g.sms_provider || process.env.SMS_PROVIDER || 'ippanel',
+    sms_api_key: g.sms_api_key || process.env.SMS_API_KEY || '',
+    sms_sender_line: g.sms_sender_line || process.env.SMS_SENDER_LINE || '',
+    sms_auto_register: g.sms_auto_register !== false,
+    sms_auto_exam: g.sms_auto_exam !== false,
+    rubika_bot_token: g.rubika_bot_token || RUBIKA_BOT_TOKEN,
+    rubika_channel_id: g.rubika_channel_id || '',
+    rubika_active: g.rubika_active !== false,
   };
+}
+
+const normalizeMobile = (v: unknown) => toLatinDigits(String(v ?? '')).replace(/[\s-]/g, '').replace(/^\+98/, '0').replace(/^98(?=9\d{9}$)/, '0');
+
+/** Sends one SMS through the configured provider (sms.ir or IPPanel). */
+async function sendSmsMessage(mobile: string, text: string): Promise<{ ok: boolean; status: 'sent' | 'not_configured' | 'failed'; detail?: string }> {
+  const g = getGateways();
+  if (!g.sms_api_key || !g.sms_sender_line) {
+    return { ok: false, status: 'not_configured', detail: 'درگاه پیامک تنظیم نشده است (کلید API و شماره خط را در تنظیمات وارد کنید).' };
+  }
+  try {
+    if (g.sms_provider === 'smsir') {
+      const r = await fetch('https://api.sms.ir/v1/send/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-API-KEY': g.sms_api_key },
+        body: JSON.stringify({ lineNumber: Number(g.sms_sender_line), messageText: text, mobiles: [mobile] }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const data: any = await r.json().catch(() => ({}));
+      return data?.status === 1 ? { ok: true, status: 'sent' } : { ok: false, status: 'failed', detail: data?.message || `HTTP ${r.status}` };
+    }
+    // IPPanel (edge API)
+    const r = await fetch('https://edge.ippanel.com/v1/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: g.sms_api_key },
+      body: JSON.stringify({
+        sending_type: 'webservice',
+        from_number: g.sms_sender_line.startsWith('+') ? g.sms_sender_line : `+98${g.sms_sender_line.replace(/^0/, '')}`,
+        message: text,
+        params: { recipients: [`+98${mobile.slice(1)}`] },
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data: any = await r.json().catch(() => ({}));
+    return data?.meta?.status === true || r.ok && data?.meta?.status !== false
+      ? { ok: true, status: 'sent' }
+      : { ok: false, status: 'failed', detail: data?.meta?.message || `HTTP ${r.status}` };
+  } catch (err: any) {
+    return { ok: false, status: 'failed', detail: err?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : (err?.message || 'خطا در اتصال به سرویس پیامک') };
+  }
+}
+
+/** Delivers a message and stores it (outbox + chat history). The DB is re-read after the network call. */
+async function deliverMessage(opts: { channel: string; recipient: string; message: string; studentId?: unknown }) {
+  const { channel, message } = opts;
+  const phone = normalizeMobile(opts.recipient);
+  let status: string; let note = '';
+  let chatId: string | null = null;
 
   if (channel === 'rubika') {
-    // پیدا کردن chat_id دانش‌آموز از دیتابیس
-    let chatId: string | null = null;
-
-    if (student_id) {
-      const student = db.students.find((s: any) => String(s.id) === String(student_id));
-      chatId = (student as any)?.rubika_chat_id || null;
-    }
-
-    // اگه شماره تلفن recipient یه chat_id ذخیره‌شده داشت
-    if (!chatId) {
-      const phone = String(recipient).replace(/^\+98/, '0');
-      const student = db.students.find((s: any) =>
-        String(s.phone_number || '').replace(/^\+98/, '0') === phone
-      );
-      chatId = (student as any)?.rubika_chat_id || null;
-    }
-
-    if (chatId) {
+    const snapshot = readDb();
+    const student = opts.studentId
+      ? snapshot.students.find((s: any) => String(s.id) === String(opts.studentId))
+      : snapshot.students.find((s: any) => normalizeMobile(s.phone_number) === phone);
+    chatId = (student as any)?.rubika_chat_id || null;
+    if (!getGateways().rubika_bot_token) { status = 'not_configured'; note = 'توکن ربات روبیکا تنظیم نشده است.'; }
+    else if (!chatId) { status = 'awaiting_user_init'; note = 'کارآموز هنوز /start نزده؛ پیام در صف ماند.'; }
+    else {
       try {
-        const rubikaRes = await sendRubikaMessage(chatId, message);
-        logEntry.status = rubikaRes?.ok ? 'sent' : 'api_error';
-        logEntry.rubika_response = rubikaRes;
-        console.log(`[Rubika] پیام به ${chatId} ارسال شد:`, rubikaRes);
-      } catch (err: any) {
-        logEntry.status = 'failed';
-        logEntry.error = err.message;
-        console.error('[Rubika] خطا در ارسال:', err.message);
-      }
-    } else {
-      // chat_id ندارد — در صف pending می‌مونه تا کاربر اول پیام بده
-      logEntry.status = 'awaiting_user_init';
-      logEntry.note = 'کاربر هنوز با ربات شروع به چت نکرده. پس از ارسال /start توسط کارآموز، پیام ارسال خواهد شد.';
-      console.warn(`[Rubika] chat_id برای ${recipient} یافت نشد. پیام در صف pending.`);
+        const r = await sendRubikaMessage(chatId, message);
+        status = r?.ok || r?.status === 'OK' ? 'sent' : 'failed';
+        if (status === 'failed') note = 'ربات روبیکا پیام را نپذیرفت.';
+      } catch (err: any) { status = 'failed'; note = err.message; }
     }
   } else {
-    // SMS یا سایر کانال‌ها
-    logEntry.status = 'queued_sms';
-    console.log(`[SMS] پیامک به ${recipient}: ${message}`);
+    const r = await sendSmsMessage(phone, message);
+    status = r.status; note = r.detail || '';
   }
 
-  (db as any).outbox.push(logEntry);
+  const db = readDb(); // fresh copy: other requests may have written while we were waiting on the network
+  const now = Date.now();
+  const messageId = now * 1000 + Math.floor(Math.random() * 1000);
+  const outbox = ((db as any).outbox ||= []) as any[];
+  outbox.push({ id: `MSG-${now}`, recipient: phone, channel, message, student_id: opts.studentId, sent_at: new Date(now).toISOString(), status, note });
+  if (outbox.length > MAX_STORED_MESSAGES) outbox.splice(0, outbox.length - MAX_STORED_MESSAGES);
+  const messages = ((db as any).messages ||= []) as any[];
+  messages.push({ id: messageId, sender: 'admin', channel, sender_phone: phone, message, status, received_at: new Date(now).toISOString() });
+  if (messages.length > MAX_STORED_MESSAGES) messages.splice(0, messages.length - MAX_STORED_MESSAGES);
   writeDb(db);
+  return { status, note, messageId, trackingId: `MSG-${now}` };
+}
 
-  const isRubikaSuccess = logEntry.status === 'sent';
-  res.json({
-    success: true,
-    tracking_id: trackingId,
-    status: logEntry.status,
-    message: isRubikaSuccess
-      ? `پیام روبیکا با موفقیت ارسال شد ✅`
-      : logEntry.status === 'awaiting_user_init'
-        ? `⚠️ کارآموز هنوز /start نزده. پیام در صف ماند.`
-        : `پیام در صف ارسال ${channel === 'rubika' ? 'روبیکا' : 'پیامک'} قرار گرفت.`,
-  });
+// ── POST: ارسال پیام از طریق روبیکا یا پیامک ──
+app.post('/api/messenger/send', async (req, res) => {
+  const channel = sanitizeString(req.body?.channel, 20) || 'sms';
+  const message = sanitizeString(req.body?.message ?? req.body?.messageText, 1000);
+  const phone = normalizeMobile(req.body?.recipient);
+  if (!phone || !message) return res.status(400).json({ error: 'گیرنده و متن پیام الزامی است.' });
+  if (!/^09\d{9}$/.test(phone)) return res.status(400).json({ error: 'شماره موبایل گیرنده معتبر نیست.' });
+  try {
+    const r = await deliverMessage({ channel, recipient: phone, message, studentId: req.body?.student_id });
+    const labels: Record<string, string> = {
+      sent: 'پیام ارسال شد.',
+      awaiting_user_init: 'کارآموز هنوز /start نزده؛ پیام در صف ماند.',
+      not_configured: r.note || 'درگاه ارسال تنظیم نشده است.',
+      failed: `ارسال ناموفق بود${r.note ? `: ${r.note}` : '.'}`,
+    };
+    res.json({ success: r.status === 'sent', status: r.status, tracking_id: r.trackingId, message_id: r.messageId, message: labels[r.status] || r.status });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // Access Database Trigger Endpoint
@@ -895,6 +921,18 @@ function toLatinDigits(v: string): string {
     .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
 }
+
+/** "۱۴۰۵/۷/۱۶" or "1405-7-16" -> "1405/07/16" (Latin digits, zero padded). */
+function normalizeJalaliDate(v: unknown): string {
+  const s = toLatinDigits(String(v ?? '')).trim();
+  const m = s.match(/^(\d{4})\D+(\d{1,2})\D+(\d{1,2})$/);
+  return m ? `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}` : s;
+}
+function jalaliNow(): string {
+  return normalizeJalaliDate(new Date().toLocaleDateString('fa-IR'));
+}
+const coursePrice = (c: any): number => Number(c?.price ?? c?.tuition ?? 0);
+const courseIsActive = (c: any): boolean => (c?.is_active !== undefined ? !!c.is_active : c?.active !== false);
 
 function isValidIranNationalCode(code: string): boolean {
   if (!/^\d{10}$/.test(code) || /^(\d)\1{9}$/.test(code)) return false;
@@ -929,9 +967,11 @@ function parseStudentInput(body: any, partial: boolean): { data: StudentFields; 
     if (!/^09\d{9}$/.test(phone)) return { data, error: 'شماره همراه باید ۱۱ رقم و با ۰۹ شروع شود.' };
     data.phone_number = phone;
   } else if (!partial) return { data, error: 'شماره همراه الزامی است.' };
-  if (sent('father_name')) data.father_name = sanitizeString(b.father_name, 80);
-  if (sent('birth_date_jalali')) data.birth_date_jalali = sanitizeString(b.birth_date_jalali, 20);
-  if (sent('address')) data.address = sanitizeString(b.address, 400);
+  // Optional fields: an explicitly sent empty value clears the field.
+  const present = (k: string) => b[k] !== undefined && b[k] !== null;
+  if (present('father_name')) data.father_name = sanitizeString(b.father_name, 80);
+  if (present('birth_date_jalali')) data.birth_date_jalali = sanitizeString(b.birth_date_jalali, 20);
+  if (present('address')) data.address = sanitizeString(b.address, 400);
   return { data };
 }
 
@@ -1120,6 +1160,22 @@ app.post('/api/students/:id/photos', uploadStudentMedia.fields([
   res.json(db.students[index]);
 });
 
+/** Welcome SMS after registration: only when the toggle is on and an SMS gateway is configured. */
+async function notifyRegistration(student: any, course: any) {
+  try {
+    const g = getGateways();
+    if (!student || !g.sms_auto_register || !g.sms_api_key || !g.sms_sender_line) return;
+    const phone = normalizeMobile(student.phone_number);
+    if (!/^09\d{9}$/.test(phone)) return;
+    let academy = 'آموزشگاه';
+    try { academy = (readDb().settings as any)?.academy_name || academy; } catch {}
+    await deliverMessage({
+      channel: 'sms', recipient: phone, studentId: student.id,
+      message: `${student.first_name} ${student.last_name} عزیز، ثبت‌نام شما در دوره «${course?.title || ''}» با موفقیت انجام شد.\n${academy}`,
+    });
+  } catch (err: any) { console.warn('Registration SMS failed:', err?.message || err); }
+}
+
 // 6. POST enrollment
 app.post('/api/enrollments', async (req, res) => {
   try {
@@ -1132,9 +1188,10 @@ app.post('/api/enrollments', async (req, res) => {
     if (!students.some(s => Number(s.id) === studentId)) return res.status(404).json({ error: 'کارآموز یافت نشد.' });
     const course = courses.find(c => Number(c.id) === courseId);
     if (!course) return res.status(404).json({ error: 'دوره آموزشی یافت نشد.' });
+    if (!courseIsActive(course)) return res.status(409).json({ error: 'این دوره غیرفعال است و ثبت‌نام جدید ندارد.' });
 
     const hasPrice = b.final_price !== undefined && b.final_price !== null && b.final_price !== '';
-    const finalPrice = hasPrice ? Number(b.final_price) : Number(course.tuition || 0);
+    const finalPrice = hasPrice ? Number(b.final_price) : coursePrice(course);
     if (!Number.isFinite(finalPrice) || finalPrice < 0) return res.status(400).json({ error: 'شهریه نامعتبر است.' });
 
     const numbers = enrollments.map(e => Number(e.course_number)).filter(n => Number.isFinite(n) && n > 0);
@@ -1149,11 +1206,13 @@ app.post('/api/enrollments', async (req, res) => {
       return res.status(409).json({ error: 'این کارآموز قبلاً در همین دوره و کلاس ثبت‌نام شده است.' });
     }
 
-    const signupDate = sanitizeString(b.signup_date_jalali, 20) || chabokan.jalaliToday();
+    const signupDate = normalizeJalaliDate(sanitizeString(b.signup_date_jalali, 20)) || jalaliNow();
     if (chabokan.isMysqlEnabled()) {
-      return res.json(await chabokan.insertEnrollment({
+      const created = await chabokan.insertEnrollment({
         ...b, student_id: studentId, course_id: courseId, course_number: courseNumber, final_price: finalPrice, signup_date_jalali: signupDate,
-      }));
+      });
+      void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
+      return res.json(created);
     }
     const db = readDb();
     const newEnrollment = {
@@ -1166,6 +1225,7 @@ app.post('/api/enrollments', async (req, res) => {
     };
     db.enrollments.push(newEnrollment);
     writeDb(db);
+    void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
     res.json(newEnrollment);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -1178,6 +1238,43 @@ app.get('/api/enrollments', async (req, res) => {
 });
 
 // 7. POST payments
+/**
+ * A payment that is not tied to an enrollment is spread over the student's enrollments (oldest first,
+ * up to what is still owed on each) so per-course accounting stays correct.
+ */
+async function allocatePayment(studentId: number, amount: number, linkedEnrollmentId: number | null): Promise<Array<{ enrollmentId: number | null; amount: number }>> {
+  if (linkedEnrollmentId) return [{ enrollmentId: linkedEnrollmentId, amount }];
+  const enrollments = (await loadEnrollments())
+    .filter(e => Number(e.student_id) === studentId)
+    .sort((a, b) => enrollmentId(a) - enrollmentId(b));
+  if (enrollments.length === 0) return [{ enrollmentId: null, amount }];
+
+  const owed = new Map<number, number>();
+  if (chabokan.isMysqlEnabled()) {
+    for (const e of enrollments) owed.set(enrollmentId(e), Math.max(0, Number(e.remaining_debt ?? 0)));
+  } else {
+    const payments = readDb().payments.filter(p => p.student_id === studentId);
+    let unattributed = payments.filter(p => !p.enrollment_id).reduce((a, p) => a + p.amount, 0);
+    for (const e of enrollments) {
+      const id = enrollmentId(e);
+      let rem = (e.final_price || 0) - payments.filter(p => p.enrollment_id === id).reduce((a, p) => a + p.amount, 0);
+      const used = Math.min(unattributed, Math.max(0, rem)); // older payments without a link count against the oldest debt
+      unattributed -= used; rem -= used;
+      owed.set(id, Math.max(0, rem));
+    }
+  }
+  const parts: Array<{ enrollmentId: number | null; amount: number }> = [];
+  let left = amount;
+  for (const e of enrollments) {
+    if (left <= 0) break;
+    const id = enrollmentId(e);
+    const take = Math.min(left, owed.get(id) || 0);
+    if (take > 0) { parts.push({ enrollmentId: id, amount: take }); left -= take; }
+  }
+  if (left > 0) parts.push({ enrollmentId: parts.length ? parts[parts.length - 1].enrollmentId : enrollmentId(enrollments[enrollments.length - 1]), amount: left });
+  return parts;
+}
+
 app.post('/api/payments', async (req, res) => {
   try {
     const paymentData = req.body;
@@ -1203,28 +1300,30 @@ app.post('/api/payments', async (req, res) => {
           : 'برای این کارآموز مانده‌ای برای پرداخت وجود ندارد.',
       });
     }
+    const payDate = normalizeJalaliDate(sanitizeString(paymentData.pay_date_jalali, 20)) || jalaliNow();
+    const parts = await allocatePayment(studentId, amount, linkedEnrollmentId);
+
     if (chabokan.isMysqlEnabled()) {
-      return res.json(await chabokan.insertPayment({
-        ...paymentData,
-        student_id: studentId,
-        amount,
-        pay_date_jalali: sanitizeString(paymentData.pay_date_jalali, 20) || new Date().toLocaleDateString('fa-IR'),
-      }));
+      const rows = [];
+      for (const part of parts) {
+        rows.push(await chabokan.insertPayment({ ...paymentData, student_id: studentId, enrollment_id: part.enrollmentId, amount: part.amount, pay_date_jalali: payDate }));
+      }
+      return res.json({ ...rows[0], allocations: rows.length });
     }
     const db = readDb();
-    const newPayment = {
-      id: db.payments.length > 0 ? Math.max(...db.payments.map(p => p.id)) + 1 : 1,
+    const created = parts.map((part, i) => ({
+      id: (db.payments.length > 0 ? Math.max(...db.payments.map(p => p.id)) : 0) + 1 + i,
       student_id: studentId,
-      enrollment_id: paymentData.enrollment_id ? parseInt(paymentData.enrollment_id, 10) : null,
-      amount,
-      pay_date_jalali: sanitizeString(paymentData.pay_date_jalali, 20) || new Date().toLocaleDateString('fa-IR'),
+      enrollment_id: part.enrollmentId,
+      amount: part.amount,
+      pay_date_jalali: payDate,
       pay_method: sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos',
       payment_kind: sanitizeString(paymentData.payment_kind, 40) || 'downpayment',
       description: sanitizeString(paymentData.description ?? paymentData.notes, 400),
-    };
-    db.payments.push(newPayment);
+    }));
+    db.payments.push(...created);
     writeDb(db);
-    res.json(newPayment);
+    res.json({ ...created[0], allocations: created.length });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1475,15 +1574,15 @@ app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nati
 
 // 9. GET/POST receipt settings
 app.get('/api/receipt-settings', (req, res) => {
-  const db = readDb();
-  res.json(db.settings);
+  res.json(publicSettings(readDb().settings));
 });
 
 app.post('/api/receipt-settings', (req, res) => {
   const db = readDb();
-  db.settings = { ...db.settings, ...req.body };
+  const { admin_password_hash, gateways, ...incoming } = req.body || {};
+  db.settings = { ...db.settings, ...incoming };
   writeDb(db);
-  res.json(db.settings);
+  res.json(publicSettings(db.settings));
 });
 
 // 10. GET report templates
@@ -1575,14 +1674,17 @@ app.post('/api/expenses', async (req, res) => {
   }
   try {
   if (chabokan.isMysqlEnabled()) {
-    return res.json(await chabokan.insertExpense({ ...expenseData, title, amount }));
+    return res.json(await chabokan.insertExpense({
+      ...expenseData, title, amount,
+      pay_date_jalali: normalizeJalaliDate(sanitizeString(expenseData.pay_date_jalali ?? expenseData.expenseDate ?? expenseData.expensedate, 20)) || jalaliNow(),
+    }));
   }
   const newExpense = {
     id: db.expenses.length > 0 ? Math.max(...db.expenses.map(ex => ex.id)) + 1 : 1,
     title,
     amount,
     pay_method: sanitizeString(expenseData.pay_method ?? expenseData.category, 80) || 'کارت بانکی',
-    pay_date_jalali: sanitizeString(expenseData.pay_date_jalali ?? expenseData.expenseDate ?? expenseData.expensedate, 20) || new Date().toLocaleDateString('fa-IR'),
+    pay_date_jalali: normalizeJalaliDate(sanitizeString(expenseData.pay_date_jalali ?? expenseData.expenseDate ?? expenseData.expensedate, 20)) || jalaliNow(),
     description: sanitizeString(expenseData.description ?? expenseData.notes, 400),
   };
   db.expenses.push(newExpense);
@@ -1619,15 +1721,19 @@ app.get('/api/messenger/threads', (req, res) => {
   res.json({ success: true, threads: (db as any).threads || [] });
 });
 
+const publicSettings = (settings: any) => {
+  const { admin_password_hash, gateways, ...rest } = settings || {};
+  return rest;
+};
 app.get('/api/settings/academy', (req, res) => {
-  const db = readDb();
-  res.json(db.settings);
+  res.json(publicSettings(readDb().settings));
 });
 app.put('/api/settings/academy', (req, res) => {
   const db = readDb();
-  db.settings = { ...db.settings, ...req.body };
+  const { admin_password_hash, gateways, ...incoming } = req.body || {};
+  db.settings = { ...db.settings, ...incoming };
   writeDb(db);
-  res.json(db.settings);
+  res.json(publicSettings(db.settings));
 });
 app.post('/api/settings/courses', (req, res) => {
   req.url = '/api/courses';
@@ -1642,18 +1748,56 @@ app.post('/api/students/ocr/national-card', (req, res) => {
   (app as any)._router.handle(req, res);
 });
 app.get('/api/settings/gateways', (req, res) => {
+  const g = getGateways();
   res.json({
-    sms_provider: process.env.SMS_PROVIDER || 'ippanel',
+    sms_provider: g.sms_provider,
     sms_api_key: '',
-    sms_sender_line: process.env.SMS_SENDER_LINE || '',
-    sms_auto_register: true,
+    sms_api_key_set: !!g.sms_api_key,
+    sms_sender_line: g.sms_sender_line,
+    sms_auto_register: g.sms_auto_register,
+    sms_auto_exam: g.sms_auto_exam,
     rubika_bot_token: '',
-    rubika_channel_id: '',
-    rubika_active: !!process.env.RUBIKA_BOT_TOKEN,
+    rubika_bot_token_set: !!g.rubika_bot_token,
+    rubika_channel_id: g.rubika_channel_id,
+    rubika_active: g.rubika_active,
   });
 });
 app.post('/api/settings/gateways', (req, res) => {
+  const b = req.body || {};
+  const db = readDb();
+  const current: any = (db.settings as any)?.gateways || {};
+  const next: any = { ...current };
+  if (b.sms_provider !== undefined) next.sms_provider = ['smsir', 'ippanel'].includes(b.sms_provider) ? b.sms_provider : 'ippanel';
+  if (typeof b.sms_api_key === 'string' && b.sms_api_key.trim()) next.sms_api_key = sanitizeString(b.sms_api_key, 200); // blank = keep the saved key
+  if (b.sms_sender_line !== undefined) next.sms_sender_line = sanitizeString(b.sms_sender_line, 30);
+  if (b.sms_auto_register !== undefined) next.sms_auto_register = !!b.sms_auto_register;
+  if (b.sms_auto_exam !== undefined) next.sms_auto_exam = !!b.sms_auto_exam;
+  if (typeof b.rubika_bot_token === 'string' && b.rubika_bot_token.trim()) next.rubika_bot_token = sanitizeString(b.rubika_bot_token, 200);
+  if (b.rubika_channel_id !== undefined) next.rubika_channel_id = sanitizeString(b.rubika_channel_id, 100);
+  if (b.rubika_active !== undefined) next.rubika_active = !!b.rubika_active;
+  db.settings = { ...(db.settings as any), gateways: next };
+  writeDb(db);
   res.json({ success: true });
+});
+
+// Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
+app.get('/api/dashboard-notes', (req, res) => {
+  const d: any = (readDb() as any).dashboard || {};
+  res.json({ tasks: Array.isArray(d.tasks) ? d.tasks : [], events: Array.isArray(d.events) ? d.events : [] });
+});
+app.put('/api/dashboard-notes', (req, res) => {
+  const tasks = (Array.isArray(req.body?.tasks) ? req.body.tasks : []).slice(0, 500).map((t: any) => ({
+    id: Number(t.id) || Date.now(), text: sanitizeString(t.text, 300), completed: !!t.completed,
+    priority: ['low', 'medium', 'high'].includes(t.priority) ? t.priority : 'medium',
+  })).filter((t: any) => t.text);
+  const events = (Array.isArray(req.body?.events) ? req.body.events : []).slice(0, 1000).map((e: any) => ({
+    year: Number(e.year) || null, month: Number(e.month) || null, day: Math.min(31, Math.max(1, Number(e.day) || 1)),
+    title: sanitizeString(e.title, 200), time: sanitizeString(e.time, 10),
+  })).filter((e: any) => e.title);
+  const db = readDb();
+  (db as any).dashboard = { tasks, events };
+  writeDb(db);
+  res.json({ tasks, events });
 });
 
 // JSON errors for bad bodies and rejected uploads (instead of Express' HTML 500 page)

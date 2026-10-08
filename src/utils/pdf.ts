@@ -1,24 +1,24 @@
-import { jsPDF } from 'jspdf';
+/**
+ * Canvas drawing helpers for the printed registration forms (A4 at 150 dpi: 1240 x 1754 px).
+ * The official contract / tuition receipt page is drawn here; the receipt and cardex pages are
+ * drawn inline in StudentRegistrationForm.
+ */
 
-// --- Other functions (Receipt, Cardex, Generate Bundle, HTML2Canvas Imports) ---
-// Note: Normally here would be other imports. I am replacing only the exported functions 
-// that matter for this specific module as designed before.
+export interface ContractPageData {
+  today: string;
+  courseNumber?: number | string | null;
+  enrollmentId?: number | string | null;
+  studentName: string;
+  nationalCode: string;
+  courseTitle: string;
+  /** Amount received so far, in Toman. */
+  paid: number;
+}
 
-export const uploadPDF = async (pdfBlob: Blob, filename: string): Promise<string> => {
-  return "demo_url"; 
-};
-
-export const drawReceiptPage = (ctx: any, data: any) => {
-  // Demo mock for compiler
-};
-
-export const drawCardexPage = (ctx: any, data: any) => {
-  // Demo mock for compiler
-};
-
-export const drawContractPage = (ctx: any, data: any) => {
-  const { today, courseNumber, enrollmentId, studentObj, courseObj } = data || {};
+export const drawContractPage = (ctx: CanvasRenderingContext2D, data: ContractPageData) => {
+  const { today, courseNumber, enrollmentId, studentName, nationalCode, courseTitle, paid } = data;
   ctx.save();
+  ctx.direction = 'rtl';
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, 1240, 1754);
 
@@ -60,8 +60,8 @@ export const drawContractPage = (ctx: any, data: any) => {
   ctx.fillText('شماره پرونده :', 420, 148);
   
   ctx.font = 'bold 24px Tahoma';
-  ctx.fillText((today || '1404/11/2'), 220, 108);
-  ctx.fillText((courseNumber || enrollmentId || '120'), 220, 148);
+  ctx.fillText(today, 220, 108);
+  ctx.fillText(String(courseNumber || enrollmentId || ''), 220, 148);
 
   // Main Title
   ctx.textAlign = 'center';
@@ -85,10 +85,10 @@ export const drawContractPage = (ctx: any, data: any) => {
   ctx.font = 'bold 22px Tahoma';
   ctx.fillText('مشخصات کارآموز :', 1100, boxTop + 45);
 
-  const valName = (studentObj?.first_name || '') + ' ' + (studentObj?.last_name || 'آرمین نجف آبادی');
-  const valNid = studentObj?.national_code || '324-229-3908';
-  const valCourse = courseObj?.title || 'حمل و نقل جاده ای';
-  const valPaid = '4,700,000';
+  const valName = studentName;
+  const valNid = nationalCode;
+  const valCourse = courseTitle;
+  const valPaid = `${paid.toLocaleString('fa-IR')} تومان`;
 
   let sY = boxTop + 100;
   const drawRow = (label: string, value: string) => {

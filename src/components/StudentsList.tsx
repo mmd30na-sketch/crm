@@ -123,6 +123,12 @@ export default function StudentsList({
   const [paymentMethod,         setPaymentMethod]         = useState('pos');
   const [paymentDesc,           setPaymentDesc]           = useState('واریز قسط شهریه');
   const [isSubmittingPay,       setIsSubmittingPay]       = useState(false);
+  const [editError,             setEditError]             = useState<string | null>(null);
+  const [payError,              setPayError]              = useState<string | null>(null);
+  const [deleteError,           setDeleteError]           = useState<string | null>(null);
+  const [messageError,          setMessageError]          = useState<string | null>(null);
+  const [isSendingMessage,      setIsSendingMessage]      = useState(false);
+  const [messageResult,         setMessageResult]         = useState<string>('');
 
   /* ── Finance helper ── */
   const getStudentFinance = (studentId: number) => {
@@ -174,40 +180,42 @@ export default function StudentsList({
   /* ── Handlers ── */
   const handleSaveStudentEdit = async () => {
     if (!editingStudent) return;
+    setEditError(null);
     try {
-      if (onRefresh) {
-        await api.updateStudent(editingStudent);
-        onRefresh();
-      } else {
-        
-      }
-    } catch {
-      
+      await api.updateStudent(editingStudent);
+      onRefresh?.();
+      setEditingStudent(null);
+    } catch (err: any) {
+      setEditError(err?.message || 'ذخیره تغییرات ناموفق بود.');
     }
-    setEditingStudent(null);
   };
 
   const handleDeleteStudent = async (id: number) => {
+    setDeleteError(null);
     try {
-      if (onRefresh) { await api.deleteStudentCascade(id); onRefresh(); }
-      else {
-        
-        
-        
-      }
+      await api.deleteStudentCascade(id);
+      onRefresh?.();
       setDeleteConfirmStudent(null);
-      if (selectedStudentId === id) setSelectedStudentId(studentsList.find(s => s.id !== id)?.id ?? 1);
-    } catch { /* noop */ }
+      if (selectedStudentId === id) {
+        const next = studentsList.find(s => s.id !== id);
+        if (next) setSelectedStudentId(next.id);
+      }
+    } catch (err: any) {
+      setDeleteError(err?.message || 'حذف پرونده ناموفق بود.');
+    }
   };
 
   const handleSavePayment = async () => {
     if (!paymentStudent || !paymentAmount) return;
-    setIsSubmittingPay(true);
+    setIsSubmittingPay(true); setPayError(null);
     try {
       const amount = parseFloat(paymentAmount);
-      if (onRefresh) { await api.createPayment({ student_id: paymentStudent.id, amount, pay_method: paymentMethod, description: paymentDesc }); onRefresh(); }
-      else {  }
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('مبلغ پرداخت معتبر نیست.');
+      await api.createPayment({ student_id: paymentStudent.id, amount, pay_method: paymentMethod, description: paymentDesc });
+      onRefresh?.();
       setPaymentStudent(null); setPaymentAmount('');
+    } catch (err: any) {
+      setPayError(err?.message || 'ثبت پرداخت ناموفق بود.');
     } finally { setIsSubmittingPay(false); }
   };
 
@@ -217,12 +225,22 @@ export default function StudentsList({
     setMessageText(fin.debt > 0
       ? `هنرجوی گرامی ${student.first_name} ${student.last_name}؛ با سلام، خواهشمند است نسبت به تسویه مانده بدهی شهریه خود به مبلغ ${formatToman(fin.debt)} اقدام فرمایید.\nآموزشگاه رانندگی کارلا`
       : `هنرجوی گرامی ${student.first_name} ${student.last_name}؛ پرونده آموزشی و مالی شما با موفقیت تسویه گردید.\nآموزشگاه رانندگی کارلا`);
-    setMessageSent(false);
+    setMessageSent(false); setMessageError(null); setMessageResult('');
   };
 
-  const handleSendMessage = () => {
-    if (onActiveTabChange) { onActiveTabChange('messenger', messagingStudent?.id); }
-    else { setMessageSent(true); setTimeout(() => { setMessagingStudent(null); setMessageSent(false); }, 1800); }
+  /** Sends the text as an SMS to the student's mobile and reports what the server actually did. */
+  const handleSendMessage = async () => {
+    if (!messagingStudent || !messageText.trim()) return;
+    setIsSendingMessage(true); setMessageError(null);
+    try {
+      const r = await api.sendMessengerMessage({
+        channel: 'sms', recipient: messagingStudent.phone_number || '', messageText: messageText.trim(), student_id: messagingStudent.id,
+      });
+      if (r.success) { setMessageResult(r.message); setMessageSent(true); }
+      else setMessageError(r.message || 'ارسال انجام نشد.');
+    } catch (err: any) {
+      setMessageError(err?.message || 'ارسال پیام ناموفق بود.');
+    } finally { setIsSendingMessage(false); }
   };
 
   /* ════════════════════════════════════════════
@@ -365,7 +383,7 @@ export default function StudentsList({
                 </div>
 
                 {selectedFinance?.debt > 0 && (
-                  <button onClick={() => { setPaymentStudent(selectedStudent); setPaymentAmount(selectedFinance?.debt.toString()); }}
+                  <button onClick={() => { setPayError(null); setPaymentStudent(selectedStudent); setPaymentAmount(selectedFinance?.debt.toString()); }}
                     className="mt-3 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer">
                     <CreditCard className="w-3.5 h-3.5" />ثبت پرداختی
                   </button>
@@ -375,7 +393,7 @@ export default function StudentsList({
 
             {/* ─── Row 3: Action Buttons ─── */}
             <div className="flex items-center flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
-              <button onClick={() => setEditingStudent({ ...selectedStudent })}
+              <button onClick={() => { setEditError(null); setEditingStudent({ ...selectedStudent }); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <Edit3 className="w-3.5 h-3.5" />ویرایش پرونده
               </button>
@@ -387,7 +405,7 @@ export default function StudentsList({
                 className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <MessageSquare className="w-3.5 h-3.5" />ارسال پیام
               </button>
-              <button onClick={() => setDeleteConfirmStudent(selectedStudent)}
+              <button onClick={() => { setDeleteError(null); setDeleteConfirmStudent(selectedStudent); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 hover:border-rose-400 text-xs font-bold rounded-lg transition cursor-pointer">
                 <Trash2 className="w-3.5 h-3.5" />حذف پرونده
               </button>
@@ -680,7 +698,8 @@ export default function StudentsList({
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button onClick={() => setEditingStudent(null)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
+              {editError && <p role="alert" className="text-xs font-semibold text-rose-600 ml-auto self-center">{editError}</p>}
+              <button onClick={() => { setEditingStudent(null); setEditError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
               <button onClick={handleSaveStudentEdit} className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition cursor-pointer shadow-sm">ذخیره تغییرات</button>
             </div>
           </div>
@@ -700,7 +719,7 @@ export default function StudentsList({
             <div id="printable-receipt" className="bg-white text-slate-900 p-6 rounded-xl border border-slate-200 space-y-4 text-xs">
               <div className="flex items-center justify-between border-b-2 border-slate-800 pb-4">
                 <div><h2 className="text-base font-extrabold">آموزشگاه رانندگی کارلا</h2><p className="text-xs text-slate-500">رسید رسمی ثبت‌نام و وضعیت مالی</p></div>
-                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent?.id).padStart(5, '0')}</div><div>تاریخ: ۱۴۰۵/۰۵/۲۸</div></div>
+                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent?.id).padStart(5, '0')}</div><div>تاریخ: {new Date().toLocaleDateString('fa-IR')}</div></div>
               </div>
               <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
                 <div><strong>نام:</strong> {selectedStudent?.first_name} {selectedStudent?.last_name}</div>
@@ -744,16 +763,17 @@ export default function StudentsList({
             {messageSent ? (
               <div className="text-center py-8 space-y-3">
                 <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto" />
-                <p className="text-sm font-bold text-slate-900">پیام با موفقیت ارسال شد</p>
+                <p className="text-sm font-bold text-slate-900">{messageResult || 'پیام با موفقیت ارسال شد'}</p>
               </div>
             ) : (
               <>
                 <textarea rows={5} value={messageText} onChange={e => setMessageText(e.target.value)}
                   className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 resize-none leading-7 transition" />
+                {messageError && <p role="alert" className="text-xs font-semibold text-rose-600">{messageError}</p>}
                 <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                   <button onClick={() => setMessagingStudent(null)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
-                  <button onClick={handleSendMessage} className="px-5 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
-                    <Send className="w-3.5 h-3.5" />ارسال فوری
+                  <button onClick={handleSendMessage} disabled={isSendingMessage} className="px-5 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-60 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
+                    <Send className="w-3.5 h-3.5" />{isSendingMessage ? 'در حال ارسال...' : 'ارسال فوری'}
                   </button>
                 </div>
               </>
@@ -794,8 +814,9 @@ export default function StudentsList({
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 transition" />
               </div>
             </div>
+            {payError && <p role="alert" className="text-xs font-semibold text-rose-600">{payError}</p>}
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button onClick={() => setPaymentStudent(null)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
+              <button onClick={() => { setPaymentStudent(null); setPayError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
               <button onClick={handleSavePayment} disabled={isSubmittingPay || !paymentAmount}
                 className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
                 {isSubmittingPay ? 'در حال ثبت...' : <><CreditCard className="w-3.5 h-3.5" />ثبت قطعی</>}
@@ -818,8 +839,9 @@ export default function StudentsList({
                 پرونده <strong className="text-rose-600">{deleteConfirmStudent.first_name} {deleteConfirmStudent.last_name}</strong> به همراه تمام سوابق و تراکنش‌های مالی حذف خواهد شد. این عملیات قابل بازگشت نیست.
               </p>
             </div>
+            {deleteError && <p role="alert" className="text-xs font-semibold text-rose-600">{deleteError}</p>}
             <div className="flex gap-3 justify-center">
-              <button onClick={() => setDeleteConfirmStudent(null)} className="px-5 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
+              <button onClick={() => { setDeleteConfirmStudent(null); setDeleteError(null); }} className="px-5 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
               <button onClick={() => handleDeleteStudent(deleteConfirmStudent.id)} className="px-6 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition cursor-pointer shadow-sm">حذف قطعی</button>
             </div>
           </div>
