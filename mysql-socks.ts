@@ -1,19 +1,27 @@
 import net from 'net';
 import mysql from 'mysql2/promise';
 
-const DB_HOST = process.env.DB_HOST || 'services.irn5.chabokan.net';
-const DB_PORT = Number(process.env.DB_PORT || 52691);
-const DB_USER = process.env.DB_USER || 'nodejs430_carla';
-const DB_PASSWORD = process.env.DB_PASSWORD || process.env.NODEJS_DB_PASS || '';
-const DB_NAME = process.env.DB_NAME || 'nodejs430_carla';
-const SOCKS_HOST = process.env.DB_SOCKS_HOST || '';
-const SOCKS_PORT = Number(process.env.DB_SOCKS_PORT || 1081);
-const useSocks = Boolean(SOCKS_HOST);
+/**
+ * Read at connection time, not at import time: this module is imported before server.ts runs
+ * dotenv.config(), so constants read here would never see the values from .env.
+ */
+function getDbConfig() {
+  const DB_HOST = process.env.DB_HOST || 'services.irn5.chabokan.net';
+  const DB_PORT = Number(process.env.DB_PORT || 52691);
+  const DB_USER = process.env.DB_USER || 'nodejs430_carla';
+  const DB_PASSWORD = process.env.DB_PASSWORD || process.env.NODEJS_DB_PASS || '';
+  const DB_NAME = process.env.DB_NAME || 'nodejs430_carla';
+  const SOCKS_HOST = process.env.DB_SOCKS_HOST || '';
+  const SOCKS_PORT = Number(process.env.DB_SOCKS_PORT || 1081);
+  const useSocks = Boolean(SOCKS_HOST);
+  return { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, SOCKS_HOST, SOCKS_PORT, useSocks };
+}
 
 let live: mysql.Connection | null = null;
 let mysqlEnabled = false;
 
 function socksSocket(): Promise<net.Socket> {
+  const { DB_HOST, DB_PORT, SOCKS_HOST, SOCKS_PORT } = getDbConfig();
   return new Promise((resolve, reject) => {
     const socket = net.connect({ host: SOCKS_HOST, port: SOCKS_PORT, timeout: 15000 });
     let buf = Buffer.alloc(0);
@@ -61,6 +69,7 @@ export function isMysqlEnabled() {
 }
 
 export async function initMysql(): Promise<boolean> {
+  const { DB_HOST, DB_PORT, DB_PASSWORD, DB_NAME, SOCKS_HOST, SOCKS_PORT, useSocks } = getDbConfig();
   if (!DB_PASSWORD) {
     console.warn('Chabokan MySQL skipped: DB_PASSWORD / NODEJS_DB_PASS is empty');
     mysqlEnabled = false;
@@ -83,6 +92,7 @@ export async function initMysql(): Promise<boolean> {
 }
 
 async function getConn(): Promise<mysql.Connection> {
+  const { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, useSocks } = getDbConfig();
   if (live) {
     try {
       await live.query('SELECT 1');
