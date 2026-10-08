@@ -1,0 +1,34 @@
+# اتصال اسکنر دسکتاپ به ثبت‌نام
+
+مرورگر مستقیم به اسکنر دسترسی ندارد؛ پس روی **کامپیوتری که اسکنر به آن وصل است** یک برنامه کوچک
+(`scanner-bridge.mjs`) اجرا می‌شود. دکمه «اسکن با اسکنر» در صفحه ثبت‌نام به آن درخواست می‌دهد، عکس کارت ملی
+برمی‌گردد، ذخیره می‌شود و فیلدها خودکار پر می‌شوند (مثل انتخاب فایل).
+
+## اجرا (نیاز به Node.js 18 به بالا)
+
+Windows (PowerShell) با NAPS2 — نمونه؛ پرچم‌ها را با نسخه نصب‌شده خودتان تطبیق دهید:
+
+```powershell
+$env:SCANNER_COMMAND = '"C:\Program Files\NAPS2\NAPS2.Console.exe" -o "{out}" --noprofile --driver wia --dpi 300'
+node scripts/scanner-bridge.mjs
+```
+
+Linux با SANE:
+
+```bash
+SCANNER_COMMAND='scanimage --format=jpeg --resolution 300 > "{out}"' node scripts/scanner-bridge.mjs
+```
+
+`{out}` مسیر فایل خروجی است و دستور باید یک تصویر JPG/PNG در آن بنویسد.
+
+## متغیرها
+
+| متغیر | پیش‌فرض | توضیح |
+|---|---|---|
+| `SCANNER_COMMAND` | — | دستور اسکن (الزامی) |
+| `SCANNER_PORT` | `8765` | پورت روی `127.0.0.1` |
+| `SCANNER_ALLOWED_ORIGINS` | دامنه CRM و localhost | آدرس‌هایی که اجازه دارند اسکن بزنند |
+| `SCAN_TIMEOUT_MS` | `90000` | حداکثر زمان یک اسکن |
+
+برنامه فقط روی `127.0.0.1` گوش می‌دهد و درخواست از سایت‌های غیرمجاز را قبل از اجرای دستور رد می‌کند.
+اگر آدرس دیگری برای برنامه لازم است، هنگام build مقدار `VITE_SCANNER_BRIDGE_URL` را بدهید.

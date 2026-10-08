@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Course, Student, Enrollment, WebsiteRegistration } from '../types';
 import * as api from '../api/client';
+import { checkScanner, scanWithScanner, ScannerState } from '../api/scanner';
 import { jsPDF } from 'jspdf';
 
 interface StudentRegistrationFormProps {
@@ -170,8 +171,8 @@ function cropImageFileToRatio(file: File, ratio: number): Promise<File> {
   });
 }
 
-/** Phone photos are often 5–12 MB; the OCR only needs ~1600px, so shrink before uploading. */
-function downscaleImageFile(file: File, maxSide = 1600): Promise<File> {
+/** Phone photos are often 5–12 MB; the OCR does not need more than ~2400px, so shrink before uploading. */
+function downscaleImageFile(file: File, maxSide = 2400): Promise<File> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -294,6 +295,24 @@ export default function StudentRegistrationForm({
   const [stepError,         setStepError]         = useState<string | null>(null);
   const [ocrError,          setOcrError]          = useState<string | null>(null);
   const [ocrReady,          setOcrReady]          = useState<boolean | null>(null);
+  const [scannerState,      setScannerState]      = useState<ScannerState>('unknown');
+  const [isScanning,        setIsScanning]        = useState(false);
+
+  useEffect(() => {
+    if (!isMobile) void checkScanner().then(setScannerState);
+  }, [isMobile]);
+
+  /** Desktop: scan the card with the attached scanner, then save + extract like an uploaded file. */
+  const scanCardWithScanner = async () => {
+    setIsScanning(true); setOcrError(null);
+    try {
+      assignIdCard(await scanWithScanner());
+      setScannerState('ready');
+    } catch (err: any) {
+      setOcrError(err?.message || 'اسکن ناموفق بود.');
+      setScannerState(await checkScanner());
+    } finally { setIsScanning(false); }
+  };
 
   useEffect(() => {
     api.fetchOcrStatus().then((st) => setOcrReady(st.ready)).catch(() => setOcrReady(false));
@@ -961,14 +980,22 @@ export default function StudentRegistrationForm({
                   </>
                 ) : (
                   <>
-                    <label htmlFor="idCardFirstUpload" className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 text-white text-sm font-extrabold rounded-xl cursor-pointer shadow-sm flex items-center justify-center gap-2">
-                      <FolderOpen className="w-5 h-5" />انتخاب فایل اسکنشده (پیشفرض)
-                    </label>
-                    <button type="button" onClick={() => startCamera('idCard')} disabled={isScanningOCR}
-                      className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-2"
+                    <button type="button" onClick={() => void scanCardWithScanner()} disabled={isScanning || isScanningOCR}
+                      title={scannerState === 'ready' ? undefined : 'برنامه اسکنر (scripts/SCANNER.md) اجرا یا تنظیم نشده است'}
+                      className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 disabled:opacity-60 text-white text-sm font-extrabold rounded-xl shadow-sm transition flex items-center justify-center gap-2"
                     >
-                      {isScanningOCR ? <><Loader2 className="w-4 h-4 animate-spin text-sky-600" />در حال پردازش...</> : <><Camera className="w-4 h-4 text-slate-500" />عکس‌برداری با وب‌کم</>}
+                      {isScanning ? <><Loader2 className="w-5 h-5 animate-spin" />در حال اسکن...</>
+                        : isScanningOCR ? <><Loader2 className="w-5 h-5 animate-spin" />در حال خواندن کارت ملی...</>
+                        : <><Camera className="w-5 h-5" />اسکن با اسکنر</>}
                     </button>
+                    {scannerState !== 'ready' && scannerState !== 'unknown' && (
+                      <p className="mt-1.5 text-[10px] text-amber-600 text-center">
+                        {scannerState === 'offline' ? 'برنامه اسکنر در این کامپیوتر اجرا نیست؛' : 'دستور اسکنر تنظیم نشده؛'} فعلاً از «انتخاب فایل» استفاده کنید.
+                      </p>
+                    )}
+                    <label htmlFor="idCardFirstUpload" className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 cursor-pointer flex items-center justify-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-slate-500" />انتخاب فایل اسکن‌شده
+                    </label>
                   </>
                 )}
                 {idCardFile && !ocrSuccess && !isScanningOCR && (

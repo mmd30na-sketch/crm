@@ -1439,12 +1439,12 @@ app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nati
   (req as any).file = uploaded;
   const visionConfigured = !!(process.env.GCP_CLIENT_ID && process.env.GCP_REFRESH_TOKEN && process.env.GCP_PROJECT_ID);
   if (!ai && !visionConfigured) {
-    removeUploadedFiles(uploaded);
+    removeUploadedFiles(files);
     return res.status(503).json({ success: false, error: 'سرویس خواندن کارت ملی تنظیم نشده است (GEMINI_API_KEY). اطلاعات را دستی وارد کنید.' });
   }
   const fileBuffer = fs.readFileSync(req.file.path);
   // The scan is only needed for this request; don't keep national-card images in /uploads.
-  fs.unlink(req.file.path, () => {});
+  removeUploadedFiles(files); // the client sends the same scan under two field names
   try {
     const [gemini, vision] = await Promise.all([
       ocrWithGemini(fileBuffer, req.file.mimetype || 'image/jpeg'),
