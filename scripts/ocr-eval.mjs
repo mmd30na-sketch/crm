@@ -70,7 +70,7 @@ for (const f of files) {
     }
   }
   const w = Object.entries(data.field_warnings || {}).flatMap(([k, v]) => v.map((x) => `${k}:${x}`));
-  console.log(`${f}: ${ms} ms, review=${!!data.needs_review}, checksum=${isValidNationalCode(data.national_code || '')}, pass2=${data.second_pass || '-'}${wrong.length ? `, WRONG: ${wrong.join(',')}` : ''}${w.length ? `, warnings: ${w.join(' ')}` : ''}`);
+  console.log(`${f}: ${ms} ms, review=${!!data.needs_review}, checksum=${isValidNationalCode(data.national_code || '')}${wrong.length ? `, WRONG: ${wrong.join(',')}` : ''}${w.length ? `, warnings: ${w.join(' ')}` : ''}`);
 }
 
 const done = files.length - failed;

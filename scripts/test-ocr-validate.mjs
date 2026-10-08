@@ -44,25 +44,19 @@ await test('digits conversion and name normalization', () => {
   assert.equal(normalizeJalaliDate('۱۳۸۰-۵-۲'), '1380/05/02');
   assert.equal(normalizeJalaliDate('13800502'), '1380/05/02');
 });
-await test('valid read -> ok, no second pass', async () => {
+await test('valid read -> ok', async () => {
   let calls = 0;
   const r = await runCardOcr({ gemini: async () => { calls++; return read(); }, vision: async () => null, today: TODAY });
   assert.equal(calls, 1);
   assert.equal(r.needs_review, false);
   assert.equal(r.checksum_valid, true);
-  assert.equal(r.second_pass, 'not_needed');
 });
-await test('wrong checksum then corrected second read -> accepted', async () => {
-  const r = await run(read({ national_code: BAD }), { national_code: GOOD, birth_date_jalali: '1380/05/20', confidence: 0.9 });
-  assert.equal(r.national_code, GOOD);
-  assert.equal(r.checksum_valid, true);
-  assert.equal(r.needs_review, false);
-  assert.equal(r.second_pass, 'accepted');
-});
-await test('digit-array second read is used', async () => {
-  const digits = GOOD.split('').map((d) => ({ digit: d, confidence: 0.9 }));
-  const r = await run(read({ national_code: BAD }), { digits });
-  assert.equal(r.national_code, GOOD);
+await test('wrong checksum -> needs_review, single read only', async () => {
+  let calls = 0;
+  const r = await runCardOcr({ gemini: async () => { calls++; return read({ national_code: BAD }); }, vision: async () => null, today: TODAY });
+  assert.equal(calls, 1);
+  assert.equal(r.checksum_valid, false);
+  assert.equal(r.needs_review, true);
 });
 await test('wrong checksum both times -> needs_review, value kept as read', async () => {
   const other = BAD.slice(0, 9) + String((Number(BAD[9]) + 1) % 10);

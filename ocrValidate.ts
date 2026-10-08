@@ -200,7 +200,6 @@ export type OcrDeps = {
 export type CardOcrResult = ValidatedOcr & {
   provider: string;
   readable: boolean;
-  second_pass: SecondPassStatus;
 };
 
 const num = (v: unknown): number | undefined => {
@@ -238,9 +237,8 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
 }
 
 /**
- * Full pipeline: model read + Cloud Vision parse -> merge -> validate -> (only when the checksum fails or the
- * confidence is low) one focused second read, accepted per field only when it fixes the checksum / date or agrees
- * with the first read. A checksum-failed code is never altered by guesswork.
+ * Full pipeline: model read + Cloud Vision parse -> merge -> validate. A single model read; a checksum-failed
+ * code is never altered by guesswork and goes to human review.
  */
 export async function runCardOcr(deps: OcrDeps): Promise<CardOcrResult | null> {
   const now = deps.now || Date.now;
@@ -264,47 +262,5 @@ export async function runCardOcr(deps: OcrDeps): Promise<CardOcrResult | null> {
   const provider = first ? (vision ? `${first.provider}+cloud-vision` : String(first.provider || '')) : 'cloud-vision';
 
   let v = validateOcr(merged, { today: deps.today, confidence: modelConfidence, fieldConfidence: fc, readable });
-  let second: SecondPassStatus = 'not_needed';
-
-  const needsSecond = !v.checksum_valid || modelConfidence < LOW_CONFIDENCE || !readable
-    || !!v.field_warnings.birth_date_jalali?.includes('birth_date_invalid');
-  if (needsSecond) {
-    const remaining = deadline - now();
-    if (remaining < 3000) second = 'skipped';
-    else {
-      const r = await withTimeout(deps.gemini('focused', deadline), remaining).catch(() => null);
-      if (!r) second = 'failed';
-      else {
-        const patch: Partial<IranIdOcr> = { ...merged };
-        let accepted = 0, rejected = 0;
-        const code2 = codeFromFocusedRead(r);
-        if (code2) {
-          if (code2 === v.national_code) accepted++;
-          else if (isValidNationalCode(code2) && !v.checksum_valid) { patch.national_code = code2; accepted++; }
-          else rejected++;
-        }
-        const date2 = normalizeJalaliDate(r.birth_date_jalali);
-        if (date2) {
-          if (date2 === v.birth_date_jalali) accepted++;
-          else if (validateBirthDate(date2, deps.today) && !validateBirthDate(v.birth_date_jalali, deps.today)) { patch.birth_date_jalali = date2; accepted++; }
-          else rejected++;
-        }
-        const exp2 = normalizeJalaliDate(r.card_expiry_jalali);
-        if (exp2) {
-          if (exp2 === v.card_expiry_jalali) accepted++;
-          else if (validateExpiryDate(exp2, deps.today) && !validateExpiryDate(v.card_expiry_jalali, deps.today)) { patch.card_expiry_jalali = exp2; accepted++; }
-          else rejected++;
-        }
-        second = accepted && !rejected ? 'accepted' : accepted ? 'partly_accepted' : 'rejected';
-        const next = validateOcr(patch, { today: deps.today, confidence: modelConfidence, fieldConfidence: fc, readable });
-        if (rejected) {
-          const w = (next.field_warnings._overall ||= []);
-          w.push('second_read_disagrees');
-          next.needs_review = true;
-        }
-        v = next;
-      }
-    }
-  }
-  return { ...v, provider, readable, second_pass: second };
+  return { ...v, provider, readable };
 }

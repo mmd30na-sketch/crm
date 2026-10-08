@@ -1677,8 +1677,7 @@ const OCR_FOCUSED_PROMPT = `در این تصویر کارت ملی هوشمند 
 async function ocrWithGemini(fileBuffer: Buffer, mimeType: string, pass: 'full' | 'focused' = 'full', deadlineMs = Infinity): Promise<Record<string, any> | null> {
   if (!ai) return null;
   const base = [...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
-  const strong = process.env.GEMINI_MODEL_STRONG || 'gemini-2.5-pro';
-  const models = [...new Set(pass === 'focused' ? [strong, ...base] : base)];
+  const models = [...new Set(base)];
   const prompt = pass === 'focused' ? OCR_FOCUSED_PROMPT : OCR_FIELDS_PROMPT;
   for (const model of models) {
     if (Date.now() > deadlineMs) break;
