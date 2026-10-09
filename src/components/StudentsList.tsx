@@ -168,6 +168,14 @@ export default function StudentsList({
     return Array.from(new Set(nums)).sort((a, b) => Number(b) - Number(a));
   }, [enrollmentsList]);
 
+  // On first open, show only the newest course number (the user can switch to "all" at any time).
+  const courseNumberDefaulted = useRef(false);
+  useEffect(() => {
+    if (courseNumberDefaulted.current || availableCourseNumbers.length === 0) return;
+    courseNumberDefaulted.current = true;
+    setCourseNumberFilter(String(availableCourseNumbers[0]));
+  }, [availableCourseNumbers]);
+
   /* ── Filtered list ── */
   const filteredStudents = useMemo(() => studentsList.filter(s => {
     const nm = `${s.first_name} ${s.last_name}`.toLowerCase();
