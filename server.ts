@@ -11,6 +11,7 @@ import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
+import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
 import { owedByEnrollment, allocatePayment as splitPayment, payableAmount } from './src/utils/finance';
 
 dotenv.config({ path: '.env.local' });
@@ -82,13 +83,6 @@ const PORT = Number(process.env.PORT || 3000);
 const studentFilesBase = path.join(process.cwd(), 'StudentFiles');
 if (!fs.existsSync(studentFilesBase)) {
   fs.mkdirSync(studentFilesBase, { recursive: true });
-}
-
-function safeSegment(value: unknown, fallback: string) {
-  const raw = String(value || fallback).trim() || fallback;
-  const clean = raw.replace(/[^؀-ۿa-zA-Z0-9._-]+/g, '_').slice(0, 80);
-  // '.' / '..' would climb out of StudentFiles when used as a directory name.
-  return !clean || /^\.+$/.test(clean) ? fallback : clean;
 }
 
 /**
@@ -168,12 +162,19 @@ function unlinkStoredFile(publicPath: unknown, baseDir: string) {
     if (dir !== baseDir && dir.startsWith(baseDir + path.sep)) fs.rmdir(dir, () => {});
   });
 }
-/** Removes a deleted student's photos/scans and the receipt PDFs of their enrollments. */
+/** Removes a deleted student's photos/scans and the registration PDFs (receipt, file summary, contract) of their enrollments. */
 function removeStudentFiles(student: any, enrollments: any[]) {
   for (const key of ['id_card_photo_url', 'personal_photo_url', 'national_card_path', 'personal_photo_path']) {
     unlinkStoredFile(student?.[key], studentFilesBase);
   }
-  for (const e of enrollments) unlinkStoredFile(e?.receipt_pdf_path, uploadsDir);
+  for (const e of enrollments) {
+    for (const kind of DOC_KINDS) {
+      // Registration PDFs live in StudentFiles (older receipts in uploads/).
+      const stored = e?.[DOC_PATH_FIELDS[kind]];
+      unlinkStoredFile(stored, studentFilesBase);
+      unlinkStoredFile(stored, uploadsDir);
+    }
+  }
 }
 
 const uploadStudentMedia = multer({
@@ -194,7 +195,9 @@ const uploadsStorage = multer.diskStorage({
 });
 // OCR scans (images) and receipt PDFs share the same storage but not the same rules.
 const upload = multer({ storage: uploadsStorage, fileFilter: imageFileFilter, limits: { fileSize: 8 * 1024 * 1024, files: 2 } });
-const uploadReceipt = multer({ storage: uploadsStorage, fileFilter: pdfFileFilter, limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+// Registration PDFs are validated in memory, then written under StudentFiles/ by the route (the path comes from the enrollment, not the client).
+const MAX_REGISTRATION_PDF_BYTES = 8 * 1024 * 1024;
+const uploadReceipt = multer({ storage: multer.memoryStorage(), fileFilter: pdfFileFilter, limits: { fileSize: MAX_REGISTRATION_PDF_BYTES, files: 1 } });
 
 // Database File Path
 const DB_PATH = path.join(process.cwd(), 'db_store.json');
@@ -232,6 +235,8 @@ interface Enrollment {
   signup_date_jalali: string;
   final_price: number;
   receipt_pdf_path?: string;
+  idcard_pdf_path?: string;
+  contract_pdf_path?: string;
 }
 
 interface Payment {
@@ -281,6 +286,7 @@ interface DatabaseSchema {
     address: string;
     header_text?: string;
     footer_text?: string;
+    contract_text?: string;
     admin_password_hash?: string;
   };
   courses: Course[];
@@ -1933,6 +1939,7 @@ app.get('/api/receipt-settings', (req, res) => {
 app.post('/api/receipt-settings', (req, res) => {
   const db = readDb();
   const { admin_password_hash, gateways, ...incoming } = req.body || {};
+  if (incoming.contract_text !== undefined) incoming.contract_text = typeof incoming.contract_text === 'string' ? incoming.contract_text.replace(/\r\n/g, '\n').trim().slice(0, 6000) : '';
   db.settings = { ...db.settings, ...incoming };
   writeDb(db);
   res.json(publicSettings(db.settings));
@@ -1982,41 +1989,89 @@ app.get('/api/enrollments/:id/report-context', asyncHandler(async (req, res) => 
   });
 }));
 
-// 12. Upload receipt PDF
+// 12. Upload one of the three registration PDFs (Receipt | IDCard | Contract) of an enrollment.
+// The target folder and file name come from the enrollment itself (course number, student last name and id), never from the client.
+async function loadEnrollmentForPdf(enrollmentId: number) {
+  if (chabokan.isMysqlEnabled()) {
+    const ctx = await chabokan.getEnrollmentReportContext(enrollmentId);
+    return ctx ? { enrollment: ctx.enrollment as any, student: ctx.student as any } : null;
+  }
+  const db = readDb();
+  const enrollment = db.enrollments.find(e => e.id === enrollmentId);
+  if (!enrollment) return null;
+  return { enrollment: enrollment as any, student: db.students.find(s => s.id === enrollment.student_id) as any };
+}
+
+function pdfPathsOf(enrollment: any) {
+  return {
+    receipt_pdf_path: enrollment?.receipt_pdf_path || '',
+    idcard_pdf_path: enrollment?.idcard_pdf_path || '',
+    contract_pdf_path: enrollment?.contract_pdf_path || '',
+  };
+}
+
 app.post('/api/enrollments/:id/receipt', uploadReceipt.single('pdf'), asyncHandler(async (req, res) => {
   const enrollmentId = parseInt(req.params.id, 10);
-  if (!req.file) {
-    return res.status(400).json({ error: 'No PDF file uploaded' });
+  if (!req.file) return res.status(400).json({ error: 'فایل PDF ارسال نشد.' });
+  if (!enrollmentId) return res.status(400).json({ error: 'شناسه ثبت‌نام نامعتبر است.' });
+  const kind: DocKind | null = req.body?.kind === undefined || req.body?.kind === '' ? 'Receipt' : parseDocKind(req.body.kind);
+  if (!kind) return res.status(400).json({ error: 'نوع سند نامعتبر است (Receipt، IDCard یا Contract).' });
+  const buf = req.file.buffer;
+  if (!buf || buf.length < 100 || buf.length > MAX_REGISTRATION_PDF_BYTES) return res.status(400).json({ error: 'اندازه فایل PDF مجاز نیست.' });
+  if (!isPdfBytes(buf.subarray(0, 5))) return res.status(400).json({ error: 'فایل ارسالی PDF معتبر نیست.' });
+
+  const ctx = await loadEnrollmentForPdf(enrollmentId);
+  if (!ctx) return res.status(404).json({ error: 'ثبت‌نام پیدا نشد.' });
+  const { enrollment, student } = ctx;
+  if (!student) return res.status(404).json({ error: 'کارآموز این ثبت‌نام پیدا نشد.' });
+
+  const field = DOC_PATH_FIELDS[kind];
+  const target = registrationPdfRelPath({ courseNumber: enrollment.course_number, lastName: student.last_name, studentId: student.id, kind });
+  const dirAbs = path.join(process.cwd(), target.dir);
+  if (!path.resolve(dirAbs).startsWith(studentFilesBase + path.sep)) return res.status(400).json({ error: 'مسیر ذخیره نامعتبر است.' });
+
+  // The enrollment's own previous file of this kind is replaced. Any other file with the target name (another enrollment of
+  // the same student in the same course number) is never overwritten: the new file gets a free name instead.
+  const previous = String(enrollment[field] || '');
+  const decode = (p: string) => { try { return decodeURIComponent(p.split(/[?#]/)[0]); } catch { return ''; } };
+  const previousAbs = previous ? path.resolve(process.cwd(), decode(previous).replace(/^\/+/, '')) : '';
+  fs.mkdirSync(dirAbs, { recursive: true });
+  let fileName = target.file;
+  if (fs.existsSync(path.join(dirAbs, fileName)) && path.resolve(dirAbs, fileName) !== previousAbs) {
+    fileName = freeFileName(dirAbs, target.base, '.pdf');
   }
-  const reject = (status: number, error: string) => { removeUploadedFiles(req.file); return res.status(status).json({ error }); };
-  if (!enrollmentId) return reject(400, 'Invalid enrollment id');
-  const header = Buffer.alloc(5);
+  const finalAbs = path.join(dirAbs, fileName);
+  const tmpAbs = `${finalAbs}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  const publicPath = `/${target.dir}/${fileName}`;
   try {
-    const fd = fs.openSync(req.file.path, 'r');
-    try { fs.readSync(fd, header, 0, 5, 0); } finally { fs.closeSync(fd); }
-  } catch {
-    return reject(500, 'فایل ارسالی خوانده نشد؛ دوباره تلاش کنید.');
+    fs.writeFileSync(tmpAbs, buf);
+    fs.renameSync(tmpAbs, finalAbs);
+  } catch (err: any) {
+    try { fs.unlinkSync(tmpAbs); } catch {}
+    return res.status(500).json({ error: 'ذخیره فایل PDF روی سرور ناموفق بود.' });
   }
-  if (header.toString('latin1') !== '%PDF-') return reject(400, 'فایل ارسالی PDF معتبر نیست.');
-  const receiptPath = publicPathFromFile(req.file);
   try {
     if (chabokan.isMysqlEnabled()) {
-      if (!(await loadEnrollments()).some(e => Number(e.id) === enrollmentId)) return reject(404, 'Enrollment not found');
-      await chabokan.updateEnrollmentReceipt(enrollmentId, receiptPath);
-      return res.json({ receipt_pdf_path: receiptPath });
+      await chabokan.updateEnrollmentPdfPath(enrollmentId, field, publicPath);
+    } else {
+      const db = readDb();
+      const index = db.enrollments.findIndex(e => e.id === enrollmentId);
+      if (index === -1) throw new Error('Enrollment not found');
+      (db.enrollments[index] as any)[field] = publicPath;
+      writeDb(db);
     }
-    const db = readDb();
-    const index = db.enrollments.findIndex(e => e.id === enrollmentId);
-    if (index === -1) {
-      return reject(404, 'Enrollment not found');
-    }
-    db.enrollments[index].receipt_pdf_path = receiptPath;
-    writeDb(db);
-    res.json({ receipt_pdf_path: receiptPath });
   } catch (err: any) {
-    removeUploadedFiles(req.file);
-    res.status(500).json({ error: err.message });
+    // Do not leave a file nobody points to (unless it replaced the file the enrollment already pointed at).
+    if (path.resolve(finalAbs) !== previousAbs) { try { fs.unlinkSync(finalAbs); } catch {} }
+    return res.status(500).json({ error: err?.message || 'ثبت مسیر فایل در پایگاه داده ناموفق بود.' });
   }
+  // Drop the replaced file when it lived elsewhere (older name or the former uploads/ location).
+  if (previous && previousAbs && previousAbs !== path.resolve(finalAbs)) {
+    unlinkStoredFile(previous, studentFilesBase);
+    unlinkStoredFile(previous, uploadsDir);
+  }
+  const paths = { ...pdfPathsOf(enrollment), [field]: publicPath };
+  res.json({ kind, path: publicPath, ...paths });
 }));
 
 // 13. Expenses management

@@ -82,6 +82,7 @@ export async function initMysql(): Promise<boolean> {
     await getConn();
     mysqlEnabled = true;
     await ensureStudentExtendedColumns();
+    await ensureEnrollmentPdfColumns();
     const via = useSocks
       ? `via socks5://${SOCKS_HOST}:${SOCKS_PORT}`
       : `direct ${DB_HOST}:${DB_PORT}`;
@@ -163,6 +164,38 @@ export async function sqlExec(query: string, params: any[] = []): Promise<{ inse
 
 let studentHasFatherName = false;
 let studentHasBirthDate = false;
+let enrollmentHasPdfColumns = false;
+
+/** The three registration PDFs (receipt, file summary, contract) are stored as paths on the enrollment. */
+const ENROLLMENT_PDF_COLUMNS = { receipt_pdf_path: 'receipt_pdf_path', idcard_pdf_path: 'idcard_pdf_path', contract_pdf_path: 'contract_pdf_path' } as const;
+
+async function ensureEnrollmentPdfColumns() {
+  try {
+    const cols = await sql<{ Field: string }>('SHOW COLUMNS FROM enrollments');
+    const names = new Set(cols.map((c) => c.Field));
+    let ok = true;
+    for (const name of ['idcard_pdf_path', 'contract_pdf_path']) {
+      if (names.has(name)) continue;
+      try {
+        await sqlExec(`ALTER TABLE enrollments ADD COLUMN ${name} VARCHAR(512) NULL`);
+        console.log(`Added enrollments.${name}`);
+      } catch (err: any) {
+        ok = false;
+        console.warn(`Could not add enrollments.${name}:`, err.message);
+      }
+    }
+    enrollmentHasPdfColumns = ok;
+  } catch (err: any) {
+    console.warn('Could not inspect enrollments columns:', err.message);
+  }
+}
+
+/** SELECT fragment for the enrollment PDF paths; the new columns only when they exist. */
+function enrollmentPdfSelect(alias: string): string {
+  return enrollmentHasPdfColumns
+    ? `${alias}.receipt_pdf_path, ${alias}.idcard_pdf_path, ${alias}.contract_pdf_path`
+    : `${alias}.receipt_pdf_path, NULL AS idcard_pdf_path, NULL AS contract_pdf_path`;
+}
 
 /** Today's Jalali date in Iran (Asia/Tehran), independent of the server's time zone. */
 export function jalaliToday(): string {
@@ -614,7 +647,7 @@ export async function listEnrollments() {
             e.signup_date_jalali, CAST(e.final_price AS DECIMAL(15,2)) AS final_price,
             CAST(COALESCE(b.amount_paid_from_payments, e.amount_paid, 0) AS DECIMAL(15,2)) AS amount_paid,
             CAST(GREATEST(COALESCE(b.balance_due, 0), 0) AS DECIMAL(15,2)) AS remaining_debt,
-            e.receipt_pdf_path
+            ${enrollmentPdfSelect('e')}
      FROM enrollments e
      LEFT JOIN v_enrollment_balances b ON b.enrollment_id = e.enrollment_id
      ORDER BY e.enrollment_id DESC`
@@ -1020,11 +1053,21 @@ export async function updateEnrollmentReceipt(enrollmentId: number, receiptPath:
   );
 }
 
+/** Stores the path of one registration PDF (`field` is one of the three path columns). */
+export async function updateEnrollmentPdfPath(enrollmentId: number, field: keyof typeof ENROLLMENT_PDF_COLUMNS, pdfPath: string) {
+  const column = ENROLLMENT_PDF_COLUMNS[field];
+  if (!column) throw new Error('Unknown PDF column');
+  if (column !== 'receipt_pdf_path' && !enrollmentHasPdfColumns) {
+    throw new Error('ستون‌های مسیر PDF در جدول ثبت‌نام‌ها ساخته نشده‌اند؛ مهاجرت پایگاه داده را اجرا کنید.');
+  }
+  await sqlExec(`UPDATE enrollments SET ${column} = ? WHERE enrollment_id = ?`, [pdfPath, enrollmentId]);
+}
+
 /** Receipt context of one enrollment (student, course, its payments), or null when it does not exist. */
 export async function getEnrollmentReportContext(enrollmentId: number) {
   const enr = await sql<any>(
     `SELECT e.enrollment_id AS id, e.student_id, e.course_id, e.course_number, e.signup_date_jalali,
-            CAST(e.final_price AS DECIMAL(15,2)) AS final_price, e.receipt_pdf_path
+            CAST(e.final_price AS DECIMAL(15,2)) AS final_price, ${enrollmentPdfSelect('e')}
      FROM enrollments e WHERE e.enrollment_id = ? LIMIT 1`,
     [enrollmentId]
   );
