@@ -24,7 +24,7 @@ export type DocPaths = Partial<Record<DocKind, string>>;
 type Status = 'idle' | 'working' | 'ok' | 'failed';
 interface DocState { status: Status; url?: string; error?: string }
 
-const toBuildInput = (i: DocsInput): BuildDocInput => ({
+export const toBuildInput = (i: DocsInput): BuildDocInput => ({
   student: i.student, enrollment: i.enrollment, course: i.course ?? null, paid: i.paid,
   settings: i.settings ?? null, images: i.images, date: i.date,
 });

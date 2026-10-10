@@ -2,7 +2,6 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
   Edit3,
-  Printer,
   MessageSquare,
   Trash2,
   ZoomIn,
@@ -30,6 +29,7 @@ import * as api from '../api/client';
 import { studentBalance } from '../utils/finance';
 import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus } from '../utils/studentFilters';
 import ModalPortal from './ModalPortal';
+import StudentDocsSection from './print/StudentDocsSection';
 
 interface StudentsListProps {
   students?: Student[];
@@ -130,7 +130,6 @@ export default function StudentsList({
 
   const [zoomPhotoUrl,          setZoomPhotoUrl]          = useState<{ url: string; title: string } | null>(null);
   const [editingStudent,        setEditingStudent]        = useState<Student | null>(null);
-  const [isPrintModalOpen,      setIsPrintModalOpen]      = useState(false);
   const [messagingStudent,      setMessagingStudent]      = useState<Student | null>(null);
   const [messageText,           setMessageText]           = useState('');
   const [messageSent,           setMessageSent]           = useState(false);
@@ -452,15 +451,25 @@ export default function StudentsList({
               </div>}
             </div>
 
+            {/* ─── Registration documents (receipt, file summary, contract) ─── */}
+            {canManage && selectedStudent && (
+              <div className="mb-5">
+                <StudentDocsSection
+                  student={selectedStudent}
+                  enrollments={enrollmentsList}
+                  courses={coursesList}
+                  payments={paymentsList}
+                  preferredEnrollmentId={selectedFinance?.primaryCourse?.enrollmentId || null}
+                  onRefresh={onRefresh}
+                />
+              </div>
+            )}
+
             {/* ─── Row 3: Action Buttons ─── */}
             {canManage && <div className="flex items-center flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
               <button onClick={() => { setEditError(null); setEditingStudent({ ...selectedStudent }); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <Edit3 className="w-3.5 h-3.5" />ویرایش پرونده
-              </button>
-              <button onClick={() => setIsPrintModalOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
-                <Printer className="w-3.5 h-3.5" />چاپ رسید
               </button>
               <button onClick={() => handleOpenMessaging(selectedStudent)}
                 className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
@@ -791,49 +800,6 @@ export default function StudentsList({
               {editError && <p role="alert" className="text-xs font-semibold text-rose-600 ml-auto self-center">{editError}</p>}
               <button onClick={() => { setEditingStudent(null); setEditError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
               <button onClick={handleSaveStudentEdit} className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition cursor-pointer shadow-sm">ذخیره تغییرات</button>
-            </div>
-          </div>
-        </div></ModalPortal>
-      )}
-
-      {/* 3. Print Receipt Modal */}
-      {isPrintModalOpen && selectedStudent && selectedFinance && (
-        <ModalPortal><div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-2xl w-full space-y-4 text-slate-100 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Printer className="w-4 h-4 text-teal-400" />پیش‌نمایش رسید رسمی
-              </h3>
-              <button onClick={() => setIsPrintModalOpen(false)} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"><X className="w-4 h-4" /></button>
-            </div>
-            <div id="printable-receipt" className="bg-white text-slate-900 p-6 rounded-xl border border-slate-200 space-y-4 text-xs">
-              <div className="flex items-center justify-between border-b-2 border-slate-800 pb-4">
-                <div><h2 className="text-base font-extrabold">آموزشگاه رانندگی کارلا</h2><p className="text-xs text-slate-500">رسید رسمی ثبت‌نام و وضعیت مالی</p></div>
-                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent?.id).padStart(5, '0')}</div><div>تاریخ: {new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' })}</div></div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <div><strong>نام:</strong> {selectedStudent?.first_name} {selectedStudent?.last_name}</div>
-                <div><strong>کد ملی:</strong> {selectedStudent?.national_code}</div>
-                <div><strong>شماره همراه:</strong> {selectedStudent?.phone_number}</div>
-                <div><strong>دوره:</strong> {selectedFinance?.primaryCourse?.courseTitle}</div>
-              </div>
-              <table className="w-full border-collapse border border-slate-200 text-right">
-                <thead><tr className="bg-slate-100"><th className="p-2 border border-slate-200">عنوان</th><th className="p-2 border border-slate-200">مبلغ (تومان)</th></tr></thead>
-                <tbody>
-                  <tr><td className="p-2 border border-slate-200">شهریه مصوب دوره</td><td className="p-2 border border-slate-200 font-mono">{formatToman(selectedFinance?.totalTuition)}</td></tr>
-                  <tr><td className="p-2 border border-slate-200">مجموع دریافتی</td><td className="p-2 border border-slate-200 font-mono text-emerald-700 font-bold">{formatToman(selectedFinance?.totalPaid)}</td></tr>
-                  <tr className="bg-slate-50"><td className="p-2 border border-slate-200 font-bold">مانده بدهی</td><td className="p-2 border border-slate-200 font-mono font-bold text-rose-700">{formatToman(selectedFinance?.debt)}</td></tr>
-                </tbody>
-              </table>
-              <div className="pt-8 grid grid-cols-2 text-center text-xs text-slate-500">
-                <div>مهر و امضای آموزشگاه</div><div>امضای هنرجو</div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setIsPrintModalOpen(false)} className="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition cursor-pointer">بستن</button>
-              <button onClick={() => window.print()} className="px-5 py-2 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition flex items-center gap-1.5 cursor-pointer">
-                <Printer className="w-3.5 h-3.5" />چاپ
-              </button>
             </div>
           </div>
         </div></ModalPortal>

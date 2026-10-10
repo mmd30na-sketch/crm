@@ -25,11 +25,12 @@ import {
 import { Course, Student, Enrollment, WebsiteRegistration } from '../types';
 import * as api from '../api/client';
 import { checkScanner, scanWithScanner, ScannerState } from '../api/scanner';
-import { drawContractPage } from '../utils/pdf';
 import { analyzeCardImage, rotateImage90, CardImageQuality } from '../utils/cardImageQuality';
-import { jsPDF } from 'jspdf';
 import { jalaliToday } from '../utils/normalize';
 import ModalPortal from './ModalPortal';
+import RegistrationDocsPanel, { DocsInput, toBuildInput } from './print/RegistrationDocsPanel';
+import { toDataUrl, uploadAllDocs } from './print/docService';
+import { buildDocData, downloadFileName, DOC_LABELS } from '../utils/printDocs';
 
 interface StudentRegistrationFormProps {
   courses: Course[];
@@ -287,7 +288,9 @@ export default function StudentRegistrationForm({
   const [isSuccess,    setIsSuccess]    = useState(false);
   const [createdStudent, setCreatedStudent] = useState<Student | null>(null);
   const [createdEnrollmentId, setCreatedEnrollmentId] = useState<number | null>(null);
-  const [pdfPath, setPdfPath] = useState<string | null>(null);
+  // The three registration documents of the just-registered enrollment (success screen) and the result of the silent upload in "new" mode.
+  const [docsInput, setDocsInput] = useState<DocsInput | null>(null);
+  const [docsBanner, setDocsBanner] = useState<{ ok: boolean; text: string } | null>(null);
   // Student + enrollment already saved by a submit whose payment step failed: a retry only records the payment.
   const savedRegistration = useRef<{ key: string; student: Student; enrollment: Enrollment } | null>(null);
 
@@ -611,171 +614,23 @@ export default function StudentRegistrationForm({
     finally { setIsScanningOCR(false); }
   };
 
-  /* PDF receipt */
-    /* 3-Page Registration Forms PDF: Receipt (P1), Cardex (P2), Contract (P3) */
-  const generateAndUploadReceipt = async (enrollmentId: number, studentObj: Student, courseObj: Course, paid: number): Promise<string | null> => {
-    try {
-      const settings = await api.fetchReceiptSettings();
-      const today = jalaliToday();
-      let tuitionPrice = finalPrice || courseObj?.tuition || 0;
-      const debt = tuitionPrice - paid;
-      const statusText = debt <= 0 ? 'تسویه کامل' : 'بدهکار';
-      
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-
-      // Helper function to build high-res page canvas
-      const renderPage = (renderContent: (ctx: CanvasRenderingContext2D) => void) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 1240;
-        canvas.height = 1754;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return '';
-        ctx.direction = 'rtl';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, 1240, 1754);
-        renderContent(ctx);
-        return canvas.toDataURL('image/jpeg', 0.95);
-      };
-
-      // Page 1: Receipt
-      const p1Img = renderPage((ctx) => {
-        ctx.strokeStyle = '#0284c7';
-        ctx.lineWidth = 6;
-        ctx.strokeRect(40, 40, 1160, 1674);
-
-        ctx.fillStyle = '#eff6ff';
-        ctx.fillRect(43, 43, 1154, 160);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 36px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText(settings.academy_name || 'آموزشگاه رانندگی کارلا', 620, 125);
-        ctx.font = '22px Tahoma';
-        ctx.fillText(settings.header_text || 'رسید رسمی دریافت وجه و ثبت نام کارآموز', 620, 175);
-
-        ctx.fillStyle = '#0f172a';
-        ctx.textAlign = 'right';
-        ctx.font = 'bold 24px Tahoma';
-        ctx.fillText(`تاریخ: ${today}`, 1120, 270);
-        ctx.fillText(`شماره ثبت نام: ${courseNumber || enrollmentId}`, 1120, 320);
-
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(60, 360);
-        ctx.lineTo(1180, 360);
-        ctx.stroke();
-
-        ctx.fillStyle = '#0284c7';
-        ctx.font = 'bold 26px Tahoma';
-        ctx.fillText('مشخصات کارآموز و دوره', 1120, 420);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`نام: ${studentObj.first_name}`, 1120, 480);
-        ctx.fillText(`نام خانوادگی: ${studentObj.last_name}`, 1120, 530);
-        ctx.fillText(`کد ملی: ${studentObj.national_code}`, 1120, 580);
-        ctx.fillText(`شماره همراه: ${studentObj.phone_number}`, 1120, 630);
-        ctx.fillText(`دوره آموزشی: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 680);
-
-        ctx.beginPath();
-        ctx.moveTo(60, 740);
-        ctx.lineTo(1180, 740);
-        ctx.stroke();
-
-        ctx.fillStyle = '#0284c7';
-        ctx.font = 'bold 26px Tahoma';
-        ctx.fillText('وضعیت مالی', 1120, 800);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`شهریه مصوب: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 860);
-        ctx.fillStyle = '#059669';
-        ctx.fillText(`مبلغ پرداختی: ${paid.toLocaleString('fa-IR')} تومان`, 1120, 910);
-        ctx.fillStyle = debt > 0 ? '#dc2626' : '#059669';
-        ctx.fillText(`مانده: ${debt.toLocaleString('fa-IR')} تومان`, 1120, 960);
-        ctx.fillText(`وضعیت تسویه: ${statusText}`, 1120, 1010);
-
-        ctx.fillStyle = '#64748b';
-        ctx.font = '20px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText(settings.footer_text || 'خواهشمند است تا اتمام امتحانات نسبت به تسویه کامل اقدام فرمایید.', 620, 1650);
-      });
-      if (p1Img) doc.addImage(p1Img, 'JPEG', 0, 0, 210, 297);
-
-      // Page 2: Cardex
-      const p2Img = renderPage((ctx) => {
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 6;
-        ctx.strokeRect(40, 40, 1160, 1674);
-
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(43, 43, 1154, 140);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 36px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText('کاردکس مهارت آموز', 620, 135);
-
-        ctx.fillStyle = '#0f172a';
-        ctx.textAlign = 'right';
-        ctx.font = 'bold 24px Tahoma';
-        ctx.fillText(`کد پرونده: ${courseNumber || enrollmentId}`, 1120, 250);
-        ctx.fillText(`تاریخ صدور: ${today}`, 1120, 300);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`نام و نام خانوادگی: ${studentObj.first_name} ${studentObj.last_name}`, 1120, 380);
-        ctx.fillText(`کد ملی: ${studentObj.national_code}`, 1120, 430);
-        ctx.fillText(`شماره تماس: ${studentObj.phone_number}`, 1120, 480);
-        ctx.fillText(`رشته / دوره: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 530);
-
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(60, 600);
-        ctx.lineTo(1180, 600);
-        ctx.stroke();
-
-        ctx.fillText(`شهریه کل: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 670);
-        ctx.fillText(`مبلغ پرداختی: ${paid.toLocaleString('fa-IR')} تومان`, 1120, 720);
-        ctx.fillText(`وضعیت حساب: ${statusText}`, 1120, 770);
-
-        ctx.strokeRect(60, 850, 1120, 750);
-        ctx.fillStyle = '#475569';
-        ctx.font = '22px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText('جدول جلسات آموزش نظری و عملی / امتحانات و ارزیابی مهارت آموز', 620, 900);
-      });
-      if (p2Img) {
-        doc.addPage();
-        doc.addImage(p2Img, 'JPEG', 0, 0, 210, 297);
-      }
-
-      // Page 3: official contract / tuition receipt
-      const p3Img = renderPage((ctx) => {
-        drawContractPage(ctx, {
-          today,
-          courseNumber,
-          enrollmentId,
-          studentName: `${studentObj.first_name} ${studentObj.last_name}`.trim(),
-          nationalCode: studentObj.national_code,
-          courseTitle: courseObj?.title || '',
-          paid,
-        });
-      });
-      if (p3Img) {
-        doc.addPage();
-        doc.addImage(p3Img, 'JPEG', 0, 0, 210, 297);
-      }
-
-      const blob = doc.output('blob');
-      const res  = await api.uploadEnrollmentReceipt(enrollmentId, blob, { filename: `registration_forms_${enrollmentId}.pdf` });
-      const path = res?.receipt_pdf_path || null;
-      setPdfPath(path);
-      return path;
-    } catch (err) {
-      console.warn('Receipt PDF generation failed:', err);
-      return null;
-    }
+  /** Everything the three documents need, with images inlined now (the form's previews are cleared right after). */
+  const buildDocsInput = async (studentObj: Student, enrollmentObj: Enrollment, courseObj: Course | undefined, paid: number): Promise<DocsInput> => {
+    let settings = null;
+    try { settings = await api.fetchReceiptSettings(); } catch (err) { console.warn('Receipt settings unavailable, using defaults:', err); }
+    const [personal, nationalCard] = await Promise.all([
+      toDataUrl(personalPhotoPreview || studentObj.personal_photo_url),
+      toDataUrl(idCardPreview || studentObj.id_card_photo_url),
+    ]);
+    return {
+      student: studentObj,
+      enrollment: { id: enrollmentObj.id, course_number: enrollmentObj.course_number ?? courseNumber, final_price: enrollmentObj.final_price || finalPrice },
+      course: courseObj ?? null,
+      paid,
+      settings,
+      images: { personal, nationalCard },
+      date: enrollmentObj.signup_date_jalali || jalaliToday(),
+    };
   };
 
   const handleSubmit = async (mode: 'new'|'print', newCourseConfirmed = false) => {
@@ -923,11 +778,23 @@ export default function StudentRegistrationForm({
       }
       savedRegistration.current = null;
       const courseObj = courses.find(c => c.id === selectedCourseId) || courses[0];
-      const receiptPath = await generateAndUploadReceipt(enrollmentObj.id, studentObj, courseObj, payAmount);
+      const input = await buildDocsInput(studentObj, enrollmentObj, courseObj, payAmount);
       onRefresh();
-      if (mode === 'print' && receiptPath) window.open(receiptPath, '_blank');
-      if (mode === 'new') { handleReset(); return; }
-      setIsSuccess(true);
+      if (mode === 'print') {
+        // The success screen builds, uploads and prints the three documents one after another and shows each one's status.
+        setDocsBanner(null);
+        setDocsInput(input);
+        setIsSuccess(true);
+        return;
+      }
+      const results = await uploadAllDocs(enrollmentObj.id, buildDocData(toBuildInput(input)), (k) => downloadFileName(studentObj.last_name, studentObj.id, k));
+      const failed = results.filter(r => !r.ok);
+      const who = `${studentObj.first_name} ${studentObj.last_name}`.trim();
+      setDocsBanner(failed.length
+        ? { ok: false, text: `ثبت‌نام «${who}» انجام شد ولی مدارک زیر ذخیره نشد: ${failed.map(f => `${DOC_LABELS[f.kind]} (${f.error})`).join('؛ ')}. از «لیست پرونده‌ها ← مدارک ثبت‌نام» دوباره بسازید.` }
+        : { ok: true, text: `ثبت‌نام «${who}» انجام شد و سه مدرک (رسید، برگ خلاصه پرونده، قرارداد) ذخیره شد.` });
+      handleReset();
+      return;
     } catch (err: any) {
       if (err instanceof api.RegistrationError && err.message === api.REGISTRATION_ALREADY_PROCESSED && selectedRegId) {
         setPendingRegs((rows) => rows.filter((r) => r.id !== selectedRegId));
@@ -944,7 +811,7 @@ export default function StudentRegistrationForm({
     setIdCardFile(null); setIdCardPreview(null);
     setPersonalPhotoFile(null); setPersonalPhotoPreview(null);
     setPayAmount(0); setPayDesc(''); setPaymentType('full'); setHasDiscount(false); setDiscountAmount(0);
-    setCreatedStudent(null); setCreatedEnrollmentId(null); setPdfPath(null);
+    setCreatedStudent(null); setCreatedEnrollmentId(null); setDocsInput(null);
     savedRegistration.current = null;
     setOcrSuccess(false); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null); setQualityNotice(null);
     setOcrError(null); setStepError(null); setIsSuccess(false); setExistingNotice(null);
@@ -957,7 +824,7 @@ export default function StudentRegistrationForm({
   if (isSuccess && createdStudent) {
     const course = courses.find(c => c.id === selectedCourseId);
     return (
-      <div className="max-w-xl mx-auto fade-in" id="registration-success-view">
+      <div className="max-w-2xl mx-auto fade-in" id="registration-success-view">
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
           <div className="h-1 bg-gradient-to-l from-teal-400 via-sky-500 to-sky-400" />
 
@@ -969,7 +836,7 @@ export default function StudentRegistrationForm({
             <div>
               <h2 className="text-xl font-black text-slate-900 mb-1">ثبت‌نام با موفقیت انجام شد!</h2>
               <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-                پرونده کارآموز ایجاد شد و رسید PDF تولید گردید.
+                پرونده کارآموز ایجاد شد. وضعیت هر سه مدرک در زیر نمایش داده می‌شود.
               </p>
               {existingNotice && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2 max-w-xs mx-auto">{existingNotice}</p>}
             </div>
@@ -990,13 +857,11 @@ export default function StudentRegistrationForm({
               ))}
             </div>
 
+            {docsInput && (
+              <RegistrationDocsPanel input={docsInput} autoRun autoPrint title="مدارک ثبت‌نام (رسید، برگ خلاصه پرونده، قرارداد)" />
+            )}
+
             <div className="flex gap-2 justify-center flex-wrap">
-              {pdfPath && (
-                <a href={pdfPath} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg transition shadow-xs">
-                  <FileText className="w-3.5 h-3.5" />رسید PDF
-                </a>
-              )}
               <button onClick={handleReset}
                 className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg transition">
                 <Users className="w-3.5 h-3.5" />ثبت جدید
@@ -1031,6 +896,14 @@ export default function StudentRegistrationForm({
           )}
         </div>
 
+
+        {docsBanner && (
+          <div role="status" className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 ${docsBanner.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+            {docsBanner.ok ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+            <p className="text-xs font-semibold flex-1">{docsBanner.text}</p>
+            <button type="button" onClick={() => setDocsBanner(null)} aria-label="بستن" className="p-0.5 hover:opacity-70 cursor-pointer"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        )}
 
         {(stepError || ocrError) && (
           <div role="alert" className="mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-rose-700">

@@ -4,7 +4,8 @@ import { flushSync } from 'react-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { DocData, DocKind, DOC_LABELS } from '../../utils/printDocs';
+import { DocData, DocKind, DOC_KINDS, DOC_LABELS } from '../../utils/printDocs';
+import { uploadEnrollmentReceipt } from '../../api/client';
 import { DocByKind, PD_CSS, PAGE_MM, fontFaceCss } from './PrintDocs';
 
 /** Browser-side generation of the three registration documents: PDF files and the print dialog. */
@@ -196,4 +197,17 @@ export async function printDocsSequentially(
     }
   }
   return out;
+}
+
+/** Builds and uploads all three PDFs in parallel; one failing document never stops the others. Never throws. */
+export async function uploadAllDocs(
+  enrollmentId: number, data: DocData, fileNameFor: (kind: DocKind) => string,
+): Promise<Array<{ kind: DocKind; ok: boolean; error?: string }>> {
+  const settled = await Promise.allSettled(DOC_KINDS.map(async (kind) => {
+    const blob = await renderDocPdf(kind, data);
+    await uploadEnrollmentReceipt(enrollmentId, blob, { kind, filename: fileNameFor(kind) });
+  }));
+  return settled.map((r, i) => r.status === 'fulfilled'
+    ? { kind: DOC_KINDS[i], ok: true }
+    : { kind: DOC_KINDS[i], ok: false, error: (r.reason as any)?.message || 'خطای نامشخص' });
 }
