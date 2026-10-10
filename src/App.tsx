@@ -5,14 +5,10 @@ import {
   BarChart3,
   Settings as SettingsIcon,
   Calendar,
-  Bell,
-  FileText,
   Menu,
   LayoutDashboard,
   MessageSquare,
-  ChevronLeft,
   RefreshCw,
-  Wifi,
   LogOut,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
@@ -22,6 +18,7 @@ import StudentRegistrationForm from './components/StudentRegistrationForm';
 import AccountingDashboard from './components/AccountingDashboard';
 import Settings from './components/Settings';
 import ContractPrintForm from './components/forms/ContractPrintForm';
+import PrintPreview from './components/print/PrintPreview';
 import SupervisorDashboard from './components/SupervisorDashboard';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
@@ -65,7 +62,8 @@ const NAV_ITEMS = [
     sublabel: 'مرکز ارتباطی',
     icon: MessageSquare,
     color: 'rose',
-    roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
+    // The server allows /api/messenger for admin and cashier only.
+    roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
     id: 'settings',
@@ -107,7 +105,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>('supervisor');
   const [loading, setLoading] = useState<boolean>(true);
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  // On phones the sidebar overlays the content, so start collapsed there.
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => window.innerWidth >= 768);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const [students, setStudents] = useState<Student[]>([]);
@@ -119,20 +118,28 @@ export default function App() {
   const refreshAllData = async () => {
     setIsRefreshing(true);
     try {
-      const [stdData, crsData, enrData, payData, expData] = await Promise.all([
+      // Photo/receipt URLs are built with the file token, so get one before the lists are loaded.
+      await api.ensureFileToken();
+      // Each dataset is loaded on its own: a role that may not read payments/expenses (e.g. the instructor)
+      // must still get students and courses, and a failed refresh keeps what is already on screen.
+      const results = await Promise.allSettled([
         api.fetchStudents(),
         api.fetchCourses(),
         api.fetchEnrollments(),
         api.fetchPayments(),
         api.fetchExpenses(),
       ]);
-      setStudents(stdData);
-      setCourses(crsData);
-      setEnrollments(enrData);
-      setPayments(payData);
-      setExpenses(expData);
-    } catch (err) {
-      console.error('Error fetching dashboard datasets:', err);
+      const apply = <T,>(r: PromiseSettledResult<T>, set: React.Dispatch<React.SetStateAction<T>>) => {
+        if (r.status === 'fulfilled') set(r.value);
+      };
+      apply(results[0] as PromiseSettledResult<Student[]>, setStudents);
+      apply(results[1] as PromiseSettledResult<Course[]>, setCourses);
+      apply(results[2] as PromiseSettledResult<Enrollment[]>, setEnrollments);
+      apply(results[3] as PromiseSettledResult<Payment[]>, setPayments);
+      apply(results[4] as PromiseSettledResult<Expense[]>, setExpenses);
+      results.forEach((r, i) => {
+        if (r.status === 'rejected' && !/403|Forbidden/i.test(String(r.reason))) console.error('Error fetching dataset', i, r.reason);
+      });
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -173,8 +180,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authed) refreshAllData();
+    if (!authed) return;
+    api.startFileTokenRefresh();
+    refreshAllData();
   }, [authed]);
+
+  // A renewed file token goes into the photo/receipt URLs already on screen (images re-render with it).
+  useEffect(() => {
+    const onFileToken = () => {
+      setStudents(prev => prev.map(api.withCurrentFileToken));
+      setEnrollments(prev => prev.map(e => (e.receipt_pdf_path ? { ...e, receipt_pdf_path: api.protectedFileUrl(e.receipt_pdf_path) } : e)));
+    };
+    window.addEventListener(api.FILE_TOKEN_EVENT, onFileToken);
+    return () => window.removeEventListener(api.FILE_TOKEN_EVENT, onFileToken);
+  }, []);
 
   const role: StaffRole = currentUser?.role === 'cashier' || currentUser?.role === 'instructor' ? currentUser.role : 'admin';
   const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role));
@@ -182,6 +201,8 @@ export default function App() {
   const handleActiveTabChange = (newTab: string) => {
     if (!visibleNav.some(item => item.id === newTab)) return;
     setActiveTab(newTab);
+    // On phones the sidebar covers the content: close it once a tab is picked.
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
   useEffect(() => {
@@ -192,7 +213,7 @@ export default function App() {
 
   const activeNavItem = visibleNav.find(n => n.id === activeTab) || NAV_ITEMS.find(n => n.id === activeTab);
 
-  const jalaliDate = new Date().toLocaleDateString('fa-IR');
+  const jalaliDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' });
 
   if (authChecking) {
     return <div className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center" dir="rtl">در حال بررسی ورود...</div>;
@@ -211,8 +232,12 @@ export default function App() {
       {/* ═══════════════════════════════════════════════
           SIDEBAR — Dark Premium Navigation
       ═══════════════════════════════════════════════ */}
+      {/* Phones: the sidebar is an overlay above the content; tapping the backdrop closes it. */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden="true" />
+      )}
       <aside
-        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out ${
+        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 md:static md:z-auto ${
           isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden'
         }`}
         id="app-sidebar"
@@ -225,7 +250,6 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-white text-base font-bold tracking-tight leading-tight">Carla CRM</h1>
-              
             </div>
           </div>
         </div>
@@ -276,21 +300,8 @@ export default function App() {
 
         {/* Sidebar Footer */}
         <div className="p-4 border-t border-white/5">
-          {/* Server Status */}
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 mb-3">
-            <div className="pulse-dot green" />
-            <span className="text-[10px] text-slate-400 font-medium flex-1">سرور فعال</span>
-            <Wifi className="h-3 w-3 text-slate-600" />
-          </div>
           {/* User Card */}
           <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/5">
-            <div className="h-8 w-8 rounded-xl overflow-hidden border border-white/10 shrink-0">
-              <img
-                src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=64&h=64&q=80"
-                alt="اپراتور"
-                className="h-full w-full object-cover"
-              />
-            </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-300 leading-tight truncate">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
               <div className="text-[9px] text-slate-600 leading-tight">{ROLE_LABEL[role]}</div>
@@ -328,8 +339,6 @@ export default function App() {
 
             {/* Breadcrumb */}
             <div className="flex items-center gap-1.5 text-sm">
-              
-              <ChevronLeft className="h-3.5 w-3.5 text-slate-300" />
               {activeNavItem && (
                 <div className="flex items-center gap-1.5">
                   <activeNavItem.icon className={`h-4 w-4 ${ICON_COLOR_MAP[activeNavItem.color]}`} />
@@ -353,23 +362,11 @@ export default function App() {
             {/* Separator */}
             <div className="h-6 w-px bg-slate-200" />
 
-            {/* Online Badge */}
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 rounded-full border border-emerald-100">
-              <span className="pulse-dot green" style={{ width: 7, height: 7 }} />
-              <span className="text-[10px] font-bold text-emerald-700">API متصل</span>
-            </div>
-
             {/* Date */}
             <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
               <Calendar className="h-3.5 w-3.5 text-sky-400" />
               <span className="font-bold font-mono text-[11px] text-slate-600">{jalaliDate}</span>
             </div>
-
-            {/* Notification */}
-            <button className="relative p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all">
-              <Bell className="h-4.5 w-4.5" />
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 bg-rose-500 rounded-full ring-2 ring-white" />
-            </button>
 
             {/* Separator */}
             <div className="h-6 w-px bg-slate-200" />
@@ -379,13 +376,6 @@ export default function App() {
               <div className="hidden md:block text-right">
                 <div className="text-xs font-bold text-slate-700 leading-tight">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
                 <div className="text-[9px] text-slate-400">{ROLE_LABEL[role]}</div>
-              </div>
-              <div className="h-8 w-8 rounded-xl overflow-hidden border-2 border-sky-100 ring-1 ring-sky-200/50">
-                <img
-                  src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=64&h=64&q=80"
-                  alt="اپراتور"
-                  className="h-full w-full object-cover"
-                />
               </div>
             </div>
           </div>
@@ -398,6 +388,8 @@ export default function App() {
         >
           {new URLSearchParams(window.location.search).get('print') === 'contract' ? (
               <ContractPrintForm />
+          ) : new URLSearchParams(window.location.search).get('print') === 'all' ? (
+              <PrintPreview enrollmentId={Number(new URLSearchParams(window.location.search).get('enrollment')) || undefined} />
           ) : loading ? (
             <div className="flex flex-col items-center justify-center py-40 space-y-4 fade-in">
               <div className="carla-spinner" />
@@ -424,6 +416,7 @@ export default function App() {
                   payments={payments}
                   onRefresh={refreshAllData}
                   onActiveTabChange={handleActiveTabChange}
+                  role={role}
                 />
               )}
               {activeTab === 'register' && (role === 'admin' || role === 'cashier') && (
@@ -444,9 +437,12 @@ export default function App() {
                   onRefresh={refreshAllData}
                 />
               )}
-              {activeTab === 'messenger' && (
+              {activeTab === 'messenger' && (role === 'admin' || role === 'cashier') && (
                 <MessengerHub
                   students={students}
+                  courses={courses}
+                  enrollments={enrollments}
+                  payments={payments}
                   onRefresh={refreshAllData}
                 />
               )}
@@ -460,23 +456,6 @@ export default function App() {
           )}
         </div>
 
-        {/* ── FOOTER ── */}
-        <footer
-          className="carla-footer px-6 py-2.5 flex items-center justify-between shrink-0"
-          id="app-footer"
-        >
-          <div className="flex items-center gap-4 text-[10px] text-slate-400">
-            <span className="flex items-center gap-1">
-              <span className="pulse-dot green" style={{ width: 6, height: 6 }} />
-              درگاه: متصل
-            </span>
-            <span>آرشیو رسید: فعال</span>
-            <span>Carla CRM v2.4.0</span>
-          </div>
-          <div className="text-[10px] text-slate-400">
-            سیستم مدیریت
-          </div>
-        </footer>
       </main>
     </div>
   );

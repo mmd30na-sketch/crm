@@ -54,12 +54,12 @@ const DEFAULT_RULES = [
 
 export const ContractPrintForm: React.FC<ContractPrintFormProps> = ({
   organizationName = 'کارت هوشمند کرمانشاه',
-  contractDate = '۱۴۰۴/۱۱/۰۲',
-  caseNumber = '120',
-  studentName = 'آرمین نجف آبادی',
-  nationalId = '324-229-3908',
-  courseTitle = 'حمل و نقل جاده ای',
-  paymentAmount = '۴,۷۰۰,۰۰۰ تومان',
+  contractDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' }),
+  caseNumber = '………',
+  studentName = '………………',
+  nationalId = '………………',
+  courseTitle = '………………',
+  paymentAmount = '………………',
   rules = DEFAULT_RULES,
   onPrint,
 }) => {

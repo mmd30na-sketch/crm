@@ -1,8 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
   Edit3,
-  Printer,
   MessageSquare,
   Trash2,
   ZoomIn,
@@ -22,9 +21,15 @@ import {
   ChevronDown,
   DollarSign,
   SlidersHorizontal,
+  ChevronRight,
+  ChevronLeft,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
+import { studentBalance } from '../utils/finance';
+import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus } from '../utils/studentFilters';
+import ModalPortal from './ModalPortal';
+import StudentDocsSection from './print/StudentDocsSection';
 
 interface StudentsListProps {
   students?: Student[];
@@ -33,7 +38,12 @@ interface StudentsListProps {
   payments?: Payment[];
   onRefresh?: () => void;
   onActiveTabChange?: (tab: string, enrollmentIdOrStudentId?: number) => void;
+  /** Signed-in role: the instructor gets a read-only list (no money, edits, messages); deleting is admin-only. */
+  role?: 'admin' | 'cashier' | 'instructor';
 }
+
+const PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 250;
 
 /* ────────────────────────────────────────────
    SUB-COMPONENTS
@@ -87,7 +97,11 @@ export default function StudentsList({
   payments: propPayments,
   onRefresh,
   onActiveTabChange,
+  role = 'admin',
 }: StudentsListProps) {
+  // Mirrors the server's rules (server.ts canAccessApi): buttons a role cannot use are not shown.
+  const canManage = role === 'admin' || role === 'cashier';
+  const canDelete = role === 'admin';
 
     const studentsList    = propStudents    ?? [];
   const coursesList     = propCourses     ?? [];
@@ -96,40 +110,66 @@ export default function StudentsList({
 
     const [selectedStudentId, setSelectedStudentId] = useState<number>(() => studentsList[0]?.id ?? 1);
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
+  const profileCardRef = useRef<HTMLDivElement | null>(null);
+
+  // The profile card sits below the list, so bring it into view when a row is picked.
+  const selectStudent = (id: number) => {
+    setSelectedStudentId(id);
+    requestAnimationFrame(() => profileCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
 
 
 
   const [searchTerm,          setSearchTerm]          = useState('');
+  const [debouncedSearch,     setDebouncedSearch]     = useState('');
+  const [page,                setPage]                = useState(1);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [courseFilter,        setCourseFilter]        = useState('all');
   const [courseNumberFilter,  setCourseNumberFilter]  = useState('all');
   const [financialFilter,     setFinancialFilter]     = useState<'all' | 'settled' | 'debtors'>('all');
 
   const [zoomPhotoUrl,          setZoomPhotoUrl]          = useState<{ url: string; title: string } | null>(null);
   const [editingStudent,        setEditingStudent]        = useState<Student | null>(null);
-  const [isPrintModalOpen,      setIsPrintModalOpen]      = useState(false);
   const [messagingStudent,      setMessagingStudent]      = useState<Student | null>(null);
   const [messageText,           setMessageText]           = useState('');
   const [messageSent,           setMessageSent]           = useState(false);
   const [deleteConfirmStudent,  setDeleteConfirmStudent]  = useState<Student | null>(null);
   const [paymentStudent,        setPaymentStudent]        = useState<Student | null>(null);
   const [paymentAmount,         setPaymentAmount]         = useState('');
+  const [paymentEnrollmentId,   setPaymentEnrollmentId]   = useState<number | null>(null);
   const [paymentMethod,         setPaymentMethod]         = useState('pos');
   const [paymentDesc,           setPaymentDesc]           = useState('واریز قسط شهریه');
   const [isSubmittingPay,       setIsSubmittingPay]       = useState(false);
+  const [editError,             setEditError]             = useState<string | null>(null);
+  const [payError,              setPayError]              = useState<string | null>(null);
+  const [deleteError,           setDeleteError]           = useState<string | null>(null);
+  const [messageError,          setMessageError]          = useState<string | null>(null);
+  const [isSendingMessage,      setIsSendingMessage]      = useState(false);
+  const [messageResult,         setMessageResult]         = useState<string>('');
+
+  // Filtering runs on the debounced text so typing stays responsive on big lists.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
   /* ── Finance helper ── */
+  // Per-enrollment balances are clamped at 0 (a settled/overpaid course must not hide another course's debt).
   const getStudentFinance = (studentId: number) => {
     const enrs       = enrollmentsList.filter(e => e.student_id === studentId);
-    const totalTuition= enrs.reduce((s, e) => s + (e.final_price || 0), 0);
     const pays       = paymentsList.filter(p => p.student_id === studentId);
-    const totalPaid  = pays.reduce((s, p) => s + p.amount, 0);
-    const debt       = Math.max(0, totalTuition - totalPaid);
+    const { totalTuition, totalPaid, debt, owed } = studentBalance(enrs, pays);
+    const status     = financialStatus({ debt, enrollmentsCount: enrs.length });
     const courses    = enrs.map(e => {
       const c = coursesList.find(c => c.id === e.course_id);
-      return { enrollmentId: e.id, courseTitle: c?.title ?? 'دوره نامشخص', signupDate: e.signup_date_jalali ?? '—', courseNumber: e.course_number, tuition: e.final_price };
+      return { enrollmentId: e.id, courseTitle: c?.title ?? 'دوره نامشخص', signupDate: e.signup_date_jalali ?? '—', courseNumber: e.course_number, tuition: e.final_price, owed: owed.get(e.id) ?? 0 };
     });
-    const primaryCourse = courses[0] ?? { enrollmentId: 0, courseTitle: 'ثبت‌نام نشده', signupDate: '—', courseNumber: undefined, tuition: 0 };
-    return { totalTuition, totalPaid, debt, isSettled: debt <= 0 && totalTuition > 0, courses, primaryCourse, paymentsCount: pays.length };
+    // The course shown for the student follows the active course / course-number filter.
+    const matching = courses.filter(c =>
+      (courseFilter === 'all' || c.courseTitle === courseFilter) &&
+      (courseNumberFilter === 'all' || String(c.courseNumber) === courseNumberFilter));
+    const primaryCourse = matching[0] ?? courses[0] ?? { enrollmentId: 0, courseTitle: 'ثبت‌نام نشده', signupDate: '—', courseNumber: undefined, tuition: 0 };
+    return { totalTuition, totalPaid, debt, status, isSettled: status === 'settled', courses, primaryCourse, paymentsCount: pays.length };
   };
 
   const formatToman = (n: number) => n.toLocaleString('fa-IR') + ' تومان';
@@ -141,17 +181,37 @@ export default function StudentsList({
     return Array.from(new Set(nums)).sort((a, b) => Number(b) - Number(a));
   }, [enrollmentsList]);
 
+  // On first open, show only the newest course number (the user can switch to "all" at any time).
+  // It is applied once; students without an enrollment stay visible under it (matchesCourseNumber).
+  const courseNumberDefaulted = useRef(false);
+  useEffect(() => {
+    if (courseNumberDefaulted.current || availableCourseNumbers.length === 0) return;
+    courseNumberDefaulted.current = true;
+    setCourseNumberFilter(defaultCourseNumberFilter(availableCourseNumbers));
+  }, [availableCourseNumbers]);
+
   /* ── Filtered list ── */
   const filteredStudents = useMemo(() => studentsList.filter(s => {
-    const nm = `${s.first_name} ${s.last_name}`.toLowerCase();
-    if (!nm.includes(searchTerm.toLowerCase()) && !s.national_code.includes(searchTerm) && !s.phone_number.includes(searchTerm)) return false;
+    if (!matchesStudentSearch(s, debouncedSearch)) return false;
     const fin = getStudentFinance(s.id);
     if (courseFilter !== 'all' && !fin.courses.some(c => c.courseTitle === courseFilter)) return false;
-    if (courseNumberFilter !== 'all' && !fin.courses.some(c => String(c.courseNumber) === courseNumberFilter)) return false;
-    if (financialFilter === 'settled' && !fin.isSettled) return false;
-    if (financialFilter === 'debtors' && (fin.debt <= 0 || fin.totalTuition === 0)) return false;
+    if (!matchesCourseNumber(fin.courses.map(c => c.courseNumber), courseNumberFilter)) return false;
+    if (financialFilter === 'settled' && fin.status !== 'settled') return false;
+    if (financialFilter === 'debtors' && fin.status !== 'debtor') return false;
     return true;
-  }).sort((a, b) => b.id - a.id), [studentsList, enrollmentsList, paymentsList, coursesList, searchTerm, courseFilter, courseNumberFilter, financialFilter]);
+  }).sort((a, b) => b.id - a.id), [studentsList, enrollmentsList, paymentsList, coursesList, debouncedSearch, courseFilter, courseNumberFilter, financialFilter]);
+
+  /* ── Pagination ── */
+  const totalPages  = Math.max(1, Math.ceil(filteredStudents.length / PAGE_SIZE));
+  // Clamp on read so a delete (or refresh) that shrinks the list never leaves us on an empty page.
+  const currentPage = Math.min(page, totalPages);
+  const pageStart   = (currentPage - 1) * PAGE_SIZE;
+  const pagedStudents = useMemo(() => filteredStudents.slice(pageStart, pageStart + PAGE_SIZE), [filteredStudents, pageStart]);
+
+  // Any search/filter change starts again from the first page.
+  useEffect(() => { setPage(1); }, [debouncedSearch, courseFilter, courseNumberFilter, financialFilter]);
+  useEffect(() => { if (page !== currentPage) setPage(currentPage); }, [page, currentPage]);
+  useEffect(() => { tableScrollRef.current?.scrollTo({ top: 0 }); }, [currentPage]);
 
     React.useEffect(() => {
     if (!hasAutoSelected && filteredStudents.length > 0) {
@@ -160,47 +220,52 @@ export default function StudentsList({
     }
   }, [filteredStudents, hasAutoSelected]);
 
+  // The picked student's card is shown even when the current filters hide their row.
   const selectedStudent = useMemo(() => studentsList.find(s => s.id === selectedStudentId) ?? filteredStudents[0] ?? null, [studentsList, selectedStudentId, filteredStudents]);
+  const selectedHiddenByFilters = !!selectedStudent && !filteredStudents.some(s => s.id === selectedStudent.id);
   const selectedFinance = selectedStudent ? getStudentFinance(selectedStudent?.id) : null;
-  const hasActiveFilters = searchTerm || courseFilter !== 'all' || financialFilter !== 'all';
+  const hasActiveFilters = searchTerm || courseFilter !== 'all' || courseNumberFilter !== 'all' || financialFilter !== 'all';
 
   /* ── Handlers ── */
   const handleSaveStudentEdit = async () => {
     if (!editingStudent) return;
+    setEditError(null);
     try {
-      if (onRefresh) {
-        await api.updateStudent(editingStudent);
-        onRefresh();
-      } else {
-        
-      }
-    } catch {
-      
+      await api.updateStudent(editingStudent);
+      onRefresh?.();
+      setEditingStudent(null);
+    } catch (err: any) {
+      setEditError(err?.message || 'ذخیره تغییرات ناموفق بود.');
     }
-    setEditingStudent(null);
   };
 
   const handleDeleteStudent = async (id: number) => {
+    setDeleteError(null);
     try {
-      if (onRefresh) { await api.deleteStudentCascade(id); onRefresh(); }
-      else {
-        
-        
-        
-      }
+      await api.deleteStudentCascade(id);
+      onRefresh?.();
       setDeleteConfirmStudent(null);
-      if (selectedStudentId === id) setSelectedStudentId(studentsList.find(s => s.id !== id)?.id ?? 1);
-    } catch { /* noop */ }
+      if (selectedStudentId === id) {
+        const next = studentsList.find(s => s.id !== id);
+        if (next) setSelectedStudentId(next.id);
+      }
+    } catch (err: any) {
+      setDeleteError(err?.message || 'حذف پرونده ناموفق بود.');
+    }
   };
 
   const handleSavePayment = async () => {
     if (!paymentStudent || !paymentAmount) return;
-    setIsSubmittingPay(true);
+    setIsSubmittingPay(true); setPayError(null);
     try {
       const amount = parseFloat(paymentAmount);
-      if (onRefresh) { await api.createPayment({ student_id: paymentStudent.id, amount, pay_method: paymentMethod, description: paymentDesc }); onRefresh(); }
-      else {  }
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('مبلغ پرداخت معتبر نیست.');
+      if (!paymentEnrollmentId) throw new Error('دوره مربوط به این پرداخت را انتخاب کنید.');
+      await api.createPayment({ student_id: paymentStudent.id, enrollment_id: paymentEnrollmentId, amount, pay_method: paymentMethod, description: paymentDesc });
+      onRefresh?.();
       setPaymentStudent(null); setPaymentAmount('');
+    } catch (err: any) {
+      setPayError(err?.message || 'ثبت پرداخت ناموفق بود.');
     } finally { setIsSubmittingPay(false); }
   };
 
@@ -210,19 +275,29 @@ export default function StudentsList({
     setMessageText(fin.debt > 0
       ? `هنرجوی گرامی ${student.first_name} ${student.last_name}؛ با سلام، خواهشمند است نسبت به تسویه مانده بدهی شهریه خود به مبلغ ${formatToman(fin.debt)} اقدام فرمایید.\nآموزشگاه رانندگی کارلا`
       : `هنرجوی گرامی ${student.first_name} ${student.last_name}؛ پرونده آموزشی و مالی شما با موفقیت تسویه گردید.\nآموزشگاه رانندگی کارلا`);
-    setMessageSent(false);
+    setMessageSent(false); setMessageError(null); setMessageResult('');
   };
 
-  const handleSendMessage = () => {
-    if (onActiveTabChange) { onActiveTabChange('messenger', messagingStudent?.id); }
-    else { setMessageSent(true); setTimeout(() => { setMessagingStudent(null); setMessageSent(false); }, 1800); }
+  /** Sends the text as an SMS to the student's mobile and reports what the server actually did. */
+  const handleSendMessage = async () => {
+    if (!messagingStudent || !messageText.trim()) return;
+    setIsSendingMessage(true); setMessageError(null);
+    try {
+      const r = await api.sendMessengerMessage({
+        channel: 'sms', recipient: messagingStudent.phone_number || '', messageText: messageText.trim(), student_id: messagingStudent.id,
+      });
+      if (r.success) { setMessageResult(r.message); setMessageSent(true); }
+      else setMessageError(r.message || 'ارسال انجام نشد.');
+    } catch (err: any) {
+      setMessageError(err?.message || 'ارسال پیام ناموفق بود.');
+    } finally { setIsSendingMessage(false); }
   };
 
   /* ════════════════════════════════════════════
      RENDER
   ════════════════════════════════════════════ */
   return (
-    <div className="space-y-5 fade-in" id="students-list-view">
+    <div className="flex flex-col gap-5 fade-in" id="students-list-view">
 
       {/* ══════════════════════════════════════════════
           SECTION 1 — PROFILE MASTER CARD
@@ -230,7 +305,8 @@ export default function StudentsList({
       {selectedStudent && selectedFinance && (
         <div
           key={selectedStudent?.id}
-          className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm"
+          ref={profileCardRef}
+          className="order-1 scroll-mt-4 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm"
           id="student-profile-master-card"
           style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
         >
@@ -240,6 +316,7 @@ export default function StudentsList({
               <UserCheck className="w-4 h-4 text-sky-500" />
               <span className="text-sm font-bold text-slate-700">پرونده فعال</span>
               <span className="text-xs text-slate-400">/ کارآموز انتخاب‌شده</span>
+              {selectedHiddenByFilters && <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">در فیلتر فعلی لیست نیست</span>}
             </div>
             <div className="flex items-center gap-2">
               <StatusBadge status={selectedStudent?.status} />
@@ -281,7 +358,6 @@ export default function StudentsList({
                   <h2 className="text-xl font-black text-slate-900 tracking-tight">
                     {selectedStudent?.first_name} {selectedStudent?.last_name}
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">فرزند {selectedStudent?.father_name || '—'}</p>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <InfoCell icon={FileText}  label="کد ملی"       value={selectedStudent?.national_code}             mono accent="sky" />
@@ -323,14 +399,18 @@ export default function StudentsList({
               </div>
 
               {/* Financial KPI */}
-              <div className="md:col-span-3 bg-white border border-slate-200 rounded-xl p-4" style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+              {canManage && <div className="md:col-span-3 bg-white border border-slate-200 rounded-xl p-4" style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
                     <DollarSign className="w-4 h-4 text-sky-500" />وضعیت مالی پرونده
                   </span>
-                  {selectedFinance?.isSettled ? (
+                  {selectedFinance?.status === 'settled' ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-bold">
                       <CheckCircle className="w-3.5 h-3.5" />تسویه کامل
+                    </span>
+                  ) : selectedFinance?.status === 'none' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 text-slate-500 border border-slate-200 rounded-full text-xs font-bold">
+                      بدون ثبت‌نام
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-50 text-rose-600 border border-rose-200 rounded-full text-xs font-bold">
@@ -358,33 +438,50 @@ export default function StudentsList({
                 </div>
 
                 {selectedFinance?.debt > 0 && (
-                  <button onClick={() => { setPaymentStudent(selectedStudent); setPaymentAmount(selectedFinance?.debt.toString()); }}
+                  <button onClick={() => {
+                    // Every payment is for one course registration: preselect the oldest one that is still owed.
+                    const open = selectedFinance.courses.filter(c => c.owed > 0).sort((a, b) => a.enrollmentId - b.enrollmentId)[0];
+                    setPayError(null); setPaymentStudent(selectedStudent);
+                    setPaymentEnrollmentId(open?.enrollmentId ?? null); setPaymentAmount(String(open?.owed ?? ''));
+                  }}
                     className="mt-3 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer">
                     <CreditCard className="w-3.5 h-3.5" />ثبت پرداختی
                   </button>
                 )}
-              </div>
+              </div>}
             </div>
 
+            {/* ─── Registration documents (receipt, file summary, contract) ─── */}
+            {canManage && selectedStudent && (
+              <div className="mb-5">
+                <StudentDocsSection
+                  student={selectedStudent}
+                  enrollments={enrollmentsList}
+                  courses={coursesList}
+                  payments={paymentsList}
+                  preferredEnrollmentId={selectedFinance?.primaryCourse?.enrollmentId || null}
+                  onRefresh={onRefresh}
+                />
+              </div>
+            )}
+
             {/* ─── Row 3: Action Buttons ─── */}
-            <div className="flex items-center flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
-              <button onClick={() => setEditingStudent({ ...selectedStudent })}
+            {canManage && <div className="flex items-center flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
+              <button onClick={() => { setEditError(null); setEditingStudent({ ...selectedStudent }); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <Edit3 className="w-3.5 h-3.5" />ویرایش پرونده
-              </button>
-              <button onClick={() => setIsPrintModalOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
-                <Printer className="w-3.5 h-3.5" />چاپ رسید
               </button>
               <button onClick={() => handleOpenMessaging(selectedStudent)}
                 className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <MessageSquare className="w-3.5 h-3.5" />ارسال پیام
               </button>
-              <button onClick={() => setDeleteConfirmStudent(selectedStudent)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 hover:border-rose-400 text-xs font-bold rounded-lg transition cursor-pointer">
-                <Trash2 className="w-3.5 h-3.5" />حذف پرونده
-              </button>
-            </div>
+              {canDelete && (
+                <button onClick={() => { setDeleteError(null); setDeleteConfirmStudent(selectedStudent); }}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 hover:border-rose-400 text-xs font-bold rounded-lg transition cursor-pointer">
+                  <Trash2 className="w-3.5 h-3.5" />حذف پرونده
+                </button>
+              )}
+            </div>}
           </div>
         </div>
       )}
@@ -392,7 +489,7 @@ export default function StudentsList({
       {/* ══════════════════════════════════════════════
           SECTION 2 — TABLE WITH SEARCH & FILTERS
       ══════════════════════════════════════════════ */}
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm" id="students-datasheet-section"
+      <div className="order-2 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm" id="students-datasheet-section"
         style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.05)' }}>
 
         {/* ─── Toolbar ─── */}
@@ -406,6 +503,12 @@ export default function StudentsList({
               <span className="text-xs font-bold text-sky-600 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full font-mono">
                 {filteredStudents.length} نفر
               </span>
+              {courseNumberFilter !== 'all' && (
+                <button onClick={() => setCourseNumberFilter('all')} title="نمایش کارآموزان همه دوره‌ها"
+                  className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full hover:bg-amber-100 transition cursor-pointer">
+                  فقط دوره شماره {courseNumberFilter} — نمایش همه
+                </button>
+              )}
             </div>
 
             {/* Right: Search + Filters */}
@@ -466,7 +569,7 @@ export default function StudentsList({
 
               {/* Clear Filters */}
               {hasActiveFilters && (
-                <button onClick={() => { setSearchTerm(''); setCourseFilter('all'); setFinancialFilter('all'); }}
+                <button onClick={() => { setSearchTerm(''); setDebouncedSearch(''); setCourseFilter('all'); setCourseNumberFilter('all'); setFinancialFilter('all'); }}
                   className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 rounded-xl hover:bg-rose-100 transition cursor-pointer">
                   <X className="w-3 h-3" />پاک‌سازی
                 </button>
@@ -483,9 +586,9 @@ export default function StudentsList({
             <p className="text-xs">فیلترها یا عبارت جستجو را تغییر دهید</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div ref={tableScrollRef} className="overflow-auto max-h-[60vh]">
             <table className="w-full text-right">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-slate-50">
                                 <tr className="border-b border-slate-200 bg-slate-50/80">
                   {[
                     { label: 'کارآموز', hideCls: '' },
@@ -494,16 +597,16 @@ export default function StudentsList({
                     { label: 'دوره آموزشی', hideCls: '' },
                     { label: 'کلاس', hideCls: 'hidden lg:table-cell' },
                     { label: 'وضعیت مالی', hideCls: 'hidden sm:table-cell' },
-                    { label: 'وضعیت', hideCls: '' },
+                    { label: 'وضعیت', hideCls: 'hidden sm:table-cell' },
                   ].map(({ label, hideCls }) => (
-                    <th key={label} className={`px-5 py-4 text-xs font-bold text-slate-600 tracking-wider whitespace-nowrap border-b border-slate-200 ${hideCls}`}>
+                    <th key={label} className={`px-3 py-3 text-xs font-bold text-slate-600 tracking-wider whitespace-nowrap border-b border-slate-200 ${hideCls}`}>
                       {label}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filteredStudents.map(s => {
+                {pagedStudents.map(s => {
                   const fin       = getStudentFinance(s.id);
                   const isSelected= selectedStudent?.id === s.id;
                   const progress  = pct(fin.totalPaid, fin.totalTuition);
@@ -511,11 +614,11 @@ export default function StudentsList({
                   return (
                     <tr
                       key={s.id}
-                      onClick={() => setSelectedStudentId(s.id)}
+                      onClick={() => selectStudent(s.id)}
                       className={`cursor-pointer transition-all duration-150 hover:bg-sky-50/60 ${isSelected ? 'bg-sky-50 border-r-2 border-sky-500' : 'bg-white'}`}
                     >
                       {/* Avatar + Name */}
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3">
                         <div className="flex items-center gap-3">
                           <div className="shrink-0 relative">
                             <div className="w-9 h-9 rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
@@ -530,34 +633,35 @@ export default function StudentsList({
                               </div>
                             )}
                           </div>
-                          <div>
+                          <div className="max-w-[140px] sm:max-w-[260px] break-words">
                             <div className={`text-sm font-bold ${isSelected ? 'text-sky-700' : 'text-slate-800'}`}>
                               {s.first_name} {s.last_name}
                             </div>
                             <div className="text-[10px] text-slate-400 font-mono">#{String(s.id).padStart(4, '0')}</div>
+                            <div className="sm:hidden mt-1"><StatusBadge status={s.status} /></div>
                           </div>
                         </div>
                       </td>
 
                       {/* National Code */}
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3 hidden md:table-cell">
                         <span className="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg">{s.national_code}</span>
                       </td>
 
                       {/* Phone */}
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3 hidden sm:table-cell">
                         <span className="font-mono text-xs text-slate-600 dir-ltr">{s.phone_number}</span>
                       </td>
 
                       {/* Course */}
-                      <td className="px-4 py-3 max-w-[160px]">
+                      <td className="px-3 py-3 max-w-[130px]">
                         <span className="text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-lg truncate block">
                           {fin.primaryCourse.courseTitle}
                         </span>
                       </td>
 
                       {/* Class # */}
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3 hidden lg:table-cell">
                         {fin.primaryCourse.courseNumber
                           ? <span className="font-mono text-xs font-bold text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-lg">#{fin.primaryCourse.courseNumber}</span>
                           : <span className="text-slate-300 text-xs">—</span>
@@ -565,12 +669,14 @@ export default function StudentsList({
                       </td>
 
                       {/* Financial + Mini Progress */}
-                      <td className="px-4 py-3">
-                        <div className="space-y-1 min-w-[110px]">
-                          {fin.isSettled ? (
+                      <td className="px-3 py-3 hidden sm:table-cell">
+                        <div className="space-y-1 min-w-[90px]">
+                          {fin.status === 'settled' ? (
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                               <CheckCircle className="w-3 h-3" />تسویه
                             </span>
+                          ) : fin.status === 'none' ? (
+                            <span className="text-[10px] text-slate-400">—</span>
                           ) : (
                             <span className="text-[10px] font-mono font-bold text-rose-600">{formatToman(fin.debt)}</span>
                           )}
@@ -580,8 +686,8 @@ export default function StudentsList({
                         </div>
                       </td>
 
-                      {/* Status */}
-                      <td className="px-4 py-3">
+                      {/* Status (on phones it is shown under the name instead) */}
+                      <td className="px-3 py-3 hidden sm:table-cell">
                         <StatusBadge status={s.status} />
                       </td>
                     </tr>
@@ -594,10 +700,29 @@ export default function StudentsList({
 
         {/* ─── Table Footer ─── */}
         {filteredStudents.length > 0 && (
-          <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between">
+          <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400">
-              نمایش <strong className="text-slate-600">{filteredStudents.length}</strong> از <strong className="text-slate-600">{studentsList.length}</strong> کارآموز
+              نمایش <strong className="text-slate-600">{(pageStart + 1).toLocaleString('fa-IR')}</strong> تا <strong className="text-slate-600">{(pageStart + pagedStudents.length).toLocaleString('fa-IR')}</strong> از <strong className="text-slate-600">{filteredStudents.length.toLocaleString('fa-IR')}</strong> کارآموز
+              {filteredStudents.length !== studentsList.length && <> (کل: {studentsList.length.toLocaleString('fa-IR')})</>}
             </span>
+
+            {/* Pager: in RTL "previous" sits on the right and points right */}
+            {totalPages > 1 && (
+              <nav className="flex items-center gap-2" aria-label="صفحه‌بندی">
+                <button onClick={() => setPage(currentPage - 1)} disabled={currentPage <= 1}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer">
+                  <ChevronRight className="w-3.5 h-3.5" />قبلی
+                </button>
+                <span className="text-xs text-slate-500 font-mono">
+                  صفحه <strong className="text-slate-700">{currentPage.toLocaleString('fa-IR')}</strong> از {totalPages.toLocaleString('fa-IR')}
+                </span>
+                <button onClick={() => setPage(currentPage + 1)} disabled={currentPage >= totalPages}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer">
+                  بعدی<ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+              </nav>
+            )}
+
             <span className="text-[10px] text-slate-300">برای مشاهده پرونده روی هر ردیف کلیک کنید</span>
           </div>
         )}
@@ -609,7 +734,7 @@ export default function StudentsList({
 
       {/* 1. Photo Lightbox */}
       {zoomPhotoUrl && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={() => setZoomPhotoUrl(null)}>
+        <ModalPortal><div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={() => setZoomPhotoUrl(null)}>
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 max-w-2xl w-full space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -623,12 +748,12 @@ export default function StudentsList({
               <img src={zoomPhotoUrl.url} alt="" className="max-h-[68vh] w-auto object-contain" referrerPolicy="no-referrer" />
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 2. Edit Student Modal */}
       {editingStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -672,59 +797,17 @@ export default function StudentsList({
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button onClick={() => setEditingStudent(null)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
+              {editError && <p role="alert" className="text-xs font-semibold text-rose-600 ml-auto self-center">{editError}</p>}
+              <button onClick={() => { setEditingStudent(null); setEditError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
               <button onClick={handleSaveStudentEdit} className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition cursor-pointer shadow-sm">ذخیره تغییرات</button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* 3. Print Receipt Modal */}
-      {isPrintModalOpen && selectedStudent && selectedFinance && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-2xl w-full space-y-4 text-slate-100 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Printer className="w-4 h-4 text-teal-400" />پیش‌نمایش رسید رسمی
-              </h3>
-              <button onClick={() => setIsPrintModalOpen(false)} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"><X className="w-4 h-4" /></button>
-            </div>
-            <div id="printable-receipt" className="bg-white text-slate-900 p-6 rounded-xl border border-slate-200 space-y-4 text-xs">
-              <div className="flex items-center justify-between border-b-2 border-slate-800 pb-4">
-                <div><h2 className="text-base font-extrabold">آموزشگاه رانندگی کارلا</h2><p className="text-xs text-slate-500">رسید رسمی ثبت‌نام و وضعیت مالی</p></div>
-                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent?.id).padStart(5, '0')}</div><div>تاریخ: ۱۴۰۵/۰۵/۲۸</div></div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <div><strong>نام:</strong> {selectedStudent?.first_name} {selectedStudent?.last_name}</div>
-                <div><strong>کد ملی:</strong> {selectedStudent?.national_code}</div>
-                <div><strong>شماره همراه:</strong> {selectedStudent?.phone_number}</div>
-                <div><strong>دوره:</strong> {selectedFinance?.primaryCourse?.courseTitle}</div>
-              </div>
-              <table className="w-full border-collapse border border-slate-200 text-right">
-                <thead><tr className="bg-slate-100"><th className="p-2 border border-slate-200">عنوان</th><th className="p-2 border border-slate-200">مبلغ (تومان)</th></tr></thead>
-                <tbody>
-                  <tr><td className="p-2 border border-slate-200">شهریه مصوب دوره</td><td className="p-2 border border-slate-200 font-mono">{formatToman(selectedFinance?.totalTuition)}</td></tr>
-                  <tr><td className="p-2 border border-slate-200">مجموع دریافتی</td><td className="p-2 border border-slate-200 font-mono text-emerald-700 font-bold">{formatToman(selectedFinance?.totalPaid)}</td></tr>
-                  <tr className="bg-slate-50"><td className="p-2 border border-slate-200 font-bold">مانده بدهی</td><td className="p-2 border border-slate-200 font-mono font-bold text-rose-700">{formatToman(selectedFinance?.debt)}</td></tr>
-                </tbody>
-              </table>
-              <div className="pt-8 grid grid-cols-2 text-center text-xs text-slate-500">
-                <div>مهر و امضای آموزشگاه</div><div>امضای هنرجو</div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setIsPrintModalOpen(false)} className="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition cursor-pointer">بستن</button>
-              <button onClick={() => window.print()} className="px-5 py-2 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition flex items-center gap-1.5 cursor-pointer">
-                <Printer className="w-3.5 h-3.5" />چاپ
-              </button>
-            </div>
-          </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 4. Messaging Modal */}
       {messagingStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -736,27 +819,28 @@ export default function StudentsList({
             {messageSent ? (
               <div className="text-center py-8 space-y-3">
                 <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto" />
-                <p className="text-sm font-bold text-slate-900">پیام با موفقیت ارسال شد</p>
+                <p className="text-sm font-bold text-slate-900">{messageResult || 'پیام با موفقیت ارسال شد'}</p>
               </div>
             ) : (
               <>
                 <textarea rows={5} value={messageText} onChange={e => setMessageText(e.target.value)}
                   className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 resize-none leading-7 transition" />
+                {messageError && <p role="alert" className="text-xs font-semibold text-rose-600">{messageError}</p>}
                 <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                   <button onClick={() => setMessagingStudent(null)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
-                  <button onClick={handleSendMessage} className="px-5 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
-                    <Send className="w-3.5 h-3.5" />ارسال فوری
+                  <button onClick={handleSendMessage} disabled={isSendingMessage} className="px-5 py-2 text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-60 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
+                    <Send className="w-3.5 h-3.5" />{isSendingMessage ? 'در حال ارسال...' : 'ارسال فوری'}
                   </button>
                 </div>
               </>
             )}
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 5. New Payment Modal */}
       {paymentStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -766,6 +850,23 @@ export default function StudentsList({
               <button onClick={() => setPaymentStudent(null)} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 transition"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">دوره</label>
+                <select value={paymentEnrollmentId ?? ''} onChange={e => {
+                  const id = Number(e.target.value) || null;
+                  setPaymentEnrollmentId(id);
+                  const c = getStudentFinance(paymentStudent.id).courses.find(x => x.enrollmentId === id);
+                  if (c) setPaymentAmount(String(c.owed));
+                }}
+                  className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-400 cursor-pointer transition appearance-none">
+                  <option value="">انتخاب دوره…</option>
+                  {getStudentFinance(paymentStudent.id).courses.filter(c => c.owed > 0).map(c => (
+                    <option key={c.enrollmentId} value={c.enrollmentId}>
+                      {c.courseTitle}{c.courseNumber ? ` — دوره ${c.courseNumber}` : ''} (مانده: {formatToman(c.owed)})
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">مبلغ واریزی (تومان)</label>
                 <input type="number" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="مثال: ۱٬۰۰۰٬۰۰۰"
@@ -786,20 +887,21 @@ export default function StudentsList({
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 transition" />
               </div>
             </div>
+            {payError && <p role="alert" className="text-xs font-semibold text-rose-600">{payError}</p>}
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <button onClick={() => setPaymentStudent(null)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
-              <button onClick={handleSavePayment} disabled={isSubmittingPay || !paymentAmount}
+              <button onClick={() => { setPaymentStudent(null); setPayError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
+              <button onClick={handleSavePayment} disabled={isSubmittingPay || !paymentAmount || !paymentEnrollmentId}
                 className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
                 {isSubmittingPay ? 'در حال ثبت...' : <><CreditCard className="w-3.5 h-3.5" />ثبت قطعی</>}
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 6. Delete Confirm */}
       {deleteConfirmStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 text-center space-y-4" style={{ maxWidth: 400 }}>
             <div className="w-14 h-14 rounded-2xl bg-rose-100 flex items-center justify-center mx-auto">
               <AlertCircle className="w-7 h-7 text-rose-600" />
@@ -810,12 +912,13 @@ export default function StudentsList({
                 پرونده <strong className="text-rose-600">{deleteConfirmStudent.first_name} {deleteConfirmStudent.last_name}</strong> به همراه تمام سوابق و تراکنش‌های مالی حذف خواهد شد. این عملیات قابل بازگشت نیست.
               </p>
             </div>
+            {deleteError && <p role="alert" className="text-xs font-semibold text-rose-600">{deleteError}</p>}
             <div className="flex gap-3 justify-center">
-              <button onClick={() => setDeleteConfirmStudent(null)} className="px-5 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
+              <button onClick={() => { setDeleteConfirmStudent(null); setDeleteError(null); }} className="px-5 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
               <button onClick={() => handleDeleteStudent(deleteConfirmStudent.id)} className="px-6 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition cursor-pointer shadow-sm">حذف قطعی</button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

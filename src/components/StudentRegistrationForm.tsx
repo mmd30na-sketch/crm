@@ -24,7 +24,13 @@ import {
 } from 'lucide-react';
 import { Course, Student, Enrollment, WebsiteRegistration } from '../types';
 import * as api from '../api/client';
-import { jsPDF } from 'jspdf';
+import { checkScanner, scanWithScanner, ScannerState } from '../api/scanner';
+import { analyzeCardImage, rotateImage90, CardImageQuality } from '../utils/cardImageQuality';
+import { jalaliToday } from '../utils/normalize';
+import ModalPortal from './ModalPortal';
+import RegistrationDocsPanel, { DocsInput, toBuildInput } from './print/RegistrationDocsPanel';
+import { toDataUrl, uploadAllDocs } from './print/docService';
+import { buildDocData, downloadFileName, DOC_LABELS } from '../utils/printDocs';
 
 interface StudentRegistrationFormProps {
   courses: Course[];
@@ -34,9 +40,9 @@ interface StudentRegistrationFormProps {
 }
 
 function Field({
-  label, required = false, error, hint, children,
+  label, required = false, error, hint, warning, children,
 }: {
-  label: string; required?: boolean; error?: string | null; hint?: string; children: React.ReactNode;
+  label: string; required?: boolean; error?: string | null; hint?: string; warning?: string | null; children: React.ReactNode;
 }) {
   return (
     <div>
@@ -50,52 +56,62 @@ function Field({
           <AlertCircle className="w-3 h-3 shrink-0" />{error}
         </p>
       )}
-      {!error && hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
+      {!error && warning && (
+        <p className="flex items-center gap-1 text-[11px] text-amber-600 mt-1">
+          <AlertCircle className="w-3 h-3 shrink-0" />{warning}
+        </p>
+      )}
+      {!error && !warning && hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
     </div>
   );
 }
 
+function toLatinDigits(v: string): string {
+  return v
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
+}
+
 function Input({
-  icon: Icon, value, onChange, placeholder, type = 'text', mono = false, error = false,
-  inputMode, autoComplete, id, maxLength,
+  icon: Icon, value, onChange, placeholder, type = 'text', mono = false, error = false, warn = false,
+  inputMode, autoComplete, id, maxLength, disabled = false, currency = false,
 }: {
   icon: React.ElementType; value: string | number; onChange: (v: string) => void;
-  placeholder?: string; type?: string; mono?: boolean; error?: boolean;
+  placeholder?: string; type?: string; mono?: boolean; error?: boolean; warn?: boolean;
   inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode'];
-  autoComplete?: string; id?: string; maxLength?: number;
+  autoComplete?: string; id?: string; maxLength?: number; disabled?: boolean;
+  /** Numeric amount: shown with thousands separators, emitted as plain digits. */
+  currency?: boolean;
 }) {
+  const shown = currency && value !== '' && value != null
+    ? Number(toLatinDigits(String(value)).replace(/\D/g, '') || 0).toLocaleString('en-US')
+    : value;
   return (
     <div className="relative">
       <Icon className="w-5 h-5 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       <input
         id={id}
         type={type}
-        inputMode={inputMode}
+        inputMode={currency ? 'numeric' : inputMode}
         autoComplete={autoComplete}
         maxLength={maxLength}
+        disabled={disabled}
         aria-invalid={error || undefined}
-        value={value}
-        onChange={e => onChange(e.target.value)}
+        value={shown}
+        onChange={e => onChange(currency ? toLatinDigits(e.target.value).replace(/\D/g, '') : e.target.value)}
         placeholder={placeholder}
-        className={`w-full min-h-[52px] pr-11 pl-4 text-sm font-medium border rounded-2xl focus:outline-none focus:ring-2 focus:ring-offset-1 transition-all shadow-sm ${
+        className={`w-full min-h-[52px] pr-11 pl-4 text-sm font-medium border rounded-2xl focus:outline-none focus:ring-2 focus:ring-offset-1 transition-all shadow-sm disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed ${
           error
             ? 'border-rose-300 bg-rose-50/40 focus:border-rose-400 focus:ring-rose-100'
-            : 'border-slate-200 bg-white focus:border-sky-400 focus:ring-sky-100'
+            : warn
+              ? 'border-amber-300 bg-amber-50/60 focus:border-amber-400 focus:ring-amber-100'
+              : 'border-slate-200 bg-white focus:border-sky-400 focus:ring-sky-100'
         } ${mono ? 'font-mono' : ''}`}
       />
     </div>
   );
 }
 
-function jalaliToday(): string {
-  const raw = new Date().toLocaleDateString('fa-IR');
-  const mapped = raw
-    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
-    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660));
-  const m = mapped.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
-  if (!m) return mapped;
-  return `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}`;
-}
 
 /** Iranian national smart card (کارت ملی هوشمند) is ISO/IEC 7810 ID-1. */
 const IRAN_ID_CARD_MM = { width: 85.6, height: 53.98 };
@@ -161,9 +177,78 @@ function cropImageFileToRatio(file: File, ratio: number): Promise<File> {
   });
 }
 
+/** Phone photos are often 5–12 MB; the OCR does not need more than ~2400px, so shrink before uploading. */
+function downscaleImageFile(file: File, maxSide = 2400): Promise<File> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      if (scale === 1 && file.size < 2 * 1024 * 1024) { resolve(file); return; }
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(file); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        resolve(blob ? new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }) : file);
+      }, 'image/jpeg', 0.9);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+const OCR_WARNING_HINTS: Record<string, string> = {
+  national_code_checksum_failed: 'کد ملی معتبر نیست؛ لطفاً با کارت مطابقت دهید',
+  national_code_invalid_length: 'کد ملی ۱۰ رقم نیست؛ لطفاً با کارت مطابقت دهید',
+  birth_date_invalid: 'تاریخ تولد معتبر نیست؛ لطفاً با کارت مطابقت دهید',
+  low_confidence: 'اطمینان خواندن کم است؛ لطفاً با کارت مطابقت دهید',
+  name_too_long: 'مقدار خوانده‌شده نامعتبر است؛ دستی وارد کنید',
+  missing: 'خوانده نشد؛ لطفاً از روی کارت وارد کنید',
+};
+
+/** First Persian hint for a field's OCR warnings, or null. */
+function ocrHint(warnings: Record<string, string[]>, key: string): string | null {
+  const list = warnings[key];
+  if (!list || list.length === 0) return null;
+  for (const code of list) if (OCR_WARNING_HINTS[code] && code !== 'low_confidence') return OCR_WARNING_HINTS[code];
+  return list.includes('low_confidence') ? OCR_WARNING_HINTS.low_confidence : null;
+}
+
+function isValidIranNationalCode(code: string): boolean {
+  if (!/^\d{10}$/.test(code) || /^(\d)\1{9}$/.test(code)) return false;
+  const d = code.split('').map(Number);
+  let s = 0;
+  for (let i = 0; i < 9; i++) s += d[i] * (10 - i);
+  const r = s % 11;
+  return r < 2 ? d[9] === r : d[9] === 11 - r;
+}
+
 function splitFullName(fullName: string) {
   const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
   return { first: parts[0] || '', last: parts.slice(1).join(' ') };
+}
+
+/** Website category -> CRM course (by id when that course is active, else by title). */
+const REGISTRATION_COURSES: Record<string, { id: number; hint: string }> = {
+  cargo_freight: { id: 1, hint: 'باری' },
+  hazardous_materials: { id: 2, hint: 'خطرناک' },
+  passenger_bus: { id: 3, hint: 'مسافر' },
+  passenger_transport: { id: 3, hint: 'مسافر' },
+  ceo_company: { id: 4, hint: 'مدیرعامل' },
+  technical_manager: { id: 6, hint: 'مسئول فنی' },
+};
+
+function courseForCategory(category: string | undefined, courses: Course[]): number | null {
+  const key = String(category || '').trim();
+  const active = courses.filter(c => c.active !== false);
+  const entry = REGISTRATION_COURSES[key]
+    ?? Object.values(REGISTRATION_COURSES).find(e => key.includes(e.hint));
+  if (!entry) return null;
+  return (active.find(c => c.id === entry.id) ?? active.find(c => c.title.includes(entry.hint)))?.id ?? null;
 }
 
 function SectionHeader({ icon: Icon, label, color = 'sky' }: {
@@ -180,49 +265,6 @@ function SectionHeader({ icon: Icon, label, color = 'sky' }: {
       <Icon className="w-3.5 h-3.5" />
       {label}
     </div>
-  );
-}
-
-function WizardSteps({ step, onSelect }: { step: 1 | 2 | 3; onSelect: (s: 1 | 2 | 3) => void }) {
-  const items = [
-    { n: 1 as const, label: 'اطلاعات شخصی', icon: User },
-    { n: 2 as const, label: 'اطلاعات ارتباطی', icon: Phone },
-    { n: 3 as const, label: 'دوره آموزشی', icon: BookOpen },
-  ];
-  return (
-    <ol className="grid grid-cols-3 gap-2 mb-4">
-      {items.map((item) => {
-        const active = step === item.n;
-        const done = step > item.n;
-        const Icon = item.icon;
-        return (
-          <li key={item.n}>
-            <button
-              type="button"
-              onClick={() => { if (item.n < step) onSelect(item.n); }}
-              className={`w-full min-h-11 flex items-center gap-2 px-3 py-2.5 rounded-2xl border text-right transition ${
-                active
-                  ? 'bg-sky-600 text-white border-sky-600 shadow-sm'
-                  : done
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                    : 'bg-white text-slate-400 border-slate-200'
-              }`}
-            >
-              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${
-                active ? 'bg-white/20 text-white' : done ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400'
-              }`}>
-                {done ? <CheckCircle className="w-3.5 h-3.5" /> : item.n}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[10px] opacity-70">گام {item.n}</span>
-                <span className="block text-xs font-bold truncate">{item.label}</span>
-              </span>
-              <Icon className="w-3.5 h-3.5 mr-auto opacity-70 shrink-0" />
-            </button>
-          </li>
-        );
-      })}
-    </ol>
   );
 }
 
@@ -244,26 +286,28 @@ export default function StudentRegistrationForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitMode, setSubmitMode] = useState<'new'|'print'>('new');
   const [isSuccess,    setIsSuccess]    = useState(false);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [createdStudent, setCreatedStudent] = useState<Student | null>(null);
   const [createdEnrollmentId, setCreatedEnrollmentId] = useState<number | null>(null);
-  const [pdfPath, setPdfPath] = useState<string | null>(null);
+  // The three registration documents of the just-registered enrollment (success screen) and the result of the silent upload in "new" mode.
+  const [docsInput, setDocsInput] = useState<DocsInput | null>(null);
+  const [docsBanner, setDocsBanner] = useState<{ ok: boolean; text: string } | null>(null);
+  // Student + enrollment already saved by a submit whose payment step failed: a retry only records the payment.
+  const savedRegistration = useRef<{ key: string; student: Student; enrollment: Enrollment } | null>(null);
 
   const maxCourseNum = enrollments.map(e => e.course_number).filter((n): n is number => n != null).reduce((a,b) => Math.max(a,b), 0);
   const currentMax = maxCourseNum > 0 ? maxCourseNum : 105;
   const [courseNumber, setCourseNumber] = useState<number>(currentMax);
+  const courseNumberTouched = useRef(false);
   const [showNewCoursePrompt, setShowNewCoursePrompt] = useState<boolean>(false);
-  
-  // Track if they've answered the popup so it doesn't loop
-  const [hasPromptedNewCourse, setHasPromptedNewCourse] = useState<boolean>(false);
-  
-  // Also we want to keep currentMax around to compare
 
+  // Enrollments load asynchronously: follow the highest course number until the user edits it.
+  useEffect(() => {
+    if (!courseNumberTouched.current) setCourseNumber(currentMax);
+  }, [currentMax]);
 
   /* ── Personal Info ── */
   const [firstName,    setFirstName]    = useState('');
   const [lastName,     setLastName]     = useState('');
-  const [fatherName,   setFatherName]   = useState('');
   const [nationalCode, setNationalCode] = useState('');
   const [phoneNumber,  setPhoneNumber]  = useState('');
   const [birthDate,    setBirthDate]    = useState('');
@@ -277,6 +321,13 @@ export default function StudentRegistrationForm({
   const [idCardPreview, setIdCardPreview] = useState<string | null>(null);
   const [isScanningOCR, setIsScanningOCR] = useState(false);
   const [ocrSuccess,    setOcrSuccess]    = useState(false);
+  /** Per-field OCR warnings, cleared field by field when staff edit the value. */
+  const [ocrWarnings,   setOcrWarnings]   = useState<Record<string, string[]>>({});
+  const [ocrNeedsReview, setOcrNeedsReview] = useState(false);
+  const [ocrConfirmed,  setOcrConfirmed]  = useState(false);
+  const [ocrExpiry,     setOcrExpiry]     = useState<{ date: string; expired: boolean } | null>(null);
+  /** Photo-quality warning shown before upload; staff may retake, rotate or continue anyway. */
+  const [qualityNotice, setQualityNotice] = useState<{ file: File; q: CardImageQuality } | null>(null);
 
   const [personalPhotoFile,    setPersonalPhotoFile]    = useState<File | null>(null);
   const [personalPhotoPreview, setPersonalPhotoPreview] = useState<string | null>(null);
@@ -288,11 +339,10 @@ export default function StudentRegistrationForm({
   const [isPortrait, setIsPortrait] = useState(false);
 
   /* Course & Payment */
-    const [selectedCourseId, setSelectedCourseId] = useState<number>(courses[0]?.id || 1);
-  const [signupDate, setSignupDate] = useState(() => {
-    const d = new Date();
-    return d.toLocaleDateString('fa-IR-u-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
-  });
+  const activeCourses = courses.filter(c => c.active !== false);
+  const [selectedCourseId, setSelectedCourseId] = useState<number>((courses.find(c => c.active !== false) || courses[0])?.id || 1);
+  // Today in Iran (Asia/Tehran), whatever time zone the browser is set to.
+  const [signupDate, setSignupDate] = useState(() => jalaliToday());
   const [finalPrice,       setFinalPrice]       = useState<number>(0);
   const [hasDiscount,      setHasDiscount]      = useState<boolean>(false);
   const [discountAmount,   setDiscountAmount]   = useState<number>(0);
@@ -305,11 +355,44 @@ export default function StudentRegistrationForm({
   const [phoneError,        setPhoneError]        = useState<string | null>(null);
   const [stepError,         setStepError]         = useState<string | null>(null);
   const [ocrError,          setOcrError]          = useState<string | null>(null);
+  const [ocrReady,          setOcrReady]          = useState<boolean | null>(null);
+  const [existingNotice,    setExistingNotice]    = useState<string | null>(null);
+  const [scannerState,      setScannerState]      = useState<ScannerState>('unknown');
+  const [isScanning,        setIsScanning]        = useState(false);
+
+  // The local scanner bridge is only contacted when the user clicks Scan: probing it on every visit
+  // fills the console with connection errors on computers that do not run it.
+
+  /** Desktop: scan the card with the attached scanner, then save + extract like an uploaded file. */
+  const scanCardWithScanner = async () => {
+    setIsScanning(true); setOcrError(null);
+    try {
+      assignIdCard(await scanWithScanner());
+      setScannerState('ready');
+    } catch (err: any) {
+      setOcrError(err?.message || 'اسکن ناموفق بود.');
+      // Bridge not reachable: no second request. Otherwise ask it whether a scanner is configured.
+      setScannerState(err?.code === 'offline' ? 'offline' : await checkScanner());
+    } finally { setIsScanning(false); }
+  };
+
+  useEffect(() => {
+    api.fetchOcrStatus().then((st) => setOcrReady(st.ready)).catch(() => setOcrReady(false));
+  }, []);
+
+  // Courses may arrive after mount; fall back to the first one if the selection is unknown.
+  useEffect(() => {
+    if (activeCourses.length > 0 && !activeCourses.some(c => c.id === selectedCourseId)) {
+      setSelectedCourseId(activeCourses[0].id);
+    }
+  }, [courses, selectedCourseId]);
 
   useEffect(() => {
     const c = courses.find(c => c.id === selectedCourseId);
-    if (c) { setFinalPrice(c.tuition); }
-  }, [selectedCourseId, courses]);
+    if (!c) return;
+    const discount = hasDiscount ? Math.min(discountAmount, c.tuition) : 0;
+    setFinalPrice(Math.max(0, c.tuition - discount));
+  }, [selectedCourseId, courses, hasDiscount, discountAmount]);
 
   useEffect(() => {
     api.fetchRegistrations()
@@ -351,11 +434,7 @@ export default function StudentRegistrationForm({
     if (nationalCode.length !== 10 || !/^\d+$/.test(nationalCode)) {
       setNationalCodeError('باید دقیقاً ۱۰ رقم باشد'); return;
     }
-    const d = nationalCode.split('').map(Number);
-    let s = 0;
-    for (let i = 0; i < 9; i++) s += d[i] * (10 - i);
-    const r = s % 11;
-    const valid = r < 2 ? d[9] === r : d[9] === 11 - r;
+    const valid = isValidIranNationalCode(nationalCode);
     setNationalCodeError(valid ? null : 'رقم کنترلی معتبر نیست');
   }, [nationalCode]);
 
@@ -385,8 +464,6 @@ export default function StudentRegistrationForm({
       } catch { /* browsers may ignore lock outside fullscreen */ }
     } catch (err) {
       console.warn('Camera access denied:', err);
-      setActiveCameraTarget(null);
-      alert('دسترسی به دوربین ممکن نشد. از «انتخاب فایل» استفاده کنید.');
       setActiveCameraTarget(null);
       setOcrError('دسترسی به دوربین ممکن نشد — از «انتخاب فایل» استفاده کنید.');
       return;
@@ -418,8 +495,7 @@ export default function StudentRegistrationForm({
       if (target === 'idCard') {
         setIdCardFile(file);
         setIdCardPreview(previewUrl);
-        setOcrSuccess(false);
-        void runOcr(file);
+        void prepareIdCard(file);
       } else {
         setPersonalPhotoFile(file);
         setPersonalPhotoPreview(previewUrl);
@@ -435,21 +511,72 @@ export default function StudentRegistrationForm({
     setLastName(names.last);
     setNationalCode(reg.national_code || '');
     setPhoneNumber(reg.phone_number || '');
-    if (reg.national_card_path) {
-      setIdCardPreview(reg.national_card_path);
-      setIdCardFile(null);
+    setIdCardFile(null);
+    setPersonalPhotoFile(null);
+    setIdCardPreview(null);
+    setPersonalPhotoPreview(null);
+    const suggested = courseForCategory(reg.category, courses);
+    if (suggested) setSelectedCourseId(suggested);
+    // The site files are only reachable through the authenticated CRM route.
+    if (reg.tracking_code) {
+      void api.fetchRegistrationFileUrl(reg.tracking_code, 'national_card').then((u) => { if (u) setIdCardPreview(u); });
+      void api.fetchRegistrationFileUrl(reg.tracking_code, 'personal_photo').then((u) => { if (u) setPersonalPhotoPreview(u); });
     }
-    if (reg.personal_photo_path) {
-      setPersonalPhotoPreview(reg.personal_photo_path);
-      setPersonalPhotoFile(null);
+  };
+
+  const handleRejectRegistration = async () => {
+    const reg = pendingRegs.find((r) => r.id === selectedRegId);
+    if (!reg) return;
+    if (!window.confirm(`ثبت‌نام «${reg.full_name || reg.tracking_code}» رد شود؟`)) return;
+    try {
+      await api.rejectRegistration(reg.tracking_code);
+      setPendingRegs((rows) => rows.filter((r) => r.id !== reg.id));
+      handleReset();
+    } catch (err: any) {
+      setStepError(err?.message || 'رد ثبت‌نام ناموفق بود.');
+      if (err?.status === 409) setPendingRegs((rows) => rows.filter((r) => r.id !== reg.id));
     }
+  };
+
+  /** Check photo quality first; on a problem show the notice instead of calling OCR (staff can still continue). */
+  const prepareIdCard = async (file: File) => {
+    setQualityNotice(null);
+    setOcrSuccess(false); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null);
+    const q = await analyzeCardImage(file);
+    if (q && (q.lowResolution || q.blurry || q.portrait)) {
+      setQualityNotice({ file, q });
+      return;
+    }
+    void runOcr(file);
   };
 
   const assignIdCard = (file: File) => {
     setIdCardFile(file);
     setIdCardPreview(URL.createObjectURL(file));
-    setOcrSuccess(false);
-    void runOcr(file);
+    void prepareIdCard(file);
+  };
+
+  const rotateNoticeCard = async () => {
+    if (!qualityNotice) return;
+    const rotated = await rotateImage90(qualityNotice.file);
+    setIdCardFile(rotated);
+    setIdCardPreview(URL.createObjectURL(rotated));
+    void prepareIdCard(rotated);
+  };
+
+  const continueWithNoticeCard = () => {
+    if (!qualityNotice) return;
+    const f = qualityNotice.file;
+    setQualityNotice(null);
+    void runOcr(f);
+  };
+
+  const clearOcrWarning = (key: string) => {
+    setOcrWarnings((w) => {
+      if (!w[key]) return w;
+      const { [key]: _drop, ...rest } = w;
+      return rest;
+    });
   };
 
   const assignPersonalPhoto = async (file: File) => {
@@ -462,9 +589,9 @@ export default function StudentRegistrationForm({
   const runOcr = async (file?: File | null) => {
     const target = file || idCardFile;
     if (!target) return;
-    setIsScanningOCR(true); setOcrSuccess(false); setOcrError(null);
+    setIsScanningOCR(true); setOcrSuccess(false); setOcrError(null); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null);
     try {
-      const result = await api.ocrNationalCard(target);
+      const result = await api.ocrNationalCard(await downscaleImageFile(target));
       const hasAny = !!(result.first_name || result.last_name || result.national_code);
       if (!hasAny) {
         setOcrError('خواندن کارت ملی ناموفق بود. اطلاعات را دستی وارد کنید.');
@@ -474,8 +601,11 @@ export default function StudentRegistrationForm({
       if (result.first_name) setFirstName(result.first_name);
       if (result.last_name) setLastName(result.last_name);
       if (result.national_code) setNationalCode(result.national_code);
-      if (result.father_name) setFatherName(result.father_name);
       if (result.birth_date_jalali) setBirthDate(result.birth_date_jalali);
+      setOcrWarnings(result.field_warnings || {});
+      setOcrNeedsReview(result.needs_review);
+      setOcrConfirmed(false);
+      setOcrExpiry(result.card_expiry_jalali ? { date: result.card_expiry_jalali, expired: result.card_expired } : null);
       setOcrSuccess(true);
       setOcrError(null);
     } catch (err: any) {
@@ -484,336 +614,217 @@ export default function StudentRegistrationForm({
     finally { setIsScanningOCR(false); }
   };
 
-  /* PDF receipt */
-    /* 3-Page Registration Forms PDF: Receipt (P1), Cardex (P2), Contract (P3) */
-  const generateAndUploadReceipt = async (enrollmentId: number, studentObj: Student, courseObj: Course, paid: number) => {
-    try {
-      const settings = await api.fetchReceiptSettings();
-      const today = jalaliToday();
-      let tuitionPrice = finalPrice || courseObj?.tuition || 0;
-      const debt = tuitionPrice - paid;
-      const statusText = debt <= 0 ? 'تسویه کامل' : 'بدهکار';
-      
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-
-      // Helper function to build high-res page canvas
-      const renderPage = (renderContent: (ctx: CanvasRenderingContext2D) => void) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 1240;
-        canvas.height = 1754;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return '';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, 1240, 1754);
-        renderContent(ctx);
-        return canvas.toDataURL('image/jpeg', 0.95);
-      };
-
-      // Page 1: Receipt
-      const p1Img = renderPage((ctx) => {
-        ctx.strokeStyle = '#0284c7';
-        ctx.lineWidth = 6;
-        ctx.strokeRect(40, 40, 1160, 1674);
-
-        ctx.fillStyle = '#eff6ff';
-        ctx.fillRect(43, 43, 1154, 160);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 36px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText(settings.academy_name || 'آموزشگاه رانندگی کارلا', 620, 125);
-        ctx.font = '22px Tahoma';
-        ctx.fillText(settings.header_text || 'رسید رسمی دریافت وجه و ثبت نام کارآموز', 620, 175);
-
-        ctx.fillStyle = '#0f172a';
-        ctx.textAlign = 'right';
-        ctx.font = 'bold 24px Tahoma';
-        ctx.fillText(`تاریخ: ${today}`, 1120, 270);
-        ctx.fillText(`شماره ثبت نام: ${courseNumber || enrollmentId}`, 1120, 320);
-
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(60, 360);
-        ctx.lineTo(1180, 360);
-        ctx.stroke();
-
-        ctx.fillStyle = '#0284c7';
-        ctx.font = 'bold 26px Tahoma';
-        ctx.fillText('مشخصات کارآموز و دوره', 1120, 420);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`نام: ${studentObj.first_name}`, 1120, 480);
-        ctx.fillText(`نام خانوادگی: ${studentObj.last_name}`, 1120, 530);
-        ctx.fillText(`کد ملی: ${studentObj.national_code}`, 1120, 580);
-        ctx.fillText(`شماره همراه: ${studentObj.phone_number}`, 1120, 630);
-        ctx.fillText(`دوره آموزشی: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 680);
-
-        ctx.beginPath();
-        ctx.moveTo(60, 740);
-        ctx.lineTo(1180, 740);
-        ctx.stroke();
-
-        ctx.fillStyle = '#0284c7';
-        ctx.font = 'bold 26px Tahoma';
-        ctx.fillText('وضعیت مالی', 1120, 800);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`شهریه مصوب: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 860);
-        ctx.fillStyle = '#059669';
-        ctx.fillText(`مبلغ پرداختی: ${paid.toLocaleString('fa-IR')} تومان`, 1120, 910);
-        ctx.fillStyle = debt > 0 ? '#dc2626' : '#059669';
-        ctx.fillText(`مانده: ${debt.toLocaleString('fa-IR')} تومان`, 1120, 960);
-        ctx.fillText(`وضعیت تسویه: ${statusText}`, 1120, 1010);
-
-        ctx.fillStyle = '#64748b';
-        ctx.font = '20px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText(settings.footer_text || 'خواهشمند است تا اتمام امتحانات نسبت به تسویه کامل اقدام فرمایید.', 620, 1650);
-      });
-      if (p1Img) doc.addImage(p1Img, 'JPEG', 0, 0, 210, 297);
-
-      // Page 2: Cardex
-      const p2Img = renderPage((ctx) => {
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 6;
-        ctx.strokeRect(40, 40, 1160, 1674);
-
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(43, 43, 1154, 140);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 36px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText('کاردکس مهارت آموز', 620, 135);
-
-        ctx.fillStyle = '#0f172a';
-        ctx.textAlign = 'right';
-        ctx.font = 'bold 24px Tahoma';
-        ctx.fillText(`کد پرونده: ${courseNumber || enrollmentId}`, 1120, 250);
-        ctx.fillText(`تاریخ صدور: ${today}`, 1120, 300);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`نام و نام خانوادگی: ${studentObj.first_name} ${studentObj.last_name}`, 1120, 380);
-        ctx.fillText(`کد ملی: ${studentObj.national_code}`, 1120, 430);
-        ctx.fillText(`شماره تماس: ${studentObj.phone_number}`, 1120, 480);
-        ctx.fillText(`رشته / دوره: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 530);
-
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(60, 600);
-        ctx.lineTo(1180, 600);
-        ctx.stroke();
-
-        ctx.fillText(`شهریه کل: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 670);
-        ctx.fillText(`مبلغ پرداختی: ${paid.toLocaleString('fa-IR')} تومان`, 1120, 720);
-        ctx.fillText(`وضعیت حساب: ${statusText}`, 1120, 770);
-
-        ctx.strokeRect(60, 850, 1120, 750);
-        ctx.fillStyle = '#475569';
-        ctx.font = '22px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText('جدول جلسات آموزش نظری و عملی / امتحانات و ارزیابی مهارت آموز', 620, 900);
-      });
-      if (p2Img) {
-        doc.addPage();
-        doc.addImage(p2Img, 'JPEG', 0, 0, 210, 297);
-      }
-
-      // Page 3: Contract
-      const p3Img = renderPage((ctx) => {
-        ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 6;
-        ctx.strokeRect(40, 40, 1160, 1674);
-
-        ctx.fillStyle = '#f1f5f9';
-        ctx.fillRect(43, 43, 1154, 140);
-        ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 34px Tahoma';
-        ctx.textAlign = 'center';
-        ctx.fillText('قرارداد ثبت نام دوره آموزشی', 620, 135);
-
-        ctx.fillStyle = '#0f172a';
-        ctx.textAlign = 'right';
-        ctx.font = 'bold 24px Tahoma';
-        ctx.fillText(`تاریخ قرارداد: ${today}`, 1120, 250);
-        ctx.fillText(`شماره دوره / کلاس: ${courseNumber || enrollmentId}`, 1120, 300);
-
-        ctx.fillStyle = '#1e293b';
-        ctx.font = '24px Tahoma';
-        ctx.fillText(`نام کارآموز: ${studentObj.first_name} ${studentObj.last_name}`, 1120, 380);
-        ctx.fillText(`شماره ملی: ${studentObj.national_code}`, 1120, 430);
-        ctx.fillText(`موضوع دوره: ${courseObj?.title || 'حمل و نقل جاده ای'}`, 1120, 480);
-        ctx.fillText(`مبلغ قرارداد: ${tuitionPrice.toLocaleString('fa-IR')} تومان`, 1120, 530);
-
-        ctx.strokeStyle = '#cbd5e1';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(60, 590);
-        ctx.lineTo(1180, 590);
-        ctx.stroke();
-
-        ctx.fillStyle = '#334155';
-        ctx.font = '20px Tahoma';
-        const terms = [
-          '۱. کارآموز متعهد است ضوابط و مقررات آموزشی و انضباطی آموزشگاه را رعایت فرماید.',
-          '۲. حضور به موقع در کلاس های نظری و مهارت عملی الزامی می باشد.',
-          '۳. تسویه حساب کامل قبل از معرفی به آزمون پایانی دوره الزامی است.',
-          '۴. آموزشگاه هیچگونه مسئولیتی در قبال مدارک و اشیاء مفقودی هنرجویان ندارد.'
-        ];
-        terms.forEach((line, idx) => {
-          ctx.fillText(line, 1120, 660 + idx * 55);
-        });
-
-        ctx.font = 'bold 22px Tahoma';
-        ctx.fillText('امضاء و اثر انگشت کارآموز:', 1100, 1400);
-        ctx.textAlign = 'left';
-        ctx.fillText('مهر و امضاء امور ثبت نام مدیریت آموزشگاه:', 150, 1400);
-      });
-      if (p3Img) {
-        doc.addPage();
-        doc.addImage(p3Img, 'JPEG', 0, 0, 210, 297);
-      }
-
-      const blob = doc.output('blob');
-      const res  = await api.uploadEnrollmentReceipt(enrollmentId, blob, { filename: `registration_forms_${enrollmentId}.pdf` });
-      if (res) setPdfPath(res.receipt_pdf_path);
-    } catch { /* noop */ }
+  /** Everything the three documents need, with images inlined now (the form's previews are cleared right after). */
+  const buildDocsInput = async (studentObj: Student, enrollmentObj: Enrollment, courseObj: Course | undefined, paid: number): Promise<DocsInput> => {
+    let settings = null;
+    try { settings = await api.fetchReceiptSettings(); } catch (err) { console.warn('Receipt settings unavailable, using defaults:', err); }
+    const [personal, nationalCard] = await Promise.all([
+      toDataUrl(personalPhotoPreview || studentObj.personal_photo_url),
+      toDataUrl(idCardPreview || studentObj.id_card_photo_url),
+    ]);
+    return {
+      student: studentObj,
+      enrollment: { id: enrollmentObj.id, course_number: enrollmentObj.course_number ?? courseNumber, final_price: enrollmentObj.final_price || finalPrice },
+      course: courseObj ?? null,
+      paid,
+      settings,
+      images: { personal, nationalCard },
+      date: enrollmentObj.signup_date_jalali || jalaliToday(),
+    };
   };
 
-  const goNext = () => {
-    if (step === 1) {
-      if (!firstName || !lastName || !nationalCode) {
-        setStepError('نام، نام خانوادگی و کد ملی را تکمیل کنید.'); return;
-      }
-      if (nationalCodeError) {
-        setStepError('کد ملی معتبر نیست.'); return;
-      }
-      setStepError(null);
-      setStep(2);
-      return;
-    }
-    if (step === 2) {
-      if (!phoneNumber) {
-        setStepError('شماره همراه را وارد کنید.'); return;
-      }
-      if (phoneError) {
-        setStepError('شماره همراه معتبر نیست.'); return;
-      }
-      setStepError(null);
-      setStep(3);
-    }
-  };
-
-  const handleSubmit = async (mode: 'new'|'print' = submitMode, e?: React.FormEvent) => {
-    if(e) e.preventDefault();
-    if (courseNumber > currentMax && !hasPromptedNewCourse) {
-      setSubmitMode(mode);
-      setShowNewCoursePrompt(true);
-      return;
-    }
+  const handleSubmit = async (mode: 'new'|'print', newCourseConfirmed = false) => {
+    setSubmitMode(mode);
     if (!firstName || !lastName || !nationalCode || !phoneNumber) {
       setStepError('فیلدهای ستاره‌دار اجباری را تکمیل کنید.'); return;
     }
     if (nationalCodeError || phoneError) {
       setStepError('خطاهای اعتبارسنجی را برطرف کنید.'); return;
     }
+    if (ocrNeedsReview && !ocrConfirmed) {
+      setStepError('اطلاعات خوانده‌شده از کارت نیاز به بررسی دارد؛ پس از مطابقت با کارت، گزینه «اطلاعات را با کارت تطبیق دادم» را بزنید.'); return;
+    }
+    if (!activeCourses.some(c => c.id === selectedCourseId)) {
+      setStepError('دوره آموزشی را انتخاب کنید.'); return;
+    }
+    if (!courseNumber || courseNumber <= 0) {
+      setStepError('شماره دوره را وارد کنید.'); return;
+    }
+    if (payAmount > finalPrice) {
+      setStepError('مبلغ پیش‌پرداخت نمی‌تواند از شهریه نهایی بیشتر باشد.'); return;
+    }
+    if (courseNumber > currentMax && !newCourseConfirmed) {
+      setShowNewCoursePrompt(true);
+      return;
+    }
+    setShowNewCoursePrompt(false);
     setStepError(null);
     setIsSubmitting(true);
     try {
       const today = jalaliToday();
-      const studentRes = await api.createStudent({
-        first_name: firstName,
-        last_name: lastName,
-        national_code: nationalCode,
-        phone_number: phoneNumber,
-        father_name: fatherName,
-        birth_date_jalali: birthDate,
-        address,
-      });
-      let studentObj = studentRes.student;
-      setCreatedStudent(studentObj);
-      if (idCardFile || personalPhotoFile) {
-        try {
-          const uploaded = await api.uploadStudentPhotos(
-            studentObj.id,
-            { idCard: idCardFile, personal: personalPhotoFile },
-            { last_name: lastName, course_number: courseNumber },
-          );
-          studentObj = {
-            ...studentObj,
-            ...uploaded,
-            first_name: uploaded.first_name || studentObj.first_name,
-            last_name: uploaded.last_name || studentObj.last_name,
-            national_code: uploaded.national_code || studentObj.national_code,
-            phone_number: uploaded.phone_number || studentObj.phone_number,
-          };
-          setCreatedStudent(studentObj);
-        } catch (photoErr: any) {
-          console.warn('Photo upload failed, student record was still created:', photoErr);
-          setStepError(photoErr?.message || 'پرونده ثبت شد ولی بارگذاری عکس ناموفق بود.');
+      let studentObj: Student;
+      let enrollmentObj: Enrollment;
+      const selectedReg = selectedRegId ? pendingRegs.find((r) => r.id === selectedRegId) : undefined;
+      const submitKey = [selectedReg?.tracking_code || '', nationalCode, selectedCourseId, courseNumber, finalPrice].join('|');
+      const saved = savedRegistration.current?.key === submitKey ? savedRegistration.current : null;
+      if (saved) {
+        studentObj = saved.student;
+        enrollmentObj = saved.enrollment;
+      } else if (selectedReg) {
+        // Website registration: the server creates/reuses the student, enrolls, copies the site photos and marks it approved atomically.
+        const approved = await api.approveRegistration(selectedReg.tracking_code, {
+          course_id: selectedCourseId,
+          course_number: courseNumber,
+          signup_date_jalali: signupDate,
+          final_price: finalPrice,
+          first_name: firstName,
+          last_name: lastName,
+          phone_number: phoneNumber,
+          address,
+          birth_date_jalali: birthDate,
+        });
+        studentObj = approved.student;
+        enrollmentObj = approved.enrollment;
+        setPendingRegs((rows) => rows.filter((r) => r.id !== selectedReg.id));
+        setExistingNotice(approved.studentCreated ? null : 'این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+        setCreatedStudent(studentObj);
+        if (idCardFile || personalPhotoFile) {
+          // Photos picked by hand in the form replace the ones copied from the site.
+          try {
+            const uploaded = await api.uploadStudentPhotos(
+              studentObj.id,
+              { idCard: idCardFile, personal: personalPhotoFile },
+              { last_name: lastName, course_number: courseNumber },
+            );
+            studentObj = { ...studentObj, id_card_photo_url: uploaded.id_card_photo_url ?? studentObj.id_card_photo_url, personal_photo_url: uploaded.personal_photo_url ?? studentObj.personal_photo_url };
+            setCreatedStudent(studentObj);
+          } catch (photoErr: any) {
+            console.warn('Photo upload failed, registration was still approved:', photoErr);
+            setStepError(photoErr?.message || 'ثبت‌نام تایید شد ولی بارگذاری عکس ناموفق بود.');
+          }
         }
-      }
-      if (selectedRegId) {
-        try {
-          await api.approveRegistration(selectedRegId, studentObj.id);
-          setPendingRegs((rows) => rows.filter((r) => r.id !== selectedRegId));
-        } catch (regErr) {
-          console.warn('Could not mark website registration approved:', regErr);
+      } else {
+        const studentRes = await api.createStudent({
+          first_name: firstName,
+          last_name: lastName,
+          national_code: nationalCode,
+          phone_number: phoneNumber,
+          birth_date_jalali: birthDate,
+          address,
+        });
+        studentObj = studentRes.student;
+        if (studentRes.already_exists) {
+          // Same national code = same person registering again: keep their file, refresh the contact details just typed.
+          try {
+            studentObj = await api.updateStudent({
+              ...studentObj,
+              phone_number: phoneNumber || studentObj.phone_number,
+              address: address || studentObj.address,
+              birth_date_jalali: birthDate || studentObj.birth_date_jalali,
+            });
+          } catch (updErr) { console.warn('Could not refresh existing student details:', updErr); }
+          setExistingNotice('این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+        } else {
+          setExistingNotice(null);
         }
-      }
-      const enrollmentObj = await api.createEnrollment({
-        student_id: studentObj.id,
-        course_id: selectedCourseId,
-        course_number: courseNumber,
-        signup_date_jalali: signupDate,
-        final_price: finalPrice,
-      });
-      setCreatedEnrollmentId(enrollmentObj.id);
-      if (payAmount > 0) {
-        await api.createPayment({
+        setCreatedStudent(studentObj);
+        if (idCardFile || personalPhotoFile) {
+          try {
+            const uploaded = await api.uploadStudentPhotos(
+              studentObj.id,
+              { idCard: idCardFile, personal: personalPhotoFile },
+              { last_name: lastName, course_number: courseNumber },
+            );
+            studentObj = {
+              ...studentObj,
+              ...uploaded,
+              first_name: uploaded.first_name || studentObj.first_name,
+              last_name: uploaded.last_name || studentObj.last_name,
+              national_code: uploaded.national_code || studentObj.national_code,
+              phone_number: uploaded.phone_number || studentObj.phone_number,
+            };
+            setCreatedStudent(studentObj);
+          } catch (photoErr: any) {
+            console.warn('Photo upload failed, student record was still created:', photoErr);
+            setStepError(photoErr?.message || 'پرونده ثبت شد ولی بارگذاری عکس ناموفق بود.');
+          }
+        }
+        enrollmentObj = await api.createEnrollment({
           student_id: studentObj.id,
-          enrollment_id: enrollmentObj.id,
-          amount: payAmount,
-          pay_date_jalali: today,
-          pay_method: payMethod,
-          payment_kind: paymentType === 'full' ? 'full' : 'downpayment',
-          description: payDesc || 'پیش‌پرداخت ثبت‌نام',
+          course_id: selectedCourseId,
+          course_number: courseNumber,
+          signup_date_jalali: signupDate,
+          final_price: finalPrice,
         });
       }
+      setCreatedEnrollmentId(enrollmentObj.id);
+      savedRegistration.current = { key: submitKey, student: studentObj, enrollment: enrollmentObj };
+      if (payAmount > 0) {
+        try {
+          await api.createPayment({
+            student_id: studentObj.id,
+            enrollment_id: enrollmentObj.id,
+            amount: payAmount,
+            pay_date_jalali: today,
+            pay_method: payMethod,
+            payment_kind: paymentType === 'full' ? 'full' : 'downpayment',
+            description: payDesc || 'پیش‌پرداخت ثبت‌نام',
+          });
+        } catch (payErr: any) {
+          onRefresh();
+          setStepError(`پرونده و ثبت‌نام دوره ذخیره شد ولی پیش‌پرداخت ثبت نشد: ${payErr?.message || 'خطای ارتباط'}. با زدن دوباره دکمه ثبت، فقط پرداخت ثبت می‌شود (ثبت‌نام تکراری ایجاد نمی‌شود).`);
+          return;
+        }
+      }
+      savedRegistration.current = null;
       const courseObj = courses.find(c => c.id === selectedCourseId) || courses[0];
-      const pdfRes = await generateAndUploadReceipt(enrollmentObj.id, studentObj, courseObj, payAmount);
+      const input = await buildDocsInput(studentObj, enrollmentObj, courseObj, payAmount);
       onRefresh();
-      if (mode === 'print' && pdfRes?.url) window.open(pdfRes.url, '_blank');
-      if (mode === 'new') { handleReset(); return; }
-      setIsSuccess(true);
+      if (mode === 'print') {
+        // The success screen builds, uploads and prints the three documents one after another and shows each one's status.
+        setDocsBanner(null);
+        setDocsInput(input);
+        setIsSuccess(true);
+        return;
+      }
+      const results = await uploadAllDocs(enrollmentObj.id, buildDocData(toBuildInput(input)), (k) => downloadFileName(studentObj.last_name, studentObj.id, k));
+      const failed = results.filter(r => !r.ok);
+      const who = `${studentObj.first_name} ${studentObj.last_name}`.trim();
+      setDocsBanner(failed.length
+        ? { ok: false, text: `ثبت‌نام «${who}» انجام شد ولی مدارک زیر ذخیره نشد: ${failed.map(f => `${DOC_LABELS[f.kind]} (${f.error})`).join('؛ ')}. از «لیست پرونده‌ها ← مدارک ثبت‌نام» دوباره بسازید.` }
+        : { ok: true, text: `ثبت‌نام «${who}» انجام شد و سه مدرک (رسید، برگ خلاصه پرونده، قرارداد) ذخیره شد.` });
+      handleReset();
+      return;
     } catch (err: any) {
+      if (err instanceof api.RegistrationError && err.message === api.REGISTRATION_ALREADY_PROCESSED && selectedRegId) {
+        setPendingRegs((rows) => rows.filter((r) => r.id !== selectedRegId));
+      }
       setStepError(err?.message || 'ثبت‌نام با خطا مواجه شد. اتصال را بررسی کنید.');
     }
     finally { setIsSubmitting(false); }
   };
 
   const handleReset = () => {
-    setFirstName(''); setLastName(''); setFatherName('');
+    setFirstName(''); setLastName('');
     setNationalCode(''); setPhoneNumber(''); setBirthDate(''); setAddress('');
     setSelectedRegId(null); setRegQuery('');
     setIdCardFile(null); setIdCardPreview(null);
     setPersonalPhotoFile(null); setPersonalPhotoPreview(null);
     setPayAmount(0); setPayDesc(''); setPaymentType('full'); setHasDiscount(false); setDiscountAmount(0);
-    setCreatedStudent(null); setCreatedEnrollmentId(null); setPdfPath(null);
-    setOcrSuccess(false); setOcrError(null); setStepError(null); setIsSuccess(false);
-    const nums = enrollments.map(e => e.course_number).filter((n): n is number => n != null);
-    setCourseNumber(nums.length > 0 ? Math.max(...nums) + 1 : 105);
-    setStep(1);
+    setCreatedStudent(null); setCreatedEnrollmentId(null); setDocsInput(null);
+    savedRegistration.current = null;
+    setOcrSuccess(false); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null); setQualityNotice(null);
+    setOcrError(null); setStepError(null); setIsSuccess(false); setExistingNotice(null);
+    courseNumberTouched.current = false;
+    setCourseNumber(Math.max(currentMax, courseNumber));
+    setShowNewCoursePrompt(false);
     onRefresh();
   };
 
   if (isSuccess && createdStudent) {
     const course = courses.find(c => c.id === selectedCourseId);
     return (
-      <div className="max-w-xl mx-auto fade-in" id="registration-success-view">
+      <div className="max-w-2xl mx-auto fade-in" id="registration-success-view">
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
           <div className="h-1 bg-gradient-to-l from-teal-400 via-sky-500 to-sky-400" />
 
@@ -825,8 +836,9 @@ export default function StudentRegistrationForm({
             <div>
               <h2 className="text-xl font-black text-slate-900 mb-1">ثبت‌نام با موفقیت انجام شد!</h2>
               <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-                پرونده کارآموز ایجاد شد و رسید PDF تولید گردید.
+                پرونده کارآموز ایجاد شد. وضعیت هر سه مدرک در زیر نمایش داده می‌شود.
               </p>
+              {existingNotice && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2 max-w-xs mx-auto">{existingNotice}</p>}
             </div>
 
             <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 text-right space-y-2 max-w-xs mx-auto">
@@ -845,13 +857,11 @@ export default function StudentRegistrationForm({
               ))}
             </div>
 
+            {docsInput && (
+              <RegistrationDocsPanel input={docsInput} autoRun autoPrint title="مدارک ثبت‌نام (رسید، برگ خلاصه پرونده، قرارداد)" />
+            )}
+
             <div className="flex gap-2 justify-center flex-wrap">
-              {pdfPath && (
-                <a href={pdfPath} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg transition shadow-xs">
-                  <FileText className="w-3.5 h-3.5" />رسید PDF
-                </a>
-              )}
               <button onClick={handleReset}
                 className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-lg transition">
                 <Users className="w-3.5 h-3.5" />ثبت جدید
@@ -869,19 +879,31 @@ export default function StudentRegistrationForm({
 
   return (
     <div className="w-full fade-in" id="registration-form-container">
-      <form>
+      <form onSubmit={e => e.preventDefault()}>
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-lg font-black text-slate-900">ثبت‌نام هوشمند کارآموز</h2>
             
           </div>
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-sky-50 border border-sky-200 rounded-xl">
-            <Sparkles className="w-3.5 h-3.5 text-sky-500" />
-            <span className="text-xs font-bold text-sky-700">اسکن OCR فعال</span>
-          </div>
+          {ocrReady !== null && (
+            <div className={`flex items-center gap-1.5 px-3 py-1 border rounded-xl ${ocrReady ? 'bg-sky-50 border-sky-200' : 'bg-amber-50 border-amber-200'}`}>
+              <Sparkles className={`w-3.5 h-3.5 ${ocrReady ? 'text-sky-500' : 'text-amber-500'}`} />
+              <span className={`text-xs font-bold ${ocrReady ? 'text-sky-700' : 'text-amber-700'}`}>
+                {ocrReady ? 'اسکن OCR فعال' : 'اسکن OCR غیرفعال — ورود دستی'}
+              </span>
+            </div>
+          )}
         </div>
 
+
+        {docsBanner && (
+          <div role="status" className={`mb-3 flex items-start gap-2 rounded-xl border px-3 py-2.5 ${docsBanner.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+            {docsBanner.ok ? <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />}
+            <p className="text-xs font-semibold flex-1">{docsBanner.text}</p>
+            <button type="button" onClick={() => setDocsBanner(null)} aria-label="بستن" className="p-0.5 hover:opacity-70 cursor-pointer"><X className="w-3.5 h-3.5" /></button>
+          </div>
+        )}
 
         {(stepError || ocrError) && (
           <div role="alert" className="mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-rose-700">
@@ -896,6 +918,15 @@ export default function StudentRegistrationForm({
               <div className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-800">
                 <Inbox className="w-3.5 h-3.5" />
                 ثبت‌نام‌های در انتظار وبسایت ({pendingRegs.length})
+                {selectedRegId && (
+                  <button
+                    type="button"
+                    onClick={handleRejectRegistration}
+                    className="mr-2 px-2.5 py-1 rounded-lg border border-rose-300 bg-white text-rose-700 text-[11px] font-bold hover:bg-rose-50 transition"
+                  >
+                    رد ثبت‌نام انتخاب‌شده
+                  </button>
+                )}
               </div>
               <input
                 value={regQuery}
@@ -969,14 +1000,22 @@ export default function StudentRegistrationForm({
                   </>
                 ) : (
                   <>
-                    <label htmlFor="idCardFirstUpload" className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 text-white text-sm font-extrabold rounded-xl cursor-pointer shadow-sm flex items-center justify-center gap-2">
-                      <FolderOpen className="w-5 h-5" />انتخاب فایل اسکنشده (پیشفرض)
-                    </label>
-                    <button type="button" onClick={() => alert('سرویس دسکتاپ اسکنر در حال توسعه است. فعلاً از انتخاب فایل استفاده کنید.')} disabled={isScanningOCR}
-                      className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-2"
+                    <button type="button" onClick={() => void scanCardWithScanner()} disabled={isScanning || isScanningOCR}
+                      title={scannerState === 'ready' ? undefined : 'برنامه اسکنر (scripts/SCANNER.md) اجرا یا تنظیم نشده است'}
+                      className="w-full py-3 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 disabled:opacity-60 text-white text-sm font-extrabold rounded-xl shadow-sm transition flex items-center justify-center gap-2"
                     >
-                      {isScanningOCR ? <><Loader2 className="w-4 h-4 animate-spin text-sky-600" />در حال پردازش...</> : <><Camera className="w-4 h-4 text-slate-500" />اسکن مستقیم با دستگاه</>}
+                      {isScanning ? <><Loader2 className="w-5 h-5 animate-spin" />در حال اسکن...</>
+                        : isScanningOCR ? <><Loader2 className="w-5 h-5 animate-spin" />در حال خواندن کارت ملی...</>
+                        : <><Camera className="w-5 h-5" />اسکن با اسکنر</>}
                     </button>
+                    {scannerState !== 'ready' && scannerState !== 'unknown' && (
+                      <p className="mt-1.5 text-[10px] text-amber-600 text-center">
+                        {scannerState === 'offline' ? 'برنامه اسکنر در این کامپیوتر اجرا نیست؛' : 'دستور اسکنر تنظیم نشده؛'} فعلاً از «انتخاب فایل» استفاده کنید.
+                      </p>
+                    )}
+                    <label htmlFor="idCardFirstUpload" className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 cursor-pointer flex items-center justify-center gap-2">
+                      <FolderOpen className="w-4 h-4 text-slate-500" />انتخاب فایل اسکن‌شده
+                    </label>
                   </>
                 )}
                 {idCardFile && !ocrSuccess && !isScanningOCR && (
@@ -985,8 +1024,42 @@ export default function StudentRegistrationForm({
                     <Sparkles className="w-3.5 h-3.5" />استخراج اطلاعات از کارت
                   </button>
                 )}
+                {qualityNotice && (
+                  <div className="mt-2 p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-[11px] space-y-2">
+                    <p className="font-bold flex items-start gap-1.5"><AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>
+                        {qualityNotice.q.blurry && 'عکس تار است، دوباره بگیرید. '}
+                        {qualityNotice.q.lowResolution && 'وضوح عکس کم است؛ نزدیک‌تر و واضح‌تر بگیرید. '}
+                        {qualityNotice.q.portrait && 'عکس عمودی است؛ کارت باید افقی باشد. '}
+                      </span>
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {qualityNotice.q.portrait && (
+                        <button type="button" onClick={() => void rotateNoticeCard()}
+                          className="px-3 py-1.5 bg-white border border-amber-300 rounded-lg font-bold flex items-center gap-1">
+                          <RotateCw className="w-3 h-3" />چرخاندن ۹۰ درجه
+                        </button>
+                      )}
+                      <button type="button" onClick={continueWithNoticeCard}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold">
+                        ادامه با همین عکس
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {ocrSuccess && (
-                  <p className="mt-2 text-[11px] text-emerald-600 font-semibold text-center">اطلاعات کارت در فیلدها پر شد. در صورت نیاز اصلاح کنید.</p>
+                  <p className="mt-2 text-[11px] text-emerald-600 font-semibold text-center">
+                    {ocrNeedsReview ? 'اطلاعات خوانده شد ولی نیاز به بررسی دارد؛ حتماً با کارت مطابقت دهید.' : 'اطلاعات کارت در فیلدها پر شد. در صورت نیاز اصلاح کنید.'}
+                  </p>
+                )}
+                {ocrSuccess && ocrExpiry?.expired && (
+                  <p className="mt-1.5 text-[10px] text-amber-600 text-center">تاریخ پایان اعتبار کارت گذشته است ({ocrExpiry.date})</p>
+                )}
+                {ocrSuccess && ocrNeedsReview && (
+                  <button type="button" onClick={() => setOcrConfirmed((v) => !v)} aria-pressed={ocrConfirmed}
+                    className={`mt-2 w-full py-2 text-xs font-bold rounded-xl border transition flex items-center justify-center gap-1.5 ${ocrConfirmed ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'}`}>
+                    <CheckCircle className="w-3.5 h-3.5" />{ocrConfirmed ? 'اطلاعات با کارت تطبیق داده شد' : 'اطلاعات را با کارت تطبیق دادم'}
+                  </button>
                 )}
               </div>
 
@@ -1027,10 +1100,10 @@ export default function StudentRegistrationForm({
                     <label htmlFor="personalPhotoFirstUpload" className="w-full py-3 bg-gradient-to-l from-teal-600 to-teal-500 hover:from-teal-700 text-white text-sm font-extrabold rounded-xl cursor-pointer shadow-sm flex items-center justify-center gap-2">
                       <FolderOpen className="w-5 h-5" />انتخاب فایل ۳×۴ (پیشفرض)
                     </label>
-                    <button type="button" onClick={() => alert('سرویس دسکتاپ اسکنر در حال توسعه است. فعلاً از انتخاب فایل استفاده کنید.')}
+                    <button type="button" onClick={() => startCamera('personal')}
                       className="mt-2 w-full min-h-11 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-2"
                     >
-                      <Camera className="w-4 h-4 text-slate-500" />اسکن مستقیم با دستگاه
+                      <Camera className="w-4 h-4 text-slate-500" />عکس‌برداری با وب‌کم
                     </button>
                   </>
                 )}
@@ -1040,28 +1113,30 @@ export default function StudentRegistrationForm({
             <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-xs">
               <SectionHeader icon={User} label="اطلاعات شخصی کارآموز" color="sky" />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
-                <Field label="نام" required>
-                  <Input icon={User} value={firstName} onChange={setFirstName} placeholder="نام" />
+                <Field label="نام" required warning={ocrHint(ocrWarnings, 'first_name')}>
+                  <Input icon={User} value={firstName} onChange={(v) => { clearOcrWarning('first_name'); setFirstName(v); }} placeholder="نام" warn={!!ocrHint(ocrWarnings, 'first_name')} />
                 </Field>
-                <Field label="نام خانوادگی" required>
-                  <Input icon={User} value={lastName} onChange={setLastName} placeholder="نام خانوادگی" />
+                <Field label="نام خانوادگی" required warning={ocrHint(ocrWarnings, 'last_name')}>
+                  <Input icon={User} value={lastName} onChange={(v) => { clearOcrWarning('last_name'); setLastName(v); }} placeholder="نام خانوادگی" warn={!!ocrHint(ocrWarnings, 'last_name')} />
                 </Field>
-                <Field label="کد ملی" required error={nationalCodeError}>
-                  <Input icon={CreditCard} value={nationalCode} onChange={setNationalCode} placeholder="کد ملی ده رقمی" mono error={!!nationalCodeError} inputMode="numeric" maxLength={10} autoComplete="off" />
+                <Field label="کد ملی" required error={nationalCodeError} warning={ocrHint(ocrWarnings, 'national_code')}>
+                  <div className="relative">
+                    <Input icon={CreditCard} value={nationalCode} onChange={(v) => { clearOcrWarning('national_code'); setNationalCode(toLatinDigits(v)); }} placeholder="کد ملی ده رقمی" mono error={!!nationalCodeError} warn={!!ocrHint(ocrWarnings, 'national_code')} inputMode="numeric" maxLength={10} autoComplete="off" />
+                    {nationalCode.length === 10 && !nationalCodeError && (
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[11px] font-bold text-emerald-600 pointer-events-none">
+                        <CheckCircle className="w-4 h-4" />معتبر
+                      </span>
+                    )}
+                  </div>
                 </Field>
-                <Field label="نام پدر">
-                  <Input icon={User} value={fatherName} onChange={setFatherName} placeholder="نام پدر" />
+                <Field label="تاریخ تولد" warning={ocrHint(ocrWarnings, 'birth_date_jalali')}>
+                  <Input icon={Calendar} value={birthDate} onChange={(v) => { clearOcrWarning('birth_date_jalali'); setBirthDate(v); }} placeholder="مثال: ۱۳۷۰/۰۵/۲۴" mono warn={!!ocrHint(ocrWarnings, 'birth_date_jalali')} />
                 </Field>
-                <div className="sm:col-span-2">
-                  <Field label="تاریخ تولد">
-                    <Input icon={Calendar} value={birthDate} onChange={setBirthDate} placeholder="مثال: ۱۳۷۰/۰۵/۲۴" mono />
-                  </Field>
-                </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-5">
+          <div className="mt-4 bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-5">
             <SectionHeader icon={Phone} label="اطلاعات ارتباطی" color="teal" />
             <Field label="شماره همراه" required error={phoneError}>
               <Input icon={Phone} value={phoneNumber} onChange={setPhoneNumber} placeholder="شماره موبایل (مانند 09123456789)" mono error={!!phoneError} type="tel" inputMode="numeric" maxLength={11} autoComplete="tel" />
@@ -1071,10 +1146,10 @@ export default function StudentRegistrationForm({
             </Field>
           </div>
 
-          <div className="space-y-6">
+          <div className="mt-4 space-y-6">
             <div className="bg-white/80 backdrop-blur border border-slate-200/60 rounded-3xl p-6 shadow-sm">
               <SectionHeader icon={BookOpen} label="دوره آموزشی و شماره دوره" color="amber" />
-                                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
                 <Field label="تاریخ ثبتنام" required>
                   <Input icon={Calendar} value={signupDate} onChange={setSignupDate} mono />
                 </Field>
@@ -1084,7 +1159,7 @@ export default function StudentRegistrationForm({
                       <BookOpen className="w-5 h-5 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <select value={selectedCourseId} onChange={e => setSelectedCourseId(+e.target.value)}
                         className="w-full min-h-[52px] pr-11 pl-4 text-sm border border-slate-200 rounded-2xl focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 focus:ring-offset-1 transition-all shadow-sm appearance-none bg-white font-medium cursor-pointer">
-                        {courses.map(c => (
+                        {activeCourses.map(c => (
                           <option key={c.id} value={c.id}>{c.title}</option>
                         ))}
                       </select>
@@ -1092,7 +1167,7 @@ export default function StudentRegistrationForm({
                   </Field>
                 </div>
                 <Field label="شماره دوره">
-                  <Input icon={BookOpen} value={courseNumber || ''} onChange={v => setCourseNumber(+v || 0)} currency mono />
+                  <Input icon={BookOpen} value={courseNumber || ''} onChange={v => { courseNumberTouched.current = true; setCourseNumber(+toLatinDigits(v).replace(/\D/g, '') || 0); }} inputMode="numeric" mono />
                 </Field>
               </div>
               <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-3.5 mb-5 shadow-sm">
@@ -1141,22 +1216,56 @@ export default function StudentRegistrationForm({
             </div>
           </div>
 
-        <div className="flex flex-col md:flex-row items-center justify-end gap-4 mt-8 pt-6 border-t border-slate-200/80">
-          <button type="button" disabled={isSubmitting} onClick={(e) => { setSubmitMode('new'); handleSubmit('new', e as any); }}
-             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-white border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:grayscale text-sm font-black rounded-2xl transition-all shadow-sm">
-             {isSubmitting && submitMode === 'new' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><User className="w-4 h-4" />ثبت و جدید</>}
-          </button>
-          
-          <button type="button" disabled={isSubmitting} onClick={(e) => { setSubmitMode('print'); handleSubmit('print', e as any); }}
+        <div className="flex flex-col md:flex-row items-center justify-start gap-4 mt-8 pt-6 border-t border-slate-200/80">
+          <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit('print')}
             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 disabled:opacity-50 disabled:grayscale text-white text-sm md:text-base font-black rounded-2xl transition-all shadow-lg shadow-sky-500/30">
             {isSubmitting && submitMode === 'print' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><FileText className="w-4 h-4" />ثبت و چاپ رسید</>}
+          </button>
+
+          <button type="button" disabled={isSubmitting} onClick={() => void handleSubmit('new')}
+             className="flex w-full md:w-auto items-center justify-center gap-2 min-h-[52px] px-8 py-3 bg-white border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:grayscale text-sm font-black rounded-2xl transition-all shadow-sm">
+             {isSubmitting && submitMode === 'new' ? <><Loader2 className="w-4 h-4 animate-spin" />در حال ثبت...</> : <><User className="w-4 h-4" />ثبت و جدید</>}
           </button>
         </div>
       </form>
 
+      {/* ── NEW COURSE NUMBER CONFIRMATION ── */}
+      {showNewCoursePrompt && (
+        <ModalPortal><div role="dialog" aria-modal="true" className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 w-full max-w-sm space-y-4 text-slate-800 shadow-2xl">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-black text-slate-900 mb-1">شروع دوره جدید؟</h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  شماره دوره {courseNumber} از آخرین دوره ثبت‌شده ({currentMax}) بیشتر است.
+                  آیا این کارآموز در یک دوره جدید ثبت شود؟
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowNewCoursePrompt(false); setCourseNumber(currentMax); courseNumberTouched.current = false; }}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition"
+              >
+                ماندن در دوره {currentMax}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSubmit(submitMode, true)}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition"
+              >
+                بله، دوره جدید
+              </button>
+            </div>
+          </div>
+        </div></ModalPortal>
+      )}
+
       {/* ── CAMERA MODAL FOR REAL-TIME SCANNING / PHOTO CAPTURE ── */}
       {activeCameraTarget && (
-        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-5">
+        <ModalPortal><div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-5 overflow-y-auto">
           <div className={`bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 w-full space-y-3 text-slate-800 shadow-2xl ${
             activeCameraTarget === 'idCard' ? 'max-w-4xl' : 'max-w-sm'
           }`}>
@@ -1235,7 +1344,7 @@ export default function StudentRegistrationForm({
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

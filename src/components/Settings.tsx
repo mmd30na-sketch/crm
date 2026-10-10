@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DEFAULT_CONTRACT_TEXT } from '../utils/printDocs';
 import {
   Settings as SettingsIcon,
   BookOpen,
@@ -37,131 +38,73 @@ interface SettingsProps {
 export default function Settings({ courses, onRefresh }: SettingsProps) {
   const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database'>('academy');
 
-  const dummyOrEmpty = (key: string, dummies: string[]) => {
-    const v = localStorage.getItem(key) || '';
-    return !v || dummies.includes(v) ? '' : v;
-  };
+  /* ── 1. Rubika & SMS gateways: stored on the server, secrets are never sent back ── */
+  const [rubikaBotToken, setRubikaBotToken]   = useState('');
+  const [rubikaTokenSet, setRubikaTokenSet]   = useState(false);
+  const [rubikaChannelId, setRubikaChannelId] = useState('');
+  const [rubikaIsActive, setRubikaIsActive]   = useState(true);
 
-  /* ── 1. Rubika & SMS Panel States ── */
-  const [rubikaBotToken, setRubikaBotToken]   = useState(() => dummyOrEmpty('carla_rubika_bot_token', ['RUBIKA-BOT-551249-YHBX987X']));
-  const [rubikaChannelId, setRubikaChannelId] = useState(() => dummyOrEmpty('carla_rubika_channel_id', ['@carla_driving_academy']));
-  const [rubikaIsActive, setRubikaIsActive]   = useState(() => localStorage.getItem('carla_rubika_active') !== 'false');
-
-  const [smsProvider, setSmsProvider]                 = useState(() => localStorage.getItem('carla_sms_provider') || 'ippanel');
-  const [smsApiKey, setSmsApiKey]                     = useState(() => dummyOrEmpty('carla_sms_api_key', ['CARLA-SMS-98765-SECURE-KEY']));
-  const [smsSenderLine, setSmsSenderLine]             = useState(() => dummyOrEmpty('carla_sms_sender_line', ['5000400070']));
-  const [smsAutoSendRegister, setSmsAutoSendRegister] = useState(() => localStorage.getItem('carla_sms_auto_register') !== 'false');
-  const [smsAutoSendExam, setSmsAutoSendExam]         = useState(() => localStorage.getItem('carla_sms_auto_exam') !== 'false');
+  const [smsProvider, setSmsProvider]                 = useState('ippanel');
+  const [smsApiKey, setSmsApiKey]                     = useState('');
+  const [smsKeySet, setSmsKeySet]                     = useState(false);
+  const [smsSenderLine, setSmsSenderLine]             = useState('');
+  const [smsAutoSendRegister, setSmsAutoSendRegister] = useState(true);
 
   const [isSavingGateways, setIsSavingGateways] = useState(false);
   const [gatewaysSuccess, setGatewaysSuccess]   = useState(false);
+  const [gatewaysError, setGatewaysError]       = useState('');
 
-  const handleSaveGateways = (e: React.FormEvent) => {
+  useEffect(() => {
+    api.fetchGatewaySettings().then(g => {
+      setRubikaTokenSet(!!g.rubika_bot_token_set);
+      setRubikaChannelId(g.rubika_channel_id || '');
+      setRubikaIsActive(g.rubika_active !== false);
+      setSmsProvider(g.sms_provider === 'smsir' ? 'smsir' : 'ippanel');
+      setSmsKeySet(!!g.sms_api_key_set);
+      setSmsSenderLine(g.sms_sender_line || '');
+      setSmsAutoSendRegister(g.sms_auto_register !== false);
+    }).catch(() => setGatewaysError('خواندن تنظیمات درگاه‌ها از سرور ممکن نشد.'));
+  }, []);
+
+  const handleSaveGateways = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSavingGateways(true); setGatewaysSuccess(false);
-
-    if (rubikaBotToken) localStorage.setItem('carla_rubika_bot_token', rubikaBotToken);
-    else localStorage.removeItem('carla_rubika_bot_token');
-    if (rubikaChannelId) localStorage.setItem('carla_rubika_channel_id', rubikaChannelId);
-    else localStorage.removeItem('carla_rubika_channel_id');
-    localStorage.setItem('carla_rubika_active', String(rubikaIsActive));
-
-    localStorage.setItem('carla_sms_provider', smsProvider);
-    if (smsApiKey) localStorage.setItem('carla_sms_api_key', smsApiKey);
-    else localStorage.removeItem('carla_sms_api_key');
-    if (smsSenderLine) localStorage.setItem('carla_sms_sender_line', smsSenderLine);
-    else localStorage.removeItem('carla_sms_sender_line');
-    localStorage.setItem('carla_sms_auto_register', String(smsAutoSendRegister));
-    localStorage.setItem('carla_sms_auto_exam', String(smsAutoSendExam));
-
-    if (smsApiKey) {
-      localStorage.setItem('carla_sms_config', JSON.stringify({ provider: smsProvider, apiKey: smsApiKey, senderLine: smsSenderLine }));
-    } else {
-      localStorage.removeItem('carla_sms_config');
-    }
-
-    setTimeout(() => {
-      setIsSavingGateways(false);
-      setGatewaysSuccess(true);
-      setTimeout(() => setGatewaysSuccess(false), 2000);
-    }, 800);
-  };
-
-  /* ── 2. Database States ── */
-  const [dbHost, setDbHost]         = useState(() => dummyOrEmpty('carla_db_host', ['postgresql-db.iran.liara.run']) || 'services.irn5.chabokan.net');
-  const [dbPort, setDbPort]         = useState(() => {
-    const v = localStorage.getItem('carla_db_port');
-    return !v || v === '5432' ? '52691' : v;
-  });
-  const [dbName, setDbName]         = useState(() => dummyOrEmpty('carla_db_name', ['carla_crm_production']) || 'nodejs430_carla');
-  const [dbUser, setDbUser]         = useState(() => dummyOrEmpty('carla_db_user', ['carla_root_admin']) || 'nodejs430_carla');
-  const [dbPassword, setDbPassword] = useState('');
-
-  const [dbConnectionStatus, setDbConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
-  const [dbLastSync, setDbLastSync]                 = useState(() => dummyOrEmpty('carla_db_last_sync', ['۱۴۰۵/۰۵/۲۸ - ۱۱:۲۵', '۱۴۰۵/۰۵/۲۸ - ۱۳:۵۵']));
-  const [isSyncing, setIsSyncing]                   = useState(false);
-  const [syncProgress, setSyncProgress]             = useState(0);
-  const [syncSuccess, setSyncSuccess]               = useState(false);
-  const [isSavingDb, setIsSavingDb]                 = useState(false);
-  const [dbSaveSuccess, setDbSaveSuccess]           = useState(false);
-
-  const handleTestConnection = async () => {
-    setDbConnectionStatus('connecting');
+    setIsSavingGateways(true); setGatewaysSuccess(false); setGatewaysError('');
     try {
-      const origin = window.location.hostname.endsWith('github.io') ? 'https://crm.mmd30na.cloud' : '';
-      const token = sessionStorage.getItem('carla_crm_token');
-      const res = await fetch(`${origin}/api/health`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      // Empty key/token fields keep the value already saved on the server.
+      await api.saveGatewaySettings({
+        sms_provider: smsProvider,
+        sms_api_key: smsApiKey,
+        sms_sender_line: smsSenderLine,
+        sms_auto_register: smsAutoSendRegister,
+        rubika_bot_token: rubikaBotToken,
+        rubika_channel_id: rubikaChannelId,
+        rubika_active: rubikaIsActive,
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.db === 'chabokan-mysql') {
-        setDbConnectionStatus('connected');
-        setDbLastSync(new Date().toLocaleString('fa-IR'));
-      } else {
-        setDbConnectionStatus('disconnected');
-      }
+      if (smsApiKey) setSmsKeySet(true);
+      if (rubikaBotToken) setRubikaTokenSet(true);
+      setSmsApiKey(''); setRubikaBotToken('');
+      setGatewaysSuccess(true);
+      setTimeout(() => setGatewaysSuccess(false), 2500);
+    } catch (err: any) {
+      setGatewaysError(err?.message || 'ذخیره تنظیمات ناموفق بود.');
+    } finally {
+      setIsSavingGateways(false);
+    }
+  };
+
+  /* ── 2. Database / server status (read-only: the connection is configured in the server environment) ── */
+  const [dbMode, setDbMode] = useState<'checking' | 'mysql' | 'local' | 'offline'>('checking');
+
+  const checkServerStatus = async () => {
+    setDbMode('checking');
+    try {
+      const h = await api.fetchHealth();
+      setDbMode(h.db === 'chabokan-mysql' ? 'mysql' : 'local');
     } catch {
-      setDbConnectionStatus('disconnected');
+      setDbMode('offline');
     }
   };
-
-  const handleManualSync = () => {
-    if (dbConnectionStatus !== 'connected') {
-      alert('ابتدا اتصال به دیتابیس را تست و تأیید کنید.');
-      return;
-    }
-    setIsSyncing(true); setSyncProgress(10); setSyncSuccess(false);
-    const interval = setInterval(() => {
-      setSyncProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsSyncing(false);
-          setSyncSuccess(true);
-          const ptime = new Date().toLocaleString('fa-IR');
-          setDbLastSync(ptime);
-          localStorage.setItem('carla_db_last_sync', ptime);
-          setTimeout(() => setSyncSuccess(false), 2500);
-          return 100;
-        }
-        return prev + 30;
-      });
-    }, 200);
-  };
-
-  const handleSaveDbSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSavingDb(true); setDbSaveSuccess(false);
-    localStorage.setItem('carla_db_host', dbHost);
-    localStorage.setItem('carla_db_port', dbPort);
-    localStorage.setItem('carla_db_name', dbName);
-    localStorage.setItem('carla_db_user', dbUser);
-    if (dbPassword) localStorage.setItem('carla_db_password', dbPassword);
-    else localStorage.removeItem('carla_db_password');
-    setTimeout(() => {
-      setIsSavingDb(false); setDbSaveSuccess(true);
-      setTimeout(() => setDbSaveSuccess(false), 2000);
-    }, 600);
-  };
+  useEffect(() => { void checkServerStatus(); }, []);
 
   /* ── 3. Academy Profile ── */
   const [academyName, setAcademyName]       = useState('');
@@ -170,6 +113,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   const [academyAddress, setAcademyAddress] = useState('');
   const [receiptHeader, setReceiptHeader]   = useState('');
   const [receiptFooter, setReceiptFooter]   = useState('');
+  const [contractText, setContractText]     = useState('');
   const [isSavingAcademy, setIsSavingAcademy] = useState(false);
   const [academySuccess, setAcademySuccess] = useState(false);
 
@@ -184,9 +128,9 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
 
   /* Payment & User lists */
   const [paymentMethods] = useState([
-    { id: 1, name: 'دستگاه کارتخوان رفاه (پذیرش اصلی)', code: 'pos_refah', active: true },
-    { id: 2, name: 'حساب کارت به کارت بانک ملی', code: 'card_melli', active: true },
-    { id: 3, name: 'صندوق نقد دفتری (تنخواه)', code: 'cash_desk', active: true },
+    { id: 1, name: 'کارتخوان', code: 'pos', active: true },
+    { id: 2, name: 'کارت به کارت', code: 'card_transfer', active: true },
+    { id: 3, name: 'نقدی', code: 'cash', active: true },
   ]);
 
   const ROLE_LABEL: Record<StaffRole, string> = {
@@ -280,6 +224,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
           setAcademyAddress(data.address || '');
           setReceiptHeader(data.header_text || '');
           setReceiptFooter(data.footer_text || '');
+          setContractText(data.contract_text || DEFAULT_CONTRACT_TEXT);
         }
       } catch (err) {
         console.error('Error fetching settings:', err);
@@ -299,6 +244,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
         address: academyAddress,
         header_text: receiptHeader,
         footer_text: receiptFooter,
+        contract_text: contractText.trim() === DEFAULT_CONTRACT_TEXT.trim() ? '' : contractText,
       });
       setAcademySuccess(true);
       setTimeout(() => setAcademySuccess(false), 2000);
@@ -351,7 +297,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     { id: 'courses', label: 'لیست دوره‌ها', icon: BookOpen, count: courses.length, color: 'violet' },
     { id: 'gateways', label: 'وب‌سرویس و درگاه‌ها', icon: Cpu, color: 'teal' },
     { id: 'database', label: 'دیتابیس Cloud', icon: Database, color: 'amber' },
-    { id: 'payment', label: 'درگاه‌های بانکی', icon: CreditCard, color: 'emerald' },
+    { id: 'payment', label: 'روش‌های پرداخت', icon: CreditCard, color: 'emerald' },
     { id: 'users', label: 'کاربران و دسترسی‌ها', icon: Users, color: 'rose' },
   ];
 
@@ -372,11 +318,16 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
 
         {/* Live Metrics Chips */}
         <div className="flex items-center gap-2 text-xs font-mono">
-          <span className="flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-bold">
-            <CheckCircle className="w-3 h-3 text-emerald-500" />DB Online
+          <span className={`flex items-center gap-1 px-2.5 py-1 border rounded-lg font-bold ${
+            dbMode === 'mysql' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : dbMode === 'local' ? 'bg-amber-50 text-amber-700 border-amber-200'
+              : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+            <CheckCircle className="w-3 h-3" />
+            {dbMode === 'mysql' ? 'MySQL متصل' : dbMode === 'local' ? 'ذخیره‌سازی: فایل محلی' : dbMode === 'offline' ? 'سرور در دسترس نیست' : 'در حال بررسی...'}
           </span>
-          <span className="flex items-center gap-1 px-2.5 py-1 bg-sky-50 text-sky-700 border border-sky-200 rounded-lg font-bold">
-            <Wifi className="w-3 h-3 text-sky-500" />API 200 OK
+          <span className={`flex items-center gap-1 px-2.5 py-1 border rounded-lg font-bold ${
+            dbMode === 'offline' ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-sky-50 text-sky-700 border-sky-200'}`}>
+            <Wifi className="w-3 h-3" />{dbMode === 'offline' ? 'API قطع' : 'API فعال'}
           </span>
         </div>
       </div>
@@ -463,6 +414,21 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   <textarea rows={3} value={receiptFooter} onChange={e => setReceiptFooter(e.target.value)}
                     className="w-full p-3 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-sky-400 text-slate-800 resize-none leading-relaxed" />
                 </div>
+
+                <div className="sm:col-span-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label htmlFor="contract-text" className="block text-xs font-semibold text-slate-600">متن قرارداد آموزشی (هر بند در یک خط)</label>
+                    <button type="button" onClick={() => setContractText(DEFAULT_CONTRACT_TEXT)}
+                      className="text-[11px] font-bold text-sky-700 hover:underline cursor-pointer">بازگردانی متن پیش‌فرض</button>
+                  </div>
+                  <textarea id="contract-text" rows={8} value={contractText} onChange={e => setContractText(e.target.value)} dir="rtl"
+                    className="w-full p-3 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-sky-400 text-slate-800 leading-relaxed" />
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    شماره‌گذاری بندها خودکار است. متغیرهای قابل استفاده:{' '}
+                    <span dir="ltr" className="font-mono">{'{{student_name}} {{national_code}} {{course_title}} {{course_number}} {{tuition}} {{paid}} {{date}} {{academy_name}}'}</span>.
+                    تغییر متن فقط روی قراردادهای تولیدشده بعدی اثر دارد.
+                  </p>
+                </div>
               </div>
 
               <div className="flex justify-between items-center pt-3 border-t border-slate-100">
@@ -540,7 +506,11 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                         <td className="p-3 font-mono font-bold text-violet-700">{c.tuition.toLocaleString('fa-IR')} تومان</td>
                         <td className="p-3 text-slate-600">{c.duration_weeks} هفته</td>
                         <td className="p-3">
-                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">فعال</span>
+                          {c.active ? (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">فعال</span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">غیرفعال</span>
+                          )}
                         </td>
                         <td className="p-3 text-center">
                           <button onClick={() => handleEditCourse(c)} className="p-1.5 text-violet-600 hover:bg-violet-50 rounded-lg transition inline-flex items-center gap-1 font-bold">
@@ -573,8 +543,8 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                     <MessageSquare className="w-4 h-4 text-violet-600" />بات پیام‌رسان روبیکا (Carla Bot)
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">توکن امنیتی (Bot Token)</label>
-                    <input type="text" value={rubikaBotToken} onChange={e => setRubikaBotToken(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">توکن امنیتی (Bot Token){rubikaTokenSet && <span className="text-emerald-600 font-bold mr-1">— ذخیره شده (برای تغییر، مقدار جدید بنویسید)</span>}</label>
+                    <input type="password" autoComplete="off" value={rubikaBotToken} onChange={e => setRubikaBotToken(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">شناسه کانال روبیکا</label>
@@ -591,10 +561,17 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">وب‌سرویس فعال</label>
                     <select value={smsProvider} onChange={e => setSmsProvider(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white cursor-pointer">
                       <option value="ippanel">IPPANEL (فراز اس‌ام‌اس)</option>
-                      <option value="melipayamak">ملی پیامک</option>
-                      <option value="kavenegar">کاوه نگار</option>
+                      <option value="smsir">sms.ir</option>
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">کلید API{smsKeySet && <span className="text-emerald-600 font-bold mr-1">— ذخیره شده (برای تغییر، مقدار جدید بنویسید)</span>}</label>
+                    <input type="password" autoComplete="off" value={smsApiKey} onChange={e => setSmsApiKey(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                  </div>
+                  <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600 cursor-pointer">
+                    <input type="checkbox" checked={smsAutoSendRegister} onChange={e => setSmsAutoSendRegister(e.target.checked)} />
+                    ارسال پیامک خوش‌آمدگویی بعد از هر ثبت‌نام
+                  </label>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">خط اختصاصی ارسال</label>
                     <input type="text" value={smsSenderLine} onChange={e => setSmsSenderLine(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
@@ -603,6 +580,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
               </div>
 
               <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+                {gatewaysError && <span role="alert" className="text-xs font-bold text-rose-600">{gatewaysError}</span>}
                 {gatewaysSuccess && (
                   <span className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">
                     <CheckCircle className="w-4 h-4" />تنظیمات درگاه‌ها ذخیره شد
@@ -610,7 +588,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 )}
                 <button type="submit" disabled={isSavingGateways}
                   className="mr-auto px-5 py-2.5 bg-gradient-to-l from-teal-600 to-teal-500 hover:from-teal-700 text-white text-xs font-bold rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer">
-                  {isSavingGateways ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" />ذخیره...</> : <><Save className="w-3.5 h-3.5" />ذخیره و تست درگاه‌ها</>}
+                  {isSavingGateways ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" />ذخیره...</> : <><Save className="w-3.5 h-3.5" />ذخیره درگاه‌ها</>}
                 </button>
               </div>
             </form>
@@ -632,61 +610,27 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 رمز در Secrets به نام <span className="font-mono">NODEJS_DB_PASS</span> است؛ اینجا ذخیره نمی‌شود. Liara/Postgres در کار نیست.
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Credentials Form */}
-                <form onSubmit={handleSaveDbSettings} className="sm:col-span-2 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">سرور یا Host *</label>
-                      <input type="text" value={dbHost} onChange={e => setDbHost(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">پورت (Port)</label>
-                      <input type="text" value={dbPort} onChange={e => setDbPort(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">نام دیتابیس</label>
-                      <input type="text" value={dbName} onChange={e => setDbName(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">نام کاربری</label>
-                      <input type="text" value={dbUser} onChange={e => setDbUser(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
-                    </div>
-                  </div>
-                  <div className="flex justify-end pt-2">
-                    <button type="submit" disabled={isSavingDb} className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition cursor-pointer">
-                      {isSavingDb ? 'ذخیره...' : 'ذخیره تنظیمات دیتابیس'}
-                    </button>
-                  </div>
-                  {dbSaveSuccess && <p className="text-xs text-emerald-600 font-bold">ذخیره شد!</p>}
-                </form>
-
-                {/* Connection Status & Manual Sync Widget */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                      <span className="text-slate-600">وضعیت اتصال:</span>
-                      {dbConnectionStatus === 'connected' ? (
-                        <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">پایدار</span>
-                      ) : (
-                        <span className="text-slate-500 bg-slate-200 px-2 py-0.5 rounded-md">نامشخص</span>
-                      )}
-                    </div>
-                    <button onClick={handleTestConnection} className="w-full py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer">
-                      تست اتصال (Ping)
-                    </button>
-
-                    <div className="border-t border-slate-200 pt-3 space-y-2">
-                      <div className="text-[11px] text-slate-500 flex justify-between">
-                        <span>آخرین سینک:</span><span className="font-mono font-bold">{dbLastSync}</span>
-                      </div>
-                      <button onClick={handleManualSync} disabled={isSyncing || dbConnectionStatus !== 'connected'}
-                        className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition cursor-pointer">
-                        {isSyncing ? `سینک (${syncProgress}%)` : 'همگام‌سازی دستی'}
-                      </button>
-                    </div>
-                  </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
+                <div className="flex items-center justify-between font-bold">
+                  <span className="text-slate-600">وضعیت ذخیره‌سازی:</span>
+                  {dbMode === 'mysql' ? (
+                    <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">متصل به MySQL</span>
+                  ) : dbMode === 'local' ? (
+                    <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">فایل محلی روی سرور (db_store.json)</span>
+                  ) : dbMode === 'offline' ? (
+                    <span className="text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">سرور پاسخ نمی‌دهد</span>
+                  ) : (
+                    <span className="text-slate-500 bg-slate-200 px-2 py-0.5 rounded-md">در حال بررسی...</span>
+                  )}
                 </div>
+                {dbMode === 'local' && (
+                  <p className="text-[11px] text-slate-500 leading-6">
+                    رمز <span className="font-mono">DB_PASSWORD</span> در تنظیمات محیط سرور (فایل <span className="font-mono">.env</span>) خالی است، پس داده‌ها فقط در فایل محلی ذخیره می‌شوند و با MySQL مشترک همگام نیستند.
+                  </p>
+                )}
+                <button onClick={checkServerStatus} className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition cursor-pointer">
+                  بررسی دوباره اتصال
+                </button>
               </div>
             </div>
           )}
@@ -698,7 +642,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
             <div className="space-y-4 fade-in">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-emerald-600" />درگاه‌های بانکی و متدهای پرداخت
+                  <CreditCard className="w-4 h-4 text-emerald-600" />روش‌های دریافت وجه
                 </h3>
               </div>
 
@@ -707,7 +651,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   <div key={m.id} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
                     <div className="text-xs font-bold text-slate-800">{m.name}</div>
                     <div className="text-[10px] text-slate-400 font-mono">شناسه: {m.code}</div>
-                    <span className="inline-block mt-2 text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">فعال</span>
                   </div>
                 ))}
               </div>
@@ -723,7 +666,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                   <Users className="w-4 h-4 text-rose-600" />کاربران سیستم و سطح دسترسی
                 </h3>
-                <span className="text-[10px] text-slate-400">منبع: فایل محلی — بعداً به MySQL وصل می‌شود</span>
               </div>
 
               {staffError && (

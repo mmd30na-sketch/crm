@@ -18,6 +18,8 @@ import {
   WebsiteRegistration,
   StaffUser,
 } from '../types';
+import { cleanText, photoPath, jalaliToday } from '../utils/normalize';
+import type { DocKind } from '../utils/printDocs';
 
 function resolveApiOrigin(): string {
   const envOrigin = (import.meta as any).env?.VITE_API_ORIGIN as string | undefined;
@@ -78,12 +80,79 @@ export async function fetchMe(): Promise<{ user: any; db?: string }> {
 
 export function logout() {
   setAuthToken(null);
+  fileToken = null;
+  if (fileTokenTimer) { clearInterval(fileTokenTimer); fileTokenTimer = null; }
+}
+
+// ─────────────────────────────────────────────────────────
+// FILE TOKEN: <img>/<a> cannot send the Authorization header, so file URLs carry a short-lived
+// (10 min) file-only token in ?token=. The server refuses it for the API. It is renewed shortly
+// before it expires; FILE_TOKEN_EVENT tells the app to put the new token into the URLs it holds.
+// ─────────────────────────────────────────────────────────
+
+export const FILE_TOKEN_EVENT = 'carla-file-token';
+const FILE_TOKEN_RENEW_BEFORE_MS = 2 * 60_000; // with a 10 min token: renewed about every 8 min
+let fileToken: { token: string; expires: number } | null = null;
+let fileTokenRequest: Promise<void> | null = null;
+let fileTokenTimer: ReturnType<typeof setInterval> | null = null;
+
+export function ensureFileToken(force = false): Promise<void> {
+  if (!getAuthToken()) return Promise.resolve();
+  if (!force && fileToken && fileToken.expires - Date.now() > FILE_TOKEN_RENEW_BEFORE_MS) return Promise.resolve();
+  if (!fileTokenRequest) {
+    fileTokenRequest = (async () => {
+      try {
+        const res = await apiFetch('/auth/file-token', { method: 'POST' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data?.token) return;
+        fileToken = { token: data.token, expires: Number(data.expires) || Date.now() + 10 * 60_000 };
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event(FILE_TOKEN_EVENT));
+      } catch {
+        // offline: the next check retries
+      } finally {
+        fileTokenRequest = null;
+      }
+    })();
+  }
+  return fileTokenRequest;
+}
+
+/** Checks once a minute (also catches up after the laptop slept) and renews the file token when it is due. */
+export function startFileTokenRefresh() {
+  if (fileTokenTimer || typeof window === 'undefined') return;
+  fileTokenTimer = setInterval(() => { void ensureFileToken(); }, 60_000);
 }
 
 function fileUrl(path?: string | null): string | undefined {
   if (!path) return undefined;
   if (/^https?:\/\//i.test(path)) return path;
   return `${API_ORIGIN}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+/**
+ * Uploaded files (/uploads, /StudentFiles) need a login. <img> and <a> cannot send an
+ * Authorization header, so the short-lived file token is passed in the query string instead.
+ * Also used to swap a renewed token into a URL built earlier.
+ */
+export function protectedFileUrl(path?: string | null): string | undefined {
+  const url = fileUrl(path);
+  const token = fileToken?.token;
+  if (!url || !token || typeof window === 'undefined') return url;
+  try {
+    const u = new URL(url, window.location.origin);
+    const apiOrigin = new URL(API_ORIGIN || window.location.origin, window.location.origin).origin;
+    if (u.origin !== apiOrigin || !/^\/(uploads|StudentFiles)\//.test(u.pathname)) return url;
+    u.searchParams.set('token', token);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** The student with the current file token in its photo URLs (after FILE_TOKEN_EVENT). */
+export function withCurrentFileToken<T extends { id_card_photo_url?: string; personal_photo_url?: string }>(s: T): T {
+  return { ...s, id_card_photo_url: protectedFileUrl(s.id_card_photo_url), personal_photo_url: protectedFileUrl(s.personal_photo_url) };
 }
 
 // ─────────────────────────────────────────────────────────
@@ -100,11 +169,12 @@ export async function fetchCourses(): Promise<Course[]> {
   // Normalise field names: backend uses price/title/course_id/is_active
   return raw.map(c => ({
     id:             c.course_id ?? c.id,
-    title:          c.title,
-    code:           c.code ?? c.title?.slice(0, 8).replace(/\s/g, '-').toUpperCase() ?? 'COURSE',
+    title:          cleanText(c.title, 160),
+    code:           c.code ?? cleanText(c.title).slice(0, 8).replace(/\s/g, '-').toUpperCase() ?? 'COURSE',
     tuition:        Number(c.price ?? c.tuition ?? 0),
     duration_weeks: Number(c.duration_days ? Math.ceil(c.duration_days / 7) : c.duration_weeks ?? 8),
-    active:         c.is_active !== undefined ? !!c.is_active : c.active !== false,
+    // MySQL returns 0/1 for the flag, the JSON store true/false
+    active:         !((c.is_active ?? c.active) === false || (c.is_active ?? c.active) === 0 || (c.is_active ?? c.active) === '0'),
   }));
 }
 
@@ -114,6 +184,7 @@ export async function saveCourse(course: Course): Promise<Course> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title:         course.title,
+      code:          course.code,
       price:         course.tuition,
       duration_days: course.duration_weeks ? course.duration_weeks * 7 : null,
       is_active:     course.active,
@@ -129,11 +200,13 @@ export async function addCourse(course: Omit<Course, 'id'>): Promise<Course> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title:         course.title,
+      code:          course.code,
       price:         course.tuition,
       duration_days: course.duration_weeks ? course.duration_weeks * 7 : null,
+      is_active:     course.active !== false,
     }),
   });
-  if (!res.ok) throw new Error('Error adding course');
+  if (!res.ok) throw await serverError(res, 'افزودن دوره ناموفق بود.');
   const body = await res.json();
   return { ...course, id: body.insertId ?? body.id ?? Date.now() };
 }
@@ -154,15 +227,16 @@ export async function fetchStudents(): Promise<Student[]> {
 function normaliseStudent(s: any): Student {
   return {
     id:                 s.student_id ?? s.id,
-    first_name:         s.first_name ?? '',
-    last_name:          s.last_name ?? '',
-    father_name:        s.father_name ?? '',
+    first_name:         cleanText(s.first_name, 100),
+    last_name:          cleanText(s.last_name, 100),
+    father_name:        cleanText(s.father_name, 100),
     national_code:      s.national_code ?? '',
     phone_number:       s.phone_number ?? '',
     birth_date_jalali:  s.birth_date_jalali ?? '',
-    address:            s.address ?? '',
-    id_card_photo_url:  fileUrl(s.national_card_path || s.id_card_photo_url),
-    personal_photo_url: fileUrl(s.personal_photo_path || s.personal_photo_url),
+    address:            cleanText(s.address, 400),
+    // Bare legacy file names are not servable (placeholder instead of a broken image).
+    id_card_photo_url:  protectedFileUrl(photoPath(s.national_card_path) || photoPath(s.id_card_photo_url)),
+    personal_photo_url: protectedFileUrl(photoPath(s.personal_photo_path) || photoPath(s.personal_photo_url)),
     status:             (s.status ?? s.registration_status ?? 'active') as Student['status'],
     created_at:         s.created_at ?? new Date().toISOString(),
     // Extra fields from backend join (used in StudentsList)
@@ -182,7 +256,7 @@ export async function createStudent(body: {
   father_name?: string | null;
   birth_date_jalali?: string | null;
   address?: string | null;
-}): Promise<{ status: string; student: Student }> {
+}): Promise<{ status: string; student: Student; already_exists?: boolean }> {
   const res = await apiFetch(`/students`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -193,7 +267,13 @@ export async function createStudent(body: {
     throw new Error(err.error ?? 'Error creating student');
   }
   const data = await res.json();
-  return { status: 'success', student: normaliseStudent(data.student ?? data) };
+  return { status: 'success', student: normaliseStudent(data.student ?? data), already_exists: !!data.already_exists };
+}
+
+/** The message the server sent for a failed request (the API answers { error } in Persian). */
+async function serverError(res: Response, fallback: string): Promise<Error> {
+  const body = await res.json().catch(() => ({}));
+  return new Error(body?.error || fallback);
 }
 
 export async function updateStudent(student: Student): Promise<Student> {
@@ -202,14 +282,14 @@ export async function updateStudent(student: Student): Promise<Student> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(student),
   });
-  if (!res.ok) throw new Error('Error updating student');
+  if (!res.ok) throw await serverError(res, 'ذخیره تغییرات ناموفق بود.');
   const data = await res.json();
   return normaliseStudent(data.student ?? data);
 }
 
 export async function deleteStudentCascade(studentId: number): Promise<{ success: boolean }> {
   const res = await apiFetch(`/students/${studentId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Error deleting student');
+  if (!res.ok) throw await serverError(res, 'حذف پرونده ناموفق بود.');
   return res.json();
 }
 
@@ -259,8 +339,9 @@ export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
     academic_degree: r.academic_degree ?? '',
     military_status: r.military_status ?? '',
     has_temp_permit: r.has_temp_permit,
-    national_card_path: fileUrl(r.national_card_path),
-    personal_photo_path: fileUrl(r.personal_photo_path),
+    // Site uploads are not served directly; use fetchRegistrationFileUrl() to preview them.
+    national_card_path: r.national_card_path || undefined,
+    personal_photo_path: r.personal_photo_path || undefined,
     status: r.status ?? 'pending',
     source: r.source ?? 'website',
     student_id: r.student_id ?? null,
@@ -268,18 +349,79 @@ export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
   }));
 }
 
-export async function approveRegistration(registrationId: number, studentId: number): Promise<WebsiteRegistration> {
-  const res = await apiFetch(`/registrations/${registrationId}/approve`, {
+/** Error from the registration endpoints; `code` is 'already_processed' for a 409 on a handled registration. */
+export class RegistrationError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export const REGISTRATION_ALREADY_PROCESSED = 'این ثبت‌نام قبلاً پردازش شده است';
+
+async function registrationError(res: Response, fallback: string): Promise<RegistrationError> {
+  const err = await res.json().catch(() => ({}));
+  const processed = res.status === 409 && (err.code === 'already_processed' || !err.error);
+  return new RegistrationError(processed ? REGISTRATION_ALREADY_PROCESSED : (err.error ?? fallback), res.status, err.code);
+}
+
+/** POST /api/registrations/:code/approve: student + enrollment + photos + status in one server transaction. */
+export async function approveRegistration(trackingCode: string, body: {
+  course_id: number;
+  course_number?: number | null;
+  final_price?: number;
+  signup_date_jalali?: string;
+  first_name?: string;
+  last_name?: string;
+  phone_number?: string;
+  address?: string;
+  birth_date_jalali?: string;
+  update_existing?: boolean;
+}): Promise<{ student: Student; enrollment: Enrollment; photos: boolean; studentCreated: boolean }> {
+  const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ student_id: studentId }),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error ?? 'تایید ثبت‌نام وبسایت ناموفق بود');
-  }
+  if (!res.ok) throw await registrationError(res, 'تایید ثبت‌نام وبسایت ناموفق بود');
   const data = await res.json();
-  return data.registration ?? data;
+  const e = data.enrollment ?? {};
+  return {
+    student: normaliseStudent(data.student),
+    enrollment: {
+      id:                 e.enrollment_id ?? e.id,
+      student_id:         e.student_id,
+      course_id:          e.course_id,
+      course_number:      e.course_number ?? null,
+      signup_date_jalali: e.signup_date_jalali ?? '',
+      final_price:        Number(e.final_price ?? 0),
+    },
+    photos: Boolean(data.photos),
+    studentCreated: Boolean(data.student_created),
+  };
+}
+
+export async function rejectRegistration(trackingCode: string, reason?: string): Promise<void> {
+  const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) throw await registrationError(res, 'رد ثبت‌نام ناموفق بود');
+}
+
+/** Loads a site-uploaded document through the authenticated route; returns a blob URL, or null when it is missing. */
+export async function fetchRegistrationFileUrl(trackingCode: string, kind: 'national_card' | 'personal_photo'): Promise<string | null> {
+  try {
+    const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/file/${kind}`);
+    if (!res.ok) return null;
+    return URL.createObjectURL(await res.blob());
+  } catch {
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -299,7 +441,9 @@ export async function fetchEnrollments(): Promise<Enrollment[]> {
     course_number:       e.course_number ?? null,
     signup_date_jalali:  e.signup_date_jalali ?? e.enrolled_at ?? '',
     final_price:         Number(e.final_price ?? 0),
-    receipt_pdf_path:    e.receipt_pdf_path ?? undefined,
+    receipt_pdf_path:    protectedFileUrl(e.receipt_pdf_path),
+    idcard_pdf_path:     protectedFileUrl(e.idcard_pdf_path),
+    contract_pdf_path:   protectedFileUrl(e.contract_pdf_path),
   }));
 }
 
@@ -383,7 +527,7 @@ export async function createPayment(body: {
     student_id:    body.student_id,
     enrollment_id: body.enrollment_id ?? null,
     amount:        body.amount,
-    pay_date_jalali: body.pay_date_jalali ?? new Date().toLocaleDateString('fa-IR'),
+    pay_date_jalali: body.pay_date_jalali ?? jalaliToday(),
     pay_method:    body.pay_method ?? 'cash',
     payment_kind:  body.payment_kind ?? 'installment',
     description:   body.description ?? '',
@@ -441,7 +585,7 @@ export async function createExpense(body: {
     title:          body.title,
     amount:         body.amount,
     pay_method:     body.pay_method ?? 'عمومی',
-    pay_date_jalali: body.pay_date_jalali ?? new Date().toLocaleDateString('fa-IR'),
+    pay_date_jalali: body.pay_date_jalali ?? jalaliToday(),
     description:    body.description ?? '',
   };
 }
@@ -449,6 +593,13 @@ export async function createExpense(body: {
 // ─────────────────────────────────────────────────────────
 // OCR
 // ─────────────────────────────────────────────────────────
+
+/** GET /api/ocr/status — is any OCR provider (Gemini / Cloud Vision) configured on the server? */
+export async function fetchOcrStatus(): Promise<{ gemini: boolean; vision: boolean; ready: boolean }> {
+  const res = await apiFetch(`/ocr/status`);
+  if (!res.ok) throw new Error('OCR status unavailable');
+  return res.json();
+}
 
 /** POST /api/students/ocr/national-card */
 export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult> {
@@ -468,7 +619,12 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
     national_code:     data.national_code ?? '',
     father_name:       data.father_name ?? '',
     birth_date_jalali: data.birth_date_jalali ?? '',
-    confidence:        data.confidence ?? 0.9,
+    card_expiry_jalali: data.card_expiry_jalali ?? '',
+    card_expired:      !!data.card_expired,
+    confidence:        data.confidence ?? 0,
+    field_warnings:    data.field_warnings ?? {},
+    // Older servers do not send the flag: stay on the safe side only when a field is missing.
+    needs_review:      data.needs_review ?? !(data.first_name && data.last_name && data.national_code),
   };
 }
 
@@ -476,11 +632,8 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
 // RECEIPT SETTINGS  (stored in academy_settings table)
 // ─────────────────────────────────────────────────────────
 
-export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
-  const res = await apiFetch(`/receipt-settings`);
-  if (!res.ok) throw new Error('Error fetching receipt settings');
-  const body = await res.json();
-  const d = body.data ?? body;
+function normaliseReceiptSettings(raw: any): ReceiptSettings {
+  const d = raw?.data ?? raw ?? {};
   return {
     academy_name: d.academy_name ?? d.name ?? 'آموزشگاه رانندگی کارلا',
     logo_url:     d.logo_url ?? '',
@@ -488,7 +641,14 @@ export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
     address:      d.address ?? '',
     header_text:  d.header_text ?? d.receipt_header ?? '',
     footer_text:  d.footer_text ?? d.receipt_footer ?? '',
+    contract_text: d.contract_text ?? '',
   };
+}
+
+export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
+  const res = await apiFetch(`/receipt-settings`);
+  if (!res.ok) throw new Error('Error fetching receipt settings');
+  return normaliseReceiptSettings(await res.json());
 }
 
 export async function saveReceiptSettings(settings: ReceiptSettings): Promise<ReceiptSettings> {
@@ -502,6 +662,7 @@ export async function saveReceiptSettings(settings: ReceiptSettings): Promise<Re
       address:      settings.address,
       header_text:  settings.header_text,
       footer_text:  settings.footer_text,
+      contract_text: settings.contract_text ?? '',
     }),
   });
   if (!res.ok) throw new Error('Error saving receipt settings');
@@ -540,25 +701,57 @@ export async function fetchEnrollmentReportContext(
   return res.json();
 }
 
+/** Report context of one enrollment mapped for the registration documents (student photos and PDF paths carry the file token). */
+export async function fetchEnrollmentDocContext(enrollmentId: number | string) {
+  const ctx: any = await fetchEnrollmentReportContext(enrollmentId);
+  const e = ctx.enrollment ?? {};
+  const enrollment: Enrollment = {
+    id: e.enrollment_id ?? e.id,
+    student_id: e.student_id,
+    course_id: e.course_id,
+    course_number: e.course_number ?? null,
+    signup_date_jalali: e.signup_date_jalali ?? '',
+    final_price: Number(e.final_price ?? 0),
+    receipt_pdf_path: protectedFileUrl(e.receipt_pdf_path),
+    idcard_pdf_path: protectedFileUrl(e.idcard_pdf_path),
+    contract_pdf_path: protectedFileUrl(e.contract_pdf_path),
+  };
+  return {
+    enrollment,
+    student: ctx.student ? normaliseStudent(ctx.student) : null,
+    course: (ctx.course ?? null) as Course | null,
+    payments: ((ctx.payments ?? []) as any[]).map((p) => ({ ...p, amount: Number(p.amount) || 0 })) as Payment[],
+    settings: normaliseReceiptSettings(ctx.settings),
+  };
+}
+
+/**
+ * POST /api/enrollments/:id/receipt  (kind = Receipt | IDCard | Contract).
+ * Throws on any failure (the caller shows it); the paths come back with the file token like every other protected URL.
+ */
 export async function uploadEnrollmentReceipt(
   enrollmentId: number | string,
   pdf: Blob,
-  opts?: { template_key?: string; paper_size?: string; filename?: string }
-): Promise<{ receipt_pdf_path: string }> {
+  opts?: { kind?: DocKind; filename?: string }
+): Promise<{ kind: DocKind; path: string; receipt_pdf_path: string; idcard_pdf_path: string; contract_pdf_path: string }> {
+  const kind: DocKind = opts?.kind ?? 'Receipt';
   const formData = new FormData();
-  formData.append('pdf', pdf, opts?.filename || `receipt_${enrollmentId}.pdf`);
-  if (opts?.template_key) formData.append('template_key', opts.template_key);
-  if (opts?.paper_size)   formData.append('paper_size',   opts.paper_size);
+  formData.append('kind', kind); // before the file so any server-side stream parsing sees it first
+  formData.append('pdf', pdf, opts?.filename || `${kind}_${enrollmentId}.pdf`);
 
-  const res = await apiFetch(`/enrollments/${enrollmentId}/receipt`, {
-    method: 'POST',
-    body:   formData,
-  });
-  if (!res.ok) {
-    // Non-critical — receipt upload failure shouldn't block registration
-    return { receipt_pdf_path: '' };
-  }
-  return res.json();
+  const res = await apiFetch(`/enrollments/${enrollmentId}/receipt`, { method: 'POST', body: formData });
+  let data: any = null;
+  try { data = await res.json(); } catch { /* non-JSON error body */ }
+  if (!res.ok) throw new Error(data?.error || `ذخیره PDF ناموفق بود (${res.status})`);
+  const path = protectedFileUrl(data?.path);
+  if (!path) throw new Error('پاسخ سرور مسیر فایل را برنگرداند.');
+  return {
+    kind,
+    path,
+    receipt_pdf_path: protectedFileUrl(data.receipt_pdf_path) ?? '',
+    idcard_pdf_path: protectedFileUrl(data.idcard_pdf_path) ?? '',
+    contract_pdf_path: protectedFileUrl(data.contract_pdf_path) ?? '',
+  };
 }
 
 // ─────────────────────────────────────────────────────────
@@ -568,9 +761,12 @@ export async function uploadEnrollmentReceipt(
 export async function fetchGatewaySettings(): Promise<{
   sms_provider: string;
   sms_api_key: string;
+  sms_api_key_set?: boolean;
   sms_sender_line: string;
   sms_auto_register: boolean;
+  sms_auto_exam?: boolean;
   rubika_bot_token: string;
+  rubika_bot_token_set?: boolean;
   rubika_channel_id: string;
   rubika_active: boolean;
 }> {
@@ -585,6 +781,7 @@ export async function saveGatewaySettings(settings: {
   sms_api_key?: string;
   sms_sender_line?: string;
   sms_auto_register?: boolean;
+  sms_auto_exam?: boolean;
   rubika_bot_token?: string;
   rubika_channel_id?: string;
   rubika_active?: boolean;
@@ -594,7 +791,7 @@ export async function saveGatewaySettings(settings: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
   });
-  if (!res.ok) throw new Error('Error saving gateway settings');
+  if (!res.ok) throw await serverError(res, 'ذخیره تنظیمات ناموفق بود.');
   return res.json();
 }
 
@@ -603,7 +800,8 @@ export async function sendMessengerMessage(body: {
   recipient: string;
   messageText: string;
   templateTitle?: string;
-}): Promise<{ success: boolean; result: any }> {
+  student_id?: number | string;
+}): Promise<{ success: boolean; status: string; message: string; message_id?: number; tracking_id?: string }> {
   const res = await apiFetch(`/messenger/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -613,9 +811,34 @@ export async function sendMessengerMessage(body: {
       message: body.messageText,
       messageText: body.messageText,
       templateTitle: body.templateTitle,
+      student_id: body.student_id,
     }),
   });
-  if (!res.ok) throw new Error('Error sending messenger message');
+  if (!res.ok) throw await serverError(res, 'ارسال پیام ناموفق بود.');
+  return res.json();
+}
+
+export type DashboardNotes = { tasks: any[]; events: any[] };
+
+export async function fetchDashboardNotes(): Promise<DashboardNotes> {
+  const res = await apiFetch(`/dashboard-notes`);
+  if (!res.ok) throw new Error('Error fetching dashboard notes');
+  return res.json();
+}
+
+/** `cleared`: the user removed the last task/event; without it the server refuses to replace saved notes with nothing. */
+export async function saveDashboardNotes(notes: DashboardNotes, cleared = false): Promise<void> {
+  const res = await apiFetch(`/dashboard-notes`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...notes, ...(cleared ? { cleared: true } : {}) }),
+  });
+  if (!res.ok) throw new Error('Error saving dashboard notes');
+}
+
+export async function fetchHealth(): Promise<{ ok: boolean; db: string }> {
+  const res = await fetch(`${API_BASE}/health`);
+  if (!res.ok) throw new Error('health check failed');
   return res.json();
 }
 
