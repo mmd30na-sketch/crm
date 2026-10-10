@@ -2037,7 +2037,11 @@ app.post('/api/enrollments/:id/receipt', uploadReceipt.single('pdf'), asyncHandl
   const previousAbs = previous ? path.resolve(process.cwd(), decode(previous).replace(/^\/+/, '')) : '';
   fs.mkdirSync(dirAbs, { recursive: true });
   let fileName = target.file;
-  if (fs.existsSync(path.join(dirAbs, fileName)) && path.resolve(dirAbs, fileName) !== previousAbs) {
+  const previousIsOurs = !!previousAbs && path.dirname(previousAbs) === path.resolve(dirAbs)
+    && new RegExp(`^${target.base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(_\\d+)?\\.pdf$`).test(path.basename(previousAbs));
+  if (previousIsOurs) {
+    fileName = path.basename(previousAbs); // regeneration replaces this enrollment's own previous file
+  } else if (fs.existsSync(path.join(dirAbs, fileName))) {
     fileName = freeFileName(dirAbs, target.base, '.pdf');
   }
   const finalAbs = path.join(dirAbs, fileName);
