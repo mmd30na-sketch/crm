@@ -12,9 +12,11 @@
     "lint": "tsc --noEmit",
     "scanner": "node scripts/scanner-bridge.mjs",
     "test:ocr": "node --import tsx scripts/test-ocr-validate.mjs",
-    "test:logic": "node --import tsx scripts/test-crm-logic.mjs"
+    "test:logic": "node --import tsx scripts/test-crm-logic.mjs",
+    "test:print": "node --import tsx scripts/test-print-docs.mjs"
   },
   "dependencies": {
+    "@fontsource/vazirmatn": "^5.3.0",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/multer": "^2.2.0",
@@ -22,6 +24,7 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
