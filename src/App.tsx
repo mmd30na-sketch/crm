@@ -61,7 +61,8 @@ const NAV_ITEMS = [
     sublabel: 'مرکز ارتباطی',
     icon: MessageSquare,
     color: 'rose',
-    roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
+    // The server allows /api/messenger for admin and cashier only.
+    roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
     id: 'settings',
@@ -199,6 +200,8 @@ export default function App() {
   const handleActiveTabChange = (newTab: string) => {
     if (!visibleNav.some(item => item.id === newTab)) return;
     setActiveTab(newTab);
+    // On phones the sidebar covers the content: close it once a tab is picked.
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
   };
 
   useEffect(() => {
@@ -209,7 +212,7 @@ export default function App() {
 
   const activeNavItem = visibleNav.find(n => n.id === activeTab) || NAV_ITEMS.find(n => n.id === activeTab);
 
-  const jalaliDate = new Date().toLocaleDateString('fa-IR');
+  const jalaliDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' });
 
   if (authChecking) {
     return <div className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center" dir="rtl">در حال بررسی ورود...</div>;
@@ -228,8 +231,12 @@ export default function App() {
       {/* ═══════════════════════════════════════════════
           SIDEBAR — Dark Premium Navigation
       ═══════════════════════════════════════════════ */}
+      {/* Phones: the sidebar is an overlay above the content; tapping the backdrop closes it. */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden="true" />
+      )}
       <aside
-        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out ${
+        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 md:static md:z-auto ${
           isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden'
         }`}
         id="app-sidebar"
@@ -406,6 +413,7 @@ export default function App() {
                   payments={payments}
                   onRefresh={refreshAllData}
                   onActiveTabChange={handleActiveTabChange}
+                  role={role}
                 />
               )}
               {activeTab === 'register' && (role === 'admin' || role === 'cashier') && (
@@ -426,7 +434,7 @@ export default function App() {
                   onRefresh={refreshAllData}
                 />
               )}
-              {activeTab === 'messenger' && (
+              {activeTab === 'messenger' && (role === 'admin' || role === 'cashier') && (
                 <MessengerHub
                   students={students}
                   courses={courses}

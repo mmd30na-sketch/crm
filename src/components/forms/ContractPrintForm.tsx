@@ -54,7 +54,7 @@ const DEFAULT_RULES = [
 
 export const ContractPrintForm: React.FC<ContractPrintFormProps> = ({
   organizationName = 'کارت هوشمند کرمانشاه',
-  contractDate = new Date().toLocaleDateString('fa-IR'),
+  contractDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' }),
   caseNumber = '………',
   studentName = '………………',
   nationalId = '………………',

@@ -38,6 +38,9 @@ import {
   Legend,
   Cell,
 } from 'recharts';
+import ModalPortal from './ModalPortal';
+import { jalaliTodayParts } from '../utils/normalize';
+import { monthlySeries } from '../utils/charts';
 
 interface AccountingDashboardProps {
   students: Student[];
@@ -66,30 +69,8 @@ const PAY_METHOD_LABELS: Record<string, string> = {
   pos: 'کارتخوان', cash: 'نقدی', card_transfer: 'کارت‌به‌کارت', online: 'آنلاین', cheque: 'چک',
 };
 
-function gregorianToJalali(date: Date) {
-  const gy = date.getFullYear();
-  const gm = date.getMonth() + 1;
-  const gd = date.getDate();
-  const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-  let jy = gy <= 1600 ? 0 : 979;
-  let gy2 = gy <= 1600 ? gy - 621 : gy - 1600;
-  const gy2m = gm > 2 ? gy2 + 1 : gy2;
-  let days = 365 * gy2 + Math.floor((gy2m + 3) / 4) - Math.floor((gy2m + 99) / 100) + Math.floor((gy2m + 399) / 400) - 80 + gd + g_d_m[gm - 1];
-  jy += 33 * Math.floor(days / 12053);
-  days %= 12053;
-  jy += 4 * Math.floor(days / 1461);
-  days %= 1461;
-  if (days > 365) {
-    jy += Math.floor((days - 1) / 365);
-    days = (days - 1) % 365;
-  }
-  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
-  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
-  return { jy, jm, jd };
-}
-
 function currentJalaliYearMonth() {
-  const { jy, jm } = gregorianToJalali(new Date());
+  const { jy, jm } = jalaliTodayParts();
   return `${jy}/${String(jm).padStart(2, '0')}`;
 }
 
@@ -126,7 +107,9 @@ export default function AccountingDashboard({
     return true;
   };
 
-  const filteredPayments = payments.filter(p => inPeriod(p.pay_date_jalali));
+  // Only payments of an existing enrollment count (the server lists only those; this guards stale state).
+  const enrollmentIds = new Set(enrollments.map(e => e.id));
+  const filteredPayments = payments.filter(p => p.enrollment_id != null && enrollmentIds.has(p.enrollment_id) && inPeriod(p.pay_date_jalali));
   const filteredExpenses = expenses.filter(ex => inPeriod(ex.pay_date_jalali || ex.expense_date));
 
   /* Totals */
@@ -137,33 +120,20 @@ export default function AccountingDashboard({
   const netProfit        = totalPayments - totalExpenses;
 
   /* ── 1. Area Chart Data from real ledger (no dummy padding) ── */
-  const monthNames = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-  const monthlyMap: Record<string, { income: number; expense: number }> = {};
-  monthNames.forEach(m => { monthlyMap[m] = { income: 0, expense: 0 }; });
-
-  const monthFromJalali = (raw?: string): string | null => {
-    const m = normJalali(raw).match(/^\d{4}\/(\d{2})/);
-    if (!m) return null;
-    return monthNames[Math.max(1, Math.min(12, parseInt(m[1], 10))) - 1];
-  };
-  filteredPayments.forEach(p => {
-    const key = monthFromJalali(p.pay_date_jalali);
-    if (key) monthlyMap[key].income += p.amount;
-  });
-  filteredExpenses.forEach(ex => {
-    const key = monthFromJalali(ex.pay_date_jalali || ex.expense_date);
-    if (key) monthlyMap[key].expense += ex.amount;
-  });
-
-  const areaChartData = monthNames.filter(m => monthlyMap[m].income || monthlyMap[m].expense).map(m => ({
-    month: m,
-    'درآمد (واریزی)': monthlyMap[m].income,
-    'هزینه (خروجی)': monthlyMap[m].expense,
+  // Grouped by year + month in calendar order (not by month name, which merged years and sorted
+  // مهر/آبان/آذر of last year after this year's months); empty months in between stay on the axis.
+  const areaChartData = monthlySeries(
+    filteredPayments.map(p => ({ date: normJalali(p.pay_date_jalali), amount: p.amount })),
+    filteredExpenses.map(ex => ({ date: normJalali(ex.pay_date_jalali || ex.expense_date), amount: ex.amount })),
+  ).map(p => ({
+    month: p.month,
+    'درآمد (واریزی)': p.income,
+    'هزینه (خروجی)': p.expense,
   }));
 
   /* ── 2. Bar Chart Data (Comparison by Course) ── */
   const courseComparisonData = courses.map(course => {
-    const courseEnrollments = enrollments.filter(e => e.course_id === course.id);
+    const courseEnrollments = enrollments.filter(e => Number(e.course_id) === Number(course.id));
     const courseTuition = courseEnrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
     const coursePayments = payments
       .filter(p => courseEnrollments.some(e => e.id === p.enrollment_id))
@@ -171,6 +141,7 @@ export default function AccountingDashboard({
 
     return {
       name: course.title.length > 15 ? course.title.slice(0, 15) + '...' : course.title,
+      fullTitle: course.title,
       'شهریه کل': courseTuition,
       'وصول شده': coursePayments,
     };
@@ -359,7 +330,8 @@ export default function AccountingDashboard({
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                {/* interval={0}: every month gets its label (the default skips labels when they are crowded) */}
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#94a3b8" interval={0} angle={-35} textAnchor="end" height={48} />
                 <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
                 <Tooltip formatter={(v: any) => [`${v.toLocaleString('fa-IR')} تومان`]} />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
@@ -382,9 +354,10 @@ export default function AccountingDashboard({
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={courseComparisonData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} />
+                {/* interval={0}: one label per course (the default dropped labels, so a course looked missing) */}
+                <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} interval={0} angle={-35} textAnchor="end" height={60} />
                 <YAxis stroke="#94a3b8" tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(v: any) => [`${v.toLocaleString('fa-IR')} تومان`]} />
+                <Tooltip formatter={(v: any) => [`${v.toLocaleString('fa-IR')} تومان`]} labelFormatter={(_l: any, p: any) => p?.[0]?.payload?.fullTitle ?? _l} />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="شهریه کل" fill="#94a3b8" radius={[4, 4, 0, 0]} maxBarSize={25} />
                 <Bar dataKey="وصول شده" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={25} />
@@ -447,7 +420,7 @@ export default function AccountingDashboard({
 
       {/* ── EXPENSE MODAL ── */}
       {isExpenseModalOpen && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -488,7 +461,7 @@ export default function AccountingDashboard({
               </div>
             </form>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

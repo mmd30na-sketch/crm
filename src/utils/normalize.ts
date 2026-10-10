@@ -1,6 +1,6 @@
 /**
  * Pure normalization helpers shared by the server (server.ts, mysql-socks.ts) and the browser.
- * No Node or DOM imports here, so `node --import tsx` can unit-test them (scripts/test-normalize.mjs).
+ * No Node or DOM imports here, so `node --import tsx` can unit-test them (scripts/test-crm-logic.mjs).
  */
 import { toLatinDigits, isValidNationalCode, isValidJalaliParts } from '../../ocrValidate';
 
@@ -67,6 +67,12 @@ export function jalaliToday(now: Date = new Date()): string {
   return m ? `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}` : raw;
 }
 
+/** Today's Jalali date in Iran as numbers ({ jy, jm, jd }). */
+export function jalaliTodayParts(now: Date = new Date()): { jy: number; jm: number; jd: number } {
+  const [jy, jm, jd] = jalaliToday(now).split('/').map(Number);
+  return { jy, jm, jd };
+}
+
 /** Lower-cased text with Latin digits and unified ی/ک, for search matching. */
 export function searchKey(v: unknown): string {
   return toLatinDigits(v).replace(/ي/g, 'ی').replace(/ك/g, 'ک').toLowerCase().trim();
@@ -76,4 +82,25 @@ export function searchKey(v: unknown): string {
 export function sameName(aFirst: unknown, aLast: unknown, bFirst: unknown, bLast: unknown): boolean {
   const n = (v: unknown) => String(v ?? '').replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/[\s‌]+/g, '').trim();
   return !!n(aLast) && n(aFirst) === n(bFirst) && n(aLast) === n(bLast);
+}
+
+/** One-line display text: control characters/newlines become spaces, runs of whitespace collapse, trimmed. */
+export function cleanText(v: unknown, maxLen = 500): string {
+  return String(v ?? '')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+/**
+ * A stored photo value as a usable path: '/...' or 'http(s)://...'. Legacy rows hold bare file names
+ * ("Screenshot (1).png") or ';'-joined lists; a bare name is no photo, a list gives its first usable entry.
+ */
+export function photoPath(v: unknown): string | undefined {
+  for (const part of String(v ?? '').split(';')) {
+    const p = part.trim();
+    if (p.startsWith('/') || /^https?:\/\//i.test(p)) return p;
+  }
+  return undefined;
 }

@@ -20,7 +20,9 @@ export async function scanWithScanner(): Promise<File> {
   try {
     res = await fetch(`${BRIDGE_URL}/scan`, { method: 'POST', signal: AbortSignal.timeout(120_000) });
   } catch {
-    throw new Error('برنامه اسکنر روی این کامپیوتر اجرا نیست. راهنما: scripts/SCANNER.md — یا از «انتخاب فایل» استفاده کنید.');
+    const err: Error & { code?: string } = new Error('برنامه اسکنر روی این کامپیوتر اجرا نیست. راهنما: scripts/SCANNER.md — یا از «انتخاب فایل» استفاده کنید.');
+    err.code = 'offline';
+    throw err;
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

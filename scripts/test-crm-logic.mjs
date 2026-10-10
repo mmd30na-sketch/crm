@@ -9,8 +9,10 @@ import {
   owedByEnrollment, studentBalance, totalOutstanding, allocatePayment, payableAmount,
 } from '../src/utils/finance.ts';
 import {
-  normalizeJalaliDate, jalaliToday, normalizeNationalCode, nationalCodeVariants, checkNationalCode, searchKey, sameName,
+  normalizeJalaliDate, jalaliToday, jalaliTodayParts, normalizeNationalCode, nationalCodeVariants, checkNationalCode, searchKey, sameName,
+  cleanText, photoPath,
 } from '../src/utils/normalize.ts';
+import { monthlySeries } from '../src/utils/charts.ts';
 import {
   matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus,
 } from '../src/utils/studentFilters.ts';
@@ -32,10 +34,15 @@ test('final_price 0 with no payments owes nothing', () => {
   assert.equal(studentBalance([{ id: 7, final_price: 0 }], []).debt, 0);
 });
 
-test('payments without an enrollment pay the oldest open debt first', () => {
-  const owed = owedByEnrollment([{ id: 5, final_price: 2000 }, { id: 3, final_price: 1000 }], [{ enrollment_id: null, amount: 1500 }]);
-  assert.equal(owed.get(3), 0);
-  assert.equal(owed.get(5), 1500);
+test('payments without an existing enrollment are ignored (not counted as paid)', () => {
+  const enr = [{ id: 5, final_price: 2000 }, { id: 3, final_price: 1000 }];
+  const pay = [{ enrollment_id: null, amount: 1500 }, { enrollment_id: 99, amount: 700 }, { enrollment_id: 3, amount: 400 }];
+  const owed = owedByEnrollment(enr, pay);
+  assert.equal(owed.get(3), 600);
+  assert.equal(owed.get(5), 2000);
+  const b = studentBalance(enr, pay);
+  assert.equal(b.totalPaid, 400);
+  assert.equal(b.debt, 2600);
 });
 
 test('totalOutstanding sums clamped balances per student', () => {
@@ -126,6 +133,49 @@ test('financial status: tuition 0 with no debt is settled, not a debtor', () => 
   assert.equal(financialStatus({ debt: 0, enrollmentsCount: 1 }), 'settled');
   assert.equal(financialStatus({ debt: 10, enrollmentsCount: 1 }), 'debtor');
   assert.equal(financialStatus({ debt: 0, enrollmentsCount: 0 }), 'none');
+});
+
+/* ── text / photo paths ── */
+test('cleanText: one trimmed line, ZWNJ kept', () => {
+  assert.equal(cleanText('  علی\n\r\tرضا \u0000 '), 'علی رضا');
+  assert.equal(cleanText('محمد\u200cرضا'), 'محمد\u200cرضا');
+  assert.equal(cleanText('a\u2028b'), 'a b');
+  assert.equal(cleanText(null), '');
+  assert.equal(cleanText('abcdef', 3), 'abc');
+});
+
+test('photoPath: bare file names are no photo, ;-lists give the first usable path', () => {
+  assert.equal(photoPath('Screenshot (1).png'), undefined);
+  assert.equal(photoPath(''), undefined);
+  assert.equal(photoPath(null), undefined);
+  assert.equal(photoPath('/StudentFiles/12/a_1_ID.jpg'), '/StudentFiles/12/a_1_ID.jpg');
+  assert.equal(photoPath('a.png; /StudentFiles/x.jpg;/StudentFiles/y.jpg'), '/StudentFiles/x.jpg');
+  assert.equal(photoPath('https://cdn.example/p.jpg'), 'https://cdn.example/p.jpg');
+});
+
+test('jalaliTodayParts follows the Tehran day', () => {
+  assert.deepEqual(jalaliTodayParts(new Date(Date.UTC(2026, 9, 9, 21, 0))), { jy: 1405, jm: 7, jd: 18 });
+});
+
+/* ── charts ── */
+test('monthlySeries: calendar order across years, gaps filled, years not merged', () => {
+  const s = monthlySeries(
+    [{ date: '1404/07/05', amount: 100 }, { date: '۱۴۰۵/۰۷/۰۱', amount: 50 }, { date: '1404/09/30', amount: 10 }, { date: 'bad', amount: 999 }],
+    [{ date: '1404/08/02', amount: 7 }],
+    24,
+  );
+  assert.equal(s.length, 13); // 1404/07 .. 1405/07
+  assert.equal(s[0].key, '1404/07');
+  assert.equal(s[0].income, 100);
+  assert.equal(s[1].expense, 7);
+  assert.equal(s[2].income, 10);
+  assert.equal(s[12].key, '1405/07');
+  assert.equal(s[12].income, 50);
+  assert.match(s[0].month, /^مهر /); // year shown when the data spans two years
+  const one = monthlySeries([{ date: '1405/07/01', amount: 1 }, { date: '1405/09/01', amount: 1 }], []);
+  assert.deepEqual(one.map((p) => p.month), ['مهر', 'آبان', 'آذر']);
+  assert.equal(monthlySeries([], []).length, 0);
+  assert.equal(monthlySeries([{ date: '1400/01/01', amount: 1 }, { date: '1405/01/01', amount: 1 }], [], 6).length, 6);
 });
 
 console.log(`\n${passed} tests passed`);

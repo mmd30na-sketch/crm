@@ -10,7 +10,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
-import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode } from './src/utils/normalize';
+import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { owedByEnrollment, allocatePayment as splitPayment, payableAmount } from './src/utils/finance';
 
 dotenv.config({ path: '.env.local' });
@@ -1209,7 +1209,8 @@ function parseStudentInput(body: any, partial: boolean): { data: StudentFields; 
   const sent = (k: string) => b[k] !== undefined && b[k] !== null && String(b[k]).trim() !== '';
 
   for (const [key, label] of [['first_name', 'نام'], ['last_name', 'نام خانوادگی']] as const) {
-    if (sent(key)) data[key] = sanitizeString(b[key], 80);
+    // Names are stored as one clean line (no newlines/control characters, no outer spaces).
+    if (sent(key) && cleanText(b[key], 80)) data[key] = cleanText(b[key], 80);
     else if (!partial) return { data, error: `${label} الزامی است.`, warnings };
   }
   if (sent('national_code')) {
@@ -1225,14 +1226,14 @@ function parseStudentInput(body: any, partial: boolean): { data: StudentFields; 
   } else if (!partial) return { data, error: 'شماره همراه الزامی است.', warnings };
   // Optional fields: an explicitly sent empty value clears the field.
   const present = (k: string) => b[k] !== undefined && b[k] !== null;
-  if (present('father_name')) data.father_name = sanitizeString(b.father_name, 80);
+  if (present('father_name')) data.father_name = cleanText(b.father_name, 80);
   if (present('birth_date_jalali')) {
     const raw = sanitizeString(String(b.birth_date_jalali), 30);
     const date = raw ? normalizeJalaliDate(raw) : '';
     if (raw && !date) return { data, error: 'تاریخ تولد نامعتبر است؛ آن را به شکل سال/ماه/روز وارد کنید.', warnings };
     data.birth_date_jalali = date;
   }
-  if (present('address')) data.address = sanitizeString(b.address, 400);
+  if (present('address')) data.address = cleanText(b.address, 400);
   return { data, warnings };
 }
 
@@ -1249,7 +1250,8 @@ async function loadEnrollments(): Promise<any[]> {
 /** JSON store: what each of a student's enrollments still owes (clamped at 0, oldest first). */
 function jsonStudentOwed(db: typeof initialDb, studentId: number) {
   const enrollments = db.enrollments.filter(e => e.student_id === studentId).sort((a, b) => a.id - b.id);
-  const payments = db.payments.filter(p => p.student_id === studentId);
+  const ids = new Set(enrollments.map(e => e.id));
+  const payments = db.payments.filter(p => p.enrollment_id && ids.has(p.enrollment_id));
   return { order: enrollments.map(e => e.id), owed: owedByEnrollment(enrollments, payments) };
 }
 
@@ -1268,7 +1270,7 @@ function parseCourseInput(body: any, partial: boolean): { data: { title?: string
   const sent = (v: unknown) => v !== undefined && v !== null && v !== '';
 
   if (sent(b.title)) {
-    const title = sanitizeString(b.title, 120);
+    const title = cleanText(b.title, 120);
     if (!title) return { data, error: 'عنوان دوره الزامی است.' };
     data.title = title;
   } else if (!partial) return { data, error: 'عنوان دوره الزامی است.' };
@@ -1607,17 +1609,17 @@ app.get('/api/enrollments', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
-// 7. POST payments
-// A payment that is not tied to an enrollment is spread over the student's enrollments (oldest first,
-// up to what is still owed on each) so per-course accounting stays correct (src/utils/finance.ts).
+// 7. POST payments (always for one enrollment; at most what is still owed on it and by the student)
 app.post('/api/payments', asyncHandler(async (req, res) => {
   const paymentData = req.body || {};
   const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
-  if (!studentId) return res.status(400).json({ error: 'student_id is required' });
+  if (!studentId) return res.status(400).json({ error: 'کارآموز پرداخت مشخص نیست.' });
   const rawAmount = paymentData.amount;
   const amount = typeof rawAmount === 'number' || typeof rawAmount === 'string' ? Math.round(Number(rawAmount)) : NaN;
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'amount is required' });
-  const linkedEnrollmentId = paymentData.enrollment_id ? parseInt(paymentData.enrollment_id, 10) : null;
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'مبلغ پرداخت باید بیشتر از صفر باشد.' });
+  // Every payment belongs to one enrollment (course registration); unlinked payments are not accepted.
+  const linkedEnrollmentId = /^\d+$/.test(String(paymentData.enrollment_id ?? '')) ? parseInt(paymentData.enrollment_id, 10) : 0;
+  if (!linkedEnrollmentId) return res.status(400).json({ error: 'دوره (ثبت‌نام) مربوط به این پرداخت را انتخاب کنید.' });
   const payDate = requestDate(paymentData.pay_date_jalali, 'تاریخ پرداخت');
   if (payDate.error) return res.status(400).json({ error: payDate.error });
   const payMethod = sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos';
@@ -1668,7 +1670,10 @@ app.post('/api/payments', asyncHandler(async (req, res) => {
 app.get('/api/payments', async (req, res) => {
   try {
     if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listPayments());
-    res.json(readDb().payments);
+    // Only payments of an existing enrollment count (same rule as the MySQL listing).
+    const db = readDb();
+    const ids = new Set(db.enrollments.map(e => e.id));
+    res.json(db.payments.filter(p => p.enrollment_id && ids.has(p.enrollment_id)));
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2101,12 +2106,21 @@ async function copyRegistrationFiles(
         // An existing file with this name may belong to another (renumbered) student: take a free name.
         // COPYFILE_EXCL still refuses to overwrite if the name was taken in between.
         const base = `${safeSegment(t.lastName, 'Student')}_${safeSegment(t.studentId, String(Date.now()))}_${suffix}`;
-        const dest = path.join(dir, freeFileName(dir, base, (path.extname(src) || '.jpg').toLowerCase()));
-        fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+        const ext = (path.extname(src) || '.jpg').toLowerCase();
+        let dest = path.join(dir, freeFileName(dir, base, ext));
+        try {
+          fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+        } catch (err: any) {
+          if (err?.code !== 'EEXIST') throw err;
+          // Taken in between: copy under a random name instead of dropping the photo (never overwrite).
+          console.warn(`Registration photo name taken, using a new name: ${dest}`);
+          dest = path.join(dir, `${base}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`);
+          fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
+        }
         out.created.push(dest);
         return `/${path.relative(process.cwd(), dest).split(path.sep).join('/')}`;
       } catch (err: any) {
-        console.warn('Registration photo copy skipped:', err?.message || err);
+        console.error(`Registration photo copy failed (${suffix}, student ${t.studentId}):`, err?.message || err);
         return undefined;
       }
     };
@@ -2275,6 +2289,13 @@ app.put('/api/dashboard-notes', (req, res) => {
     title: sanitizeString(e.title, 200), time: sanitizeString(e.time, 10),
   })).filter((e: any) => e.title);
   const db = readDb();
+  const saved: any = (db as any).dashboard || {};
+  const hadNotes = (Array.isArray(saved.tasks) && saved.tasks.length > 0) || (Array.isArray(saved.events) && saved.events.length > 0);
+  // Empty lists never replace saved notes unless the user explicitly cleared them (a client that failed
+  // to load would otherwise wipe everyone's notes).
+  if (!tasks.length && !events.length && hadNotes && req.body?.cleared !== true) {
+    return res.status(409).json({ error: 'یادداشت‌های ذخیره‌شده با فهرست خالی جایگزین نشد.' });
+  }
   (db as any).dashboard = { tasks, events };
   writeDb(db);
   res.json({ tasks, events });

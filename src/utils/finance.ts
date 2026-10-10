@@ -1,9 +1,10 @@
 /**
- * Tuition balances, shared by the server and the dashboards. Pure (unit-tested in scripts/test-finance.mjs).
+ * Tuition balances, shared by the server and the dashboards. Pure (unit-tested in scripts/test-crm-logic.mjs).
  *
  * Each enrollment's balance is clamped at 0 before anything is summed: an enrollment that was settled by
  * lowering final_price to what was paid (or overpaid) must not cancel another enrollment's debt.
- * Payments without an enrollment count against the oldest open debt first.
+ * Only payments of one of the given enrollments count: rows without (or with a deleted) enrollment are
+ * left in the table but ignored, like the server's payment listing.
  */
 
 export type BalanceEnrollment = { id: number; final_price?: number | null };
@@ -18,20 +19,14 @@ const money = (v: unknown) => {
 export function owedByEnrollment(enrollments: BalanceEnrollment[], payments: BalancePayment[]): Map<number, number> {
   const ids = new Set(enrollments.map((e) => Number(e.id)));
   const paid = new Map<number, number>();
-  let unattributed = 0;
   for (const p of payments) {
     const id = p.enrollment_id === null || p.enrollment_id === undefined ? null : Number(p.enrollment_id);
     if (id !== null && ids.has(id)) paid.set(id, (paid.get(id) || 0) + money(p.amount));
-    else unattributed += money(p.amount);
   }
   const owed = new Map<number, number>();
   for (const e of [...enrollments].sort((a, b) => Number(a.id) - Number(b.id))) {
     const id = Number(e.id);
-    let rem = Math.max(0, money(e.final_price) - (paid.get(id) || 0));
-    const used = Math.min(unattributed, rem);
-    unattributed -= used;
-    rem -= used;
-    owed.set(id, rem);
+    owed.set(id, Math.max(0, money(e.final_price) - (paid.get(id) || 0)));
   }
   return owed;
 }
@@ -40,7 +35,10 @@ export function owedByEnrollment(enrollments: BalanceEnrollment[], payments: Bal
 export function studentBalance(enrollments: BalanceEnrollment[], payments: BalancePayment[]) {
   const owed = owedByEnrollment(enrollments, payments);
   const totalTuition = enrollments.reduce((s, e) => s + money(e.final_price), 0);
-  const totalPaid = payments.reduce((s, p) => s + money(p.amount), 0);
+  const ids = new Set(enrollments.map((e) => Number(e.id)));
+  const totalPaid = payments
+    .filter((p) => p.enrollment_id !== null && p.enrollment_id !== undefined && ids.has(Number(p.enrollment_id)))
+    .reduce((s, p) => s + money(p.amount), 0);
   let debt = 0;
   for (const v of owed.values()) debt += v;
   return { totalTuition, totalPaid, debt, owed };

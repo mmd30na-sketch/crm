@@ -1,5 +1,5 @@
 /**
- * Search / filter rules of the students list. Pure (unit-tested in scripts/test-student-filters.mjs).
+ * Search / filter rules of the students list. Pure (unit-tested in scripts/test-crm-logic.mjs).
  */
 import { searchKey } from './normalize';
 

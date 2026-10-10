@@ -275,12 +275,15 @@ input[type="number"]::-webkit-outer-spin-button {
   backdrop-filter: blur(4px);
   z-index: 50;
   display: flex;
-  align-items: center;
+  /* flex-start + margin:auto on the modal: centered when it fits, scrollable (top reachable) when not */
+  align-items: flex-start;
   justify-content: center;
-  padding: 1.5rem;
+  overflow-y: auto;
+  padding: 1rem;
 }
 
 .carla-modal {
+  margin: auto;
   background: white;
   border-radius: 1.25rem;
   box-shadow: 0 24px 64px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
@@ -389,20 +392,22 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* Fade-in animation */
 .fade-in {
-  animation: fade-in 0.3s ease forwards;
+  animation: fade-in 0.3s ease backwards;
 }
+/* No `forwards` fill: an animation that stays in effect on `transform` makes every position: fixed
+   modal inside the view fixed to the page instead of the viewport (modals also use ModalPortal). */
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* Slide-in from right (RTL) */
 .slide-in {
-  animation: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) backwards;
 }
 @keyframes slide-in {
   from { opacity: 0; transform: translateX(16px); }
-  to   { opacity: 1; transform: translateX(0); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* Recharts override */

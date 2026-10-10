@@ -29,6 +29,7 @@ import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
 import { studentBalance } from '../utils/finance';
 import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus } from '../utils/studentFilters';
+import ModalPortal from './ModalPortal';
 
 interface StudentsListProps {
   students?: Student[];
@@ -37,6 +38,8 @@ interface StudentsListProps {
   payments?: Payment[];
   onRefresh?: () => void;
   onActiveTabChange?: (tab: string, enrollmentIdOrStudentId?: number) => void;
+  /** Signed-in role: the instructor gets a read-only list (no money, edits, messages); deleting is admin-only. */
+  role?: 'admin' | 'cashier' | 'instructor';
 }
 
 const PAGE_SIZE = 20;
@@ -94,7 +97,11 @@ export default function StudentsList({
   payments: propPayments,
   onRefresh,
   onActiveTabChange,
+  role = 'admin',
 }: StudentsListProps) {
+  // Mirrors the server's rules (server.ts canAccessApi): buttons a role cannot use are not shown.
+  const canManage = role === 'admin' || role === 'cashier';
+  const canDelete = role === 'admin';
 
     const studentsList    = propStudents    ?? [];
   const coursesList     = propCourses     ?? [];
@@ -130,6 +137,7 @@ export default function StudentsList({
   const [deleteConfirmStudent,  setDeleteConfirmStudent]  = useState<Student | null>(null);
   const [paymentStudent,        setPaymentStudent]        = useState<Student | null>(null);
   const [paymentAmount,         setPaymentAmount]         = useState('');
+  const [paymentEnrollmentId,   setPaymentEnrollmentId]   = useState<number | null>(null);
   const [paymentMethod,         setPaymentMethod]         = useState('pos');
   const [paymentDesc,           setPaymentDesc]           = useState('واریز قسط شهریه');
   const [isSubmittingPay,       setIsSubmittingPay]       = useState(false);
@@ -151,11 +159,11 @@ export default function StudentsList({
   const getStudentFinance = (studentId: number) => {
     const enrs       = enrollmentsList.filter(e => e.student_id === studentId);
     const pays       = paymentsList.filter(p => p.student_id === studentId);
-    const { totalTuition, totalPaid, debt } = studentBalance(enrs, pays);
+    const { totalTuition, totalPaid, debt, owed } = studentBalance(enrs, pays);
     const status     = financialStatus({ debt, enrollmentsCount: enrs.length });
     const courses    = enrs.map(e => {
       const c = coursesList.find(c => c.id === e.course_id);
-      return { enrollmentId: e.id, courseTitle: c?.title ?? 'دوره نامشخص', signupDate: e.signup_date_jalali ?? '—', courseNumber: e.course_number, tuition: e.final_price };
+      return { enrollmentId: e.id, courseTitle: c?.title ?? 'دوره نامشخص', signupDate: e.signup_date_jalali ?? '—', courseNumber: e.course_number, tuition: e.final_price, owed: owed.get(e.id) ?? 0 };
     });
     // The course shown for the student follows the active course / course-number filter.
     const matching = courses.filter(c =>
@@ -253,7 +261,8 @@ export default function StudentsList({
     try {
       const amount = parseFloat(paymentAmount);
       if (!Number.isFinite(amount) || amount <= 0) throw new Error('مبلغ پرداخت معتبر نیست.');
-      await api.createPayment({ student_id: paymentStudent.id, amount, pay_method: paymentMethod, description: paymentDesc });
+      if (!paymentEnrollmentId) throw new Error('دوره مربوط به این پرداخت را انتخاب کنید.');
+      await api.createPayment({ student_id: paymentStudent.id, enrollment_id: paymentEnrollmentId, amount, pay_method: paymentMethod, description: paymentDesc });
       onRefresh?.();
       setPaymentStudent(null); setPaymentAmount('');
     } catch (err: any) {
@@ -391,7 +400,7 @@ export default function StudentsList({
               </div>
 
               {/* Financial KPI */}
-              <div className="md:col-span-3 bg-white border border-slate-200 rounded-xl p-4" style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+              {canManage && <div className="md:col-span-3 bg-white border border-slate-200 rounded-xl p-4" style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
                     <DollarSign className="w-4 h-4 text-sky-500" />وضعیت مالی پرونده
@@ -430,16 +439,21 @@ export default function StudentsList({
                 </div>
 
                 {selectedFinance?.debt > 0 && (
-                  <button onClick={() => { setPayError(null); setPaymentStudent(selectedStudent); setPaymentAmount(selectedFinance?.debt.toString()); }}
+                  <button onClick={() => {
+                    // Every payment is for one course registration: preselect the oldest one that is still owed.
+                    const open = selectedFinance.courses.filter(c => c.owed > 0).sort((a, b) => a.enrollmentId - b.enrollmentId)[0];
+                    setPayError(null); setPaymentStudent(selectedStudent);
+                    setPaymentEnrollmentId(open?.enrollmentId ?? null); setPaymentAmount(String(open?.owed ?? ''));
+                  }}
                     className="mt-3 w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer">
                     <CreditCard className="w-3.5 h-3.5" />ثبت پرداختی
                   </button>
                 )}
-              </div>
+              </div>}
             </div>
 
             {/* ─── Row 3: Action Buttons ─── */}
-            <div className="flex items-center flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
+            {canManage && <div className="flex items-center flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
               <button onClick={() => { setEditError(null); setEditingStudent({ ...selectedStudent }); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <Edit3 className="w-3.5 h-3.5" />ویرایش پرونده
@@ -452,11 +466,13 @@ export default function StudentsList({
                 className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <MessageSquare className="w-3.5 h-3.5" />ارسال پیام
               </button>
-              <button onClick={() => { setDeleteError(null); setDeleteConfirmStudent(selectedStudent); }}
-                className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 hover:border-rose-400 text-xs font-bold rounded-lg transition cursor-pointer">
-                <Trash2 className="w-3.5 h-3.5" />حذف پرونده
-              </button>
-            </div>
+              {canDelete && (
+                <button onClick={() => { setDeleteError(null); setDeleteConfirmStudent(selectedStudent); }}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 hover:border-rose-400 text-xs font-bold rounded-lg transition cursor-pointer">
+                  <Trash2 className="w-3.5 h-3.5" />حذف پرونده
+                </button>
+              )}
+            </div>}
           </div>
         </div>
       )}
@@ -709,7 +725,7 @@ export default function StudentsList({
 
       {/* 1. Photo Lightbox */}
       {zoomPhotoUrl && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4" onClick={() => setZoomPhotoUrl(null)}>
+        <ModalPortal><div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={() => setZoomPhotoUrl(null)}>
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 max-w-2xl w-full space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -723,12 +739,12 @@ export default function StudentsList({
               <img src={zoomPhotoUrl.url} alt="" className="max-h-[68vh] w-auto object-contain" referrerPolicy="no-referrer" />
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 2. Edit Student Modal */}
       {editingStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -777,12 +793,12 @@ export default function StudentsList({
               <button onClick={handleSaveStudentEdit} className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition cursor-pointer shadow-sm">ذخیره تغییرات</button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 3. Print Receipt Modal */}
       {isPrintModalOpen && selectedStudent && selectedFinance && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto">
+        <ModalPortal><div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-2xl w-full space-y-4 text-slate-100 my-8">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -793,7 +809,7 @@ export default function StudentsList({
             <div id="printable-receipt" className="bg-white text-slate-900 p-6 rounded-xl border border-slate-200 space-y-4 text-xs">
               <div className="flex items-center justify-between border-b-2 border-slate-800 pb-4">
                 <div><h2 className="text-base font-extrabold">آموزشگاه رانندگی کارلا</h2><p className="text-xs text-slate-500">رسید رسمی ثبت‌نام و وضعیت مالی</p></div>
-                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent?.id).padStart(5, '0')}</div><div>تاریخ: {new Date().toLocaleDateString('fa-IR')}</div></div>
+                <div className="font-mono text-xs text-right space-y-0.5"><div>شماره: #{String(selectedStudent?.id).padStart(5, '0')}</div><div>تاریخ: {new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' })}</div></div>
               </div>
               <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
                 <div><strong>نام:</strong> {selectedStudent?.first_name} {selectedStudent?.last_name}</div>
@@ -820,12 +836,12 @@ export default function StudentsList({
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 4. Messaging Modal */}
       {messagingStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -853,12 +869,12 @@ export default function StudentsList({
               </>
             )}
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 5. New Payment Modal */}
       {paymentStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -868,6 +884,23 @@ export default function StudentsList({
               <button onClick={() => setPaymentStudent(null)} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 transition"><X className="w-4 h-4" /></button>
             </div>
             <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">دوره</label>
+                <select value={paymentEnrollmentId ?? ''} onChange={e => {
+                  const id = Number(e.target.value) || null;
+                  setPaymentEnrollmentId(id);
+                  const c = getStudentFinance(paymentStudent.id).courses.find(x => x.enrollmentId === id);
+                  if (c) setPaymentAmount(String(c.owed));
+                }}
+                  className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-400 cursor-pointer transition appearance-none">
+                  <option value="">انتخاب دوره…</option>
+                  {getStudentFinance(paymentStudent.id).courses.filter(c => c.owed > 0).map(c => (
+                    <option key={c.enrollmentId} value={c.enrollmentId}>
+                      {c.courseTitle}{c.courseNumber ? ` — دوره ${c.courseNumber}` : ''} (مانده: {formatToman(c.owed)})
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">مبلغ واریزی (تومان)</label>
                 <input type="number" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="مثال: ۱٬۰۰۰٬۰۰۰"
@@ -891,18 +924,18 @@ export default function StudentsList({
             {payError && <p role="alert" className="text-xs font-semibold text-rose-600">{payError}</p>}
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
               <button onClick={() => { setPaymentStudent(null); setPayError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
-              <button onClick={handleSavePayment} disabled={isSubmittingPay || !paymentAmount}
+              <button onClick={handleSavePayment} disabled={isSubmittingPay || !paymentAmount || !paymentEnrollmentId}
                 className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition flex items-center gap-1.5 cursor-pointer">
                 {isSubmittingPay ? 'در حال ثبت...' : <><CreditCard className="w-3.5 h-3.5" />ثبت قطعی</>}
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* 6. Delete Confirm */}
       {deleteConfirmStudent && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 text-center space-y-4" style={{ maxWidth: 400 }}>
             <div className="w-14 h-14 rounded-2xl bg-rose-100 flex items-center justify-center mx-auto">
               <AlertCircle className="w-7 h-7 text-rose-600" />
@@ -919,7 +952,7 @@ export default function StudentsList({
               <button onClick={() => handleDeleteStudent(deleteConfirmStudent.id)} className="px-6 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition cursor-pointer shadow-sm">حذف قطعی</button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

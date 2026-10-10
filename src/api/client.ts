@@ -18,6 +18,7 @@ import {
   WebsiteRegistration,
   StaffUser,
 } from '../types';
+import { cleanText, photoPath, jalaliToday } from '../utils/normalize';
 
 function resolveApiOrigin(): string {
   const envOrigin = (import.meta as any).env?.VITE_API_ORIGIN as string | undefined;
@@ -167,8 +168,8 @@ export async function fetchCourses(): Promise<Course[]> {
   // Normalise field names: backend uses price/title/course_id/is_active
   return raw.map(c => ({
     id:             c.course_id ?? c.id,
-    title:          c.title,
-    code:           c.code ?? c.title?.slice(0, 8).replace(/\s/g, '-').toUpperCase() ?? 'COURSE',
+    title:          cleanText(c.title, 160),
+    code:           c.code ?? cleanText(c.title).slice(0, 8).replace(/\s/g, '-').toUpperCase() ?? 'COURSE',
     tuition:        Number(c.price ?? c.tuition ?? 0),
     duration_weeks: Number(c.duration_days ? Math.ceil(c.duration_days / 7) : c.duration_weeks ?? 8),
     // MySQL returns 0/1 for the flag, the JSON store true/false
@@ -225,15 +226,16 @@ export async function fetchStudents(): Promise<Student[]> {
 function normaliseStudent(s: any): Student {
   return {
     id:                 s.student_id ?? s.id,
-    first_name:         s.first_name ?? '',
-    last_name:          s.last_name ?? '',
-    father_name:        s.father_name ?? '',
+    first_name:         cleanText(s.first_name, 100),
+    last_name:          cleanText(s.last_name, 100),
+    father_name:        cleanText(s.father_name, 100),
     national_code:      s.national_code ?? '',
     phone_number:       s.phone_number ?? '',
     birth_date_jalali:  s.birth_date_jalali ?? '',
-    address:            s.address ?? '',
-    id_card_photo_url:  protectedFileUrl(s.national_card_path || s.id_card_photo_url),
-    personal_photo_url: protectedFileUrl(s.personal_photo_path || s.personal_photo_url),
+    address:            cleanText(s.address, 400),
+    // Bare legacy file names are not servable (placeholder instead of a broken image).
+    id_card_photo_url:  protectedFileUrl(photoPath(s.national_card_path) || photoPath(s.id_card_photo_url)),
+    personal_photo_url: protectedFileUrl(photoPath(s.personal_photo_path) || photoPath(s.personal_photo_url)),
     status:             (s.status ?? s.registration_status ?? 'active') as Student['status'],
     created_at:         s.created_at ?? new Date().toISOString(),
     // Extra fields from backend join (used in StudentsList)
@@ -522,7 +524,7 @@ export async function createPayment(body: {
     student_id:    body.student_id,
     enrollment_id: body.enrollment_id ?? null,
     amount:        body.amount,
-    pay_date_jalali: body.pay_date_jalali ?? new Date().toLocaleDateString('fa-IR'),
+    pay_date_jalali: body.pay_date_jalali ?? jalaliToday(),
     pay_method:    body.pay_method ?? 'cash',
     payment_kind:  body.payment_kind ?? 'installment',
     description:   body.description ?? '',
@@ -580,7 +582,7 @@ export async function createExpense(body: {
     title:          body.title,
     amount:         body.amount,
     pay_method:     body.pay_method ?? 'عمومی',
-    pay_date_jalali: body.pay_date_jalali ?? new Date().toLocaleDateString('fa-IR'),
+    pay_date_jalali: body.pay_date_jalali ?? jalaliToday(),
     description:    body.description ?? '',
   };
 }
@@ -785,11 +787,12 @@ export async function fetchDashboardNotes(): Promise<DashboardNotes> {
   return res.json();
 }
 
-export async function saveDashboardNotes(notes: DashboardNotes): Promise<void> {
+/** `cleared`: the user removed the last task/event; without it the server refuses to replace saved notes with nothing. */
+export async function saveDashboardNotes(notes: DashboardNotes, cleared = false): Promise<void> {
   const res = await apiFetch(`/dashboard-notes`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(notes),
+    body: JSON.stringify({ ...notes, ...(cleared ? { cleared: true } : {}) }),
   });
   if (!res.ok) throw new Error('Error saving dashboard notes');
 }

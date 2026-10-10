@@ -29,6 +29,7 @@ import { drawContractPage } from '../utils/pdf';
 import { analyzeCardImage, rotateImage90, CardImageQuality } from '../utils/cardImageQuality';
 import { jsPDF } from 'jspdf';
 import { jalaliToday } from '../utils/normalize';
+import ModalPortal from './ModalPortal';
 
 interface StudentRegistrationFormProps {
   courses: Course[];
@@ -337,10 +338,8 @@ export default function StudentRegistrationForm({
   /* Course & Payment */
   const activeCourses = courses.filter(c => c.active !== false);
   const [selectedCourseId, setSelectedCourseId] = useState<number>((courses.find(c => c.active !== false) || courses[0])?.id || 1);
-  const [signupDate, setSignupDate] = useState(() => {
-    const d = new Date();
-    return d.toLocaleDateString('fa-IR-u-nu-latn', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '/');
-  });
+  // Today in Iran (Asia/Tehran), whatever time zone the browser is set to.
+  const [signupDate, setSignupDate] = useState(() => jalaliToday());
   const [finalPrice,       setFinalPrice]       = useState<number>(0);
   const [hasDiscount,      setHasDiscount]      = useState<boolean>(false);
   const [discountAmount,   setDiscountAmount]   = useState<number>(0);
@@ -358,9 +357,8 @@ export default function StudentRegistrationForm({
   const [scannerState,      setScannerState]      = useState<ScannerState>('unknown');
   const [isScanning,        setIsScanning]        = useState(false);
 
-  useEffect(() => {
-    if (!isMobile) void checkScanner().then(setScannerState);
-  }, [isMobile]);
+  // The local scanner bridge is only contacted when the user clicks Scan: probing it on every visit
+  // fills the console with connection errors on computers that do not run it.
 
   /** Desktop: scan the card with the attached scanner, then save + extract like an uploaded file. */
   const scanCardWithScanner = async () => {
@@ -370,7 +368,8 @@ export default function StudentRegistrationForm({
       setScannerState('ready');
     } catch (err: any) {
       setOcrError(err?.message || 'اسکن ناموفق بود.');
-      setScannerState(await checkScanner());
+      // Bridge not reachable: no second request. Otherwise ask it whether a scanner is configured.
+      setScannerState(err?.code === 'offline' ? 'offline' : await checkScanner());
     } finally { setIsScanning(false); }
   };
 
@@ -1359,7 +1358,7 @@ export default function StudentRegistrationForm({
 
       {/* ── NEW COURSE NUMBER CONFIRMATION ── */}
       {showNewCoursePrompt && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <ModalPortal><div role="dialog" aria-modal="true" className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white border border-slate-200 rounded-2xl p-5 w-full max-w-sm space-y-4 text-slate-800 shadow-2xl">
             <div className="flex items-start gap-2">
               <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
@@ -1388,12 +1387,12 @@ export default function StudentRegistrationForm({
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* ── CAMERA MODAL FOR REAL-TIME SCANNING / PHOTO CAPTURE ── */}
       {activeCameraTarget && (
-        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-5">
+        <ModalPortal><div className="fixed inset-0 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-5 overflow-y-auto">
           <div className={`bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 w-full space-y-3 text-slate-800 shadow-2xl ${
             activeCameraTarget === 'idCard' ? 'max-w-4xl' : 'max-w-sm'
           }`}>
@@ -1472,7 +1471,7 @@ export default function StudentRegistrationForm({
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

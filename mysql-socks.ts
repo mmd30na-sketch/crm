@@ -1,7 +1,7 @@
 import fs from 'fs';
 import net from 'net';
 import mysql from 'mysql2/promise';
-import { jalaliToday as tehranJalaliToday, nationalCodeVariants, normalizeNationalCode, sameName } from './src/utils/normalize';
+import { jalaliToday as tehranJalaliToday, nationalCodeVariants, normalizeNationalCode, sameName, cleanText } from './src/utils/normalize';
 import { owedByEnrollment, allocatePayment, payableAmount } from './src/utils/finance';
 
 /**
@@ -335,7 +335,7 @@ export async function listCourses() {
 }
 
 export async function insertCourse(body: any) {
-  const title = String(body.title || '').trim();
+  const title = cleanText(body.title, 160);
   const price = Number(body.price ?? body.tuition ?? 0);
   const durationDays = body.duration_days ?? (body.duration_weeks ? Number(body.duration_weeks) * 7 : 56);
   const active = body.is_active ?? body.active ?? 1;
@@ -348,7 +348,7 @@ export async function insertCourse(body: any) {
 }
 
 export async function updateCourse(id: number, body: any) {
-  const title = String(body.title || '').trim();
+  const title = cleanText(body.title, 160);
   const price = Number(body.price ?? body.tuition ?? 0);
   const durationDays = body.duration_days ?? (body.duration_weeks ? Number(body.duration_weeks) * 7 : 56);
   const active = body.is_active ?? body.active ?? 1;
@@ -372,7 +372,7 @@ export async function listStudents() {
             'active' AS status,
             CAST(COALESCE(x.total_paid, 0) AS DECIMAL(15,2)) AS total_paid,
             CAST(COALESCE(x.course_fee, 0) AS DECIMAL(15,2)) AS course_fee,
-            CAST(GREATEST(COALESCE(x.remaining_debt, 0) - COALESCE(u.unattributed, 0), 0) AS DECIMAL(15,2)) AS remaining_debt
+            CAST(COALESCE(x.remaining_debt, 0) AS DECIMAL(15,2)) AS remaining_debt
      FROM students s
      LEFT JOIN (
        -- Each enrollment's balance is clamped at 0 before summing: a settled/overpaid enrollment
@@ -384,12 +384,6 @@ export async function listStudents() {
        FROM v_enrollment_balances
        GROUP BY student_id
      ) x ON x.student_id = s.student_id
-     LEFT JOIN (
-       -- Payments without an enrollment still reduce the student's debt.
-       SELECT student_id, SUM(amount) AS unattributed
-       FROM payments WHERE enrollment_id IS NULL
-       GROUP BY student_id
-     ) u ON u.student_id = s.student_id
      ORDER BY s.student_id DESC`
   );
   return rows.map((s: any) => ({
@@ -424,12 +418,13 @@ async function findStudentsByCode(conn: mysql.Connection, code: string, forUpdat
 
 /** Inserts a student unless one with the same national code exists; then that one is returned (`alreadyExists`). */
 export async function insertStudent(body: any): Promise<{ student: any; alreadyExists: boolean }> {
-  const firstName = String(body.first_name || '').trim();
-  const lastName = String(body.last_name || '').trim();
+  // Names/address are stored as one clean line (no newlines/control characters, no outer spaces).
+  const firstName = cleanText(body.first_name, 100);
+  const lastName = cleanText(body.last_name, 100);
   const nationalCode = normalizeNationalCode(body.national_code);
   const phoneNumber = String(body.phone_number || '').trim();
-  const address = String(body.address || '').trim();
-  const fatherName = String(body.father_name || '').trim();
+  const address = cleanText(body.address, 400);
+  const fatherName = cleanText(body.father_name, 100);
   const birthDate = String(body.birth_date_jalali || '').trim();
   // Photo paths are set by the server's upload handler; a client-supplied value is only kept when it points into StudentFiles/.
   const ownFile = (v: unknown) => {
@@ -485,12 +480,13 @@ export async function insertStudent(body: any): Promise<{ student: any; alreadyE
 }
 
 export async function updateStudent(id: number, body: any) {
-  const firstName = String(body.first_name || '').trim();
-  const lastName = String(body.last_name || '').trim();
+  // Names/address are stored as one clean line (no newlines/control characters, no outer spaces).
+  const firstName = cleanText(body.first_name, 100);
+  const lastName = cleanText(body.last_name, 100);
   const nationalCode = normalizeNationalCode(body.national_code);
   const phoneNumber = String(body.phone_number || '').trim();
-  const address = String(body.address || '').trim();
-  const fatherName = String(body.father_name || '').trim();
+  const address = cleanText(body.address, 400);
+  const fatherName = cleanText(body.father_name, 100);
   const birthDate = String(body.birth_date_jalali || '').trim();
 
   const sets = ['first_name = ?', 'last_name = ?', 'national_code = ?', 'phone_number = ?', 'address = ?'];
@@ -653,9 +649,12 @@ export async function insertEnrollment(body: any) {
 
 export async function listPayments() {
   const rows = await sql(
-    `SELECT payment_id AS id, enrollment_id, student_id, pay_date_jalali,
-            CAST(amount AS DECIMAL(15,2)) AS amount, pay_method, payment_kind, description
-     FROM payments ORDER BY payment_id DESC`
+    // Only payments of an existing enrollment are listed/counted (rows without one are left in the table).
+    `SELECT p.payment_id AS id, p.enrollment_id, p.student_id, p.pay_date_jalali,
+            CAST(p.amount AS DECIMAL(15,2)) AS amount, p.pay_method, p.payment_kind, p.description
+     FROM payments p
+     JOIN enrollments e ON e.enrollment_id = p.enrollment_id
+     ORDER BY p.payment_id DESC`
   );
   return rows.map((p: any) => ({ ...p, amount: Number(p.amount || 0) }));
 }
@@ -690,11 +689,10 @@ export async function insertPaymentAtomic(input: PaymentRequest): Promise<any[]>
       throw httpError(404, 'ثبت‌نام مربوط به این کارآموز یافت نشد.');
     }
     const ids = enrollments.map((e) => e.id);
-    const [payRows] = await conn.query(
-      `SELECT enrollment_id, amount FROM payments
-       WHERE student_id = ?${ids.length ? ` OR enrollment_id IN (${ids.map(() => '?').join(', ')})` : ''}`,
-      [input.studentId, ...ids]
-    );
+    // Same rule as the listings: only payments of an existing enrollment count.
+    const [payRows] = ids.length
+      ? await conn.query(`SELECT enrollment_id, amount FROM payments WHERE enrollment_id IN (${ids.map(() => '?').join(', ')})`, ids)
+      : [[]];
     const owed = owedByEnrollment(enrollments, (payRows as any[]).map((p) => ({ enrollment_id: p.enrollment_id, amount: Number(p.amount || 0) })));
     const remaining = payableAmount(owed, input.linkedEnrollmentId);
     if (input.amount > remaining) {
@@ -876,7 +874,7 @@ export async function approveWebsiteRegistration(input: ApproveRegistrationInput
           ['address', o.address, true], ['birth_date_jalali', o.birth_date_jalali, studentHasBirthDate],
         ];
         for (const [col, val, ok] of map) {
-          if (ok && val !== undefined) { sets.push(`${col} = ?`); params.push(val); }
+          if (ok && val !== undefined) { sets.push(`${col} = ?`); params.push(col === 'phone_number' || col === 'birth_date_jalali' ? val : cleanText(val, 400)); }
         }
         if (sets.length) {
           params.push(student.student_id);
@@ -884,14 +882,14 @@ export async function approveWebsiteRegistration(input: ApproveRegistrationInput
         }
       }
     } else {
-      const parts = String(reg.full_name || '').trim().split(/\s+/).filter(Boolean);
-      const firstName = o.first_name ?? (parts[0] || '');
-      const lastName = o.last_name ?? parts.slice(1).join(' ');
+      const parts = cleanText(reg.full_name).split(' ').filter(Boolean);
+      const firstName = cleanText(o.first_name ?? (parts[0] || ''), 100);
+      const lastName = cleanText(o.last_name ?? parts.slice(1).join(' '), 100);
       const phone = o.phone_number ?? toLatinDigits(reg.phone_number).replace(/[\s-]/g, '');
       if (!firstName || !lastName) throw httpError(400, 'نام و نام خانوادگی کارآموز مشخص نیست؛ آن‌ها را وارد کنید.');
       if (!phone) throw httpError(400, 'شماره همراه کارآموز مشخص نیست.');
       const columns = ['first_name', 'last_name', 'national_code', 'phone_number', 'address'];
-      const values: any[] = [firstName, lastName, nationalCode, phone, o.address ?? ''];
+      const values: any[] = [firstName, lastName, nationalCode, phone, cleanText(o.address ?? '', 400)];
       if (studentHasBirthDate && o.birth_date_jalali) { columns.push('birth_date_jalali'); values.push(o.birth_date_jalali); }
       const [ins] = await conn.query(
         `INSERT INTO students (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
