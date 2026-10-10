@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense } from '../types';
 import * as api from '../api/client';
+import { totalOutstanding as outstandingOf } from '../utils/finance';
 import {
   AreaChart,
   Area,
@@ -132,7 +133,7 @@ export default function AccountingDashboard({
   const totalTuition     = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
   const totalPayments    = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalExpenses    = filteredExpenses.reduce((sum, ex) => sum + ex.amount, 0);
-  const totalOutstanding = Math.max(0, totalTuition - payments.reduce((sum, p) => sum + p.amount, 0));
+  const totalOutstanding = outstandingOf(enrollments, payments); // per-enrollment balances, each clamped at 0
   const netProfit        = totalPayments - totalExpenses;
 
   /* ── 1. Area Chart Data from real ledger (no dummy padding) ── */

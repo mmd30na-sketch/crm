@@ -28,6 +28,7 @@ import { checkScanner, scanWithScanner, ScannerState } from '../api/scanner';
 import { drawContractPage } from '../utils/pdf';
 import { analyzeCardImage, rotateImage90, CardImageQuality } from '../utils/cardImageQuality';
 import { jsPDF } from 'jspdf';
+import { jalaliToday } from '../utils/normalize';
 
 interface StudentRegistrationFormProps {
   courses: Course[];
@@ -109,12 +110,6 @@ function Input({
   );
 }
 
-function jalaliToday(): string {
-  const mapped = toLatinDigits(new Date().toLocaleDateString('fa-IR'));
-  const m = mapped.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
-  if (!m) return mapped;
-  return `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}`;
-}
 
 /** Iranian national smart card (کارت ملی هوشمند) is ISO/IEC 7810 ID-1. */
 const IRAN_ID_CARD_MM = { width: 85.6, height: 53.98 };
@@ -292,6 +287,8 @@ export default function StudentRegistrationForm({
   const [createdStudent, setCreatedStudent] = useState<Student | null>(null);
   const [createdEnrollmentId, setCreatedEnrollmentId] = useState<number | null>(null);
   const [pdfPath, setPdfPath] = useState<string | null>(null);
+  // Student + enrollment already saved by a submit whose payment step failed: a retry only records the payment.
+  const savedRegistration = useRef<{ key: string; student: Student; enrollment: Enrollment } | null>(null);
 
   const maxCourseNum = enrollments.map(e => e.course_number).filter((n): n is number => n != null).reduce((a,b) => Math.max(a,b), 0);
   const currentMax = maxCourseNum > 0 ? maxCourseNum : 105;
@@ -814,7 +811,12 @@ export default function StudentRegistrationForm({
       let studentObj: Student;
       let enrollmentObj: Enrollment;
       const selectedReg = selectedRegId ? pendingRegs.find((r) => r.id === selectedRegId) : undefined;
-      if (selectedReg) {
+      const submitKey = [selectedReg?.tracking_code || '', nationalCode, selectedCourseId, courseNumber, finalPrice].join('|');
+      const saved = savedRegistration.current?.key === submitKey ? savedRegistration.current : null;
+      if (saved) {
+        studentObj = saved.student;
+        enrollmentObj = saved.enrollment;
+      } else if (selectedReg) {
         // Website registration: the server creates/reuses the student, enrolls, copies the site photos and marks it approved atomically.
         const approved = await api.approveRegistration(selectedReg.tracking_code, {
           course_id: selectedCourseId,
@@ -902,17 +904,25 @@ export default function StudentRegistrationForm({
         });
       }
       setCreatedEnrollmentId(enrollmentObj.id);
+      savedRegistration.current = { key: submitKey, student: studentObj, enrollment: enrollmentObj };
       if (payAmount > 0) {
-        await api.createPayment({
-          student_id: studentObj.id,
-          enrollment_id: enrollmentObj.id,
-          amount: payAmount,
-          pay_date_jalali: today,
-          pay_method: payMethod,
-          payment_kind: paymentType === 'full' ? 'full' : 'downpayment',
-          description: payDesc || 'پیش‌پرداخت ثبت‌نام',
-        });
+        try {
+          await api.createPayment({
+            student_id: studentObj.id,
+            enrollment_id: enrollmentObj.id,
+            amount: payAmount,
+            pay_date_jalali: today,
+            pay_method: payMethod,
+            payment_kind: paymentType === 'full' ? 'full' : 'downpayment',
+            description: payDesc || 'پیش‌پرداخت ثبت‌نام',
+          });
+        } catch (payErr: any) {
+          onRefresh();
+          setStepError(`پرونده و ثبت‌نام دوره ذخیره شد ولی پیش‌پرداخت ثبت نشد: ${payErr?.message || 'خطای ارتباط'}. با زدن دوباره دکمه ثبت، فقط پرداخت ثبت می‌شود (ثبت‌نام تکراری ایجاد نمی‌شود).`);
+          return;
+        }
       }
+      savedRegistration.current = null;
       const courseObj = courses.find(c => c.id === selectedCourseId) || courses[0];
       const receiptPath = await generateAndUploadReceipt(enrollmentObj.id, studentObj, courseObj, payAmount);
       onRefresh();
@@ -936,6 +946,7 @@ export default function StudentRegistrationForm({
     setPersonalPhotoFile(null); setPersonalPhotoPreview(null);
     setPayAmount(0); setPayDesc(''); setPaymentType('full'); setHasDiscount(false); setDiscountAmount(0);
     setCreatedStudent(null); setCreatedEnrollmentId(null); setPdfPath(null);
+    savedRegistration.current = null;
     setOcrSuccess(false); setOcrWarnings({}); setOcrNeedsReview(false); setOcrConfirmed(false); setOcrExpiry(null); setQualityNotice(null);
     setOcrError(null); setStepError(null); setIsSuccess(false); setExistingNotice(null);
     courseNumberTouched.current = false;

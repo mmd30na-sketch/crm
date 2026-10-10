@@ -78,6 +78,48 @@ export async function fetchMe(): Promise<{ user: any; db?: string }> {
 
 export function logout() {
   setAuthToken(null);
+  fileToken = null;
+  if (fileTokenTimer) { clearInterval(fileTokenTimer); fileTokenTimer = null; }
+}
+
+// ─────────────────────────────────────────────────────────
+// FILE TOKEN: <img>/<a> cannot send the Authorization header, so file URLs carry a short-lived
+// (10 min) file-only token in ?token=. The server refuses it for the API. It is renewed shortly
+// before it expires; FILE_TOKEN_EVENT tells the app to put the new token into the URLs it holds.
+// ─────────────────────────────────────────────────────────
+
+export const FILE_TOKEN_EVENT = 'carla-file-token';
+const FILE_TOKEN_RENEW_BEFORE_MS = 2 * 60_000; // with a 10 min token: renewed about every 8 min
+let fileToken: { token: string; expires: number } | null = null;
+let fileTokenRequest: Promise<void> | null = null;
+let fileTokenTimer: ReturnType<typeof setInterval> | null = null;
+
+export function ensureFileToken(force = false): Promise<void> {
+  if (!getAuthToken()) return Promise.resolve();
+  if (!force && fileToken && fileToken.expires - Date.now() > FILE_TOKEN_RENEW_BEFORE_MS) return Promise.resolve();
+  if (!fileTokenRequest) {
+    fileTokenRequest = (async () => {
+      try {
+        const res = await apiFetch('/auth/file-token', { method: 'POST' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data?.token) return;
+        fileToken = { token: data.token, expires: Number(data.expires) || Date.now() + 10 * 60_000 };
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event(FILE_TOKEN_EVENT));
+      } catch {
+        // offline: the next check retries
+      } finally {
+        fileTokenRequest = null;
+      }
+    })();
+  }
+  return fileTokenRequest;
+}
+
+/** Checks once a minute (also catches up after the laptop slept) and renews the file token when it is due. */
+export function startFileTokenRefresh() {
+  if (fileTokenTimer || typeof window === 'undefined') return;
+  fileTokenTimer = setInterval(() => { void ensureFileToken(); }, 60_000);
 }
 
 function fileUrl(path?: string | null): string | undefined {
@@ -88,11 +130,12 @@ function fileUrl(path?: string | null): string | undefined {
 
 /**
  * Uploaded files (/uploads, /StudentFiles) need a login. <img> and <a> cannot send an
- * Authorization header, so the session token is passed in the query string instead.
+ * Authorization header, so the short-lived file token is passed in the query string instead.
+ * Also used to swap a renewed token into a URL built earlier.
  */
-function protectedFileUrl(path?: string | null): string | undefined {
+export function protectedFileUrl(path?: string | null): string | undefined {
   const url = fileUrl(path);
-  const token = getAuthToken();
+  const token = fileToken?.token;
   if (!url || !token || typeof window === 'undefined') return url;
   try {
     const u = new URL(url, window.location.origin);
@@ -103,6 +146,11 @@ function protectedFileUrl(path?: string | null): string | undefined {
   } catch {
     return url;
   }
+}
+
+/** The student with the current file token in its photo URLs (after FILE_TOKEN_EVENT). */
+export function withCurrentFileToken<T extends { id_card_photo_url?: string; personal_photo_url?: string }>(s: T): T {
+  return { ...s, id_card_photo_url: protectedFileUrl(s.id_card_photo_url), personal_photo_url: protectedFileUrl(s.personal_photo_url) };
 }
 
 // ─────────────────────────────────────────────────────────

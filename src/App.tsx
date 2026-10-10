@@ -116,6 +116,8 @@ export default function App() {
   const refreshAllData = async () => {
     setIsRefreshing(true);
     try {
+      // Photo/receipt URLs are built with the file token, so get one before the lists are loaded.
+      await api.ensureFileToken();
       // Each dataset is loaded on its own: a role that may not read payments/expenses (e.g. the instructor)
       // must still get students and courses, and a failed refresh keeps what is already on screen.
       const results = await Promise.allSettled([
@@ -176,8 +178,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authed) refreshAllData();
+    if (!authed) return;
+    api.startFileTokenRefresh();
+    refreshAllData();
   }, [authed]);
+
+  // A renewed file token goes into the photo/receipt URLs already on screen (images re-render with it).
+  useEffect(() => {
+    const onFileToken = () => {
+      setStudents(prev => prev.map(api.withCurrentFileToken));
+      setEnrollments(prev => prev.map(e => (e.receipt_pdf_path ? { ...e, receipt_pdf_path: api.protectedFileUrl(e.receipt_pdf_path) } : e)));
+    };
+    window.addEventListener(api.FILE_TOKEN_EVENT, onFileToken);
+    return () => window.removeEventListener(api.FILE_TOKEN_EVENT, onFileToken);
+  }, []);
 
   const role: StaffRole = currentUser?.role === 'cashier' || currentUser?.role === 'instructor' ? currentUser.role : 'admin';
   const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role));

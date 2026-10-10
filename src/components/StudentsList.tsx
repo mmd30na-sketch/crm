@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
+import { studentBalance } from '../utils/finance';
+import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus } from '../utils/studentFilters';
 
 interface StudentsListProps {
   students?: Student[];
@@ -145,18 +147,22 @@ export default function StudentsList({
   }, [searchTerm]);
 
   /* ── Finance helper ── */
+  // Per-enrollment balances are clamped at 0 (a settled/overpaid course must not hide another course's debt).
   const getStudentFinance = (studentId: number) => {
     const enrs       = enrollmentsList.filter(e => e.student_id === studentId);
-    const totalTuition= enrs.reduce((s, e) => s + (e.final_price || 0), 0);
     const pays       = paymentsList.filter(p => p.student_id === studentId);
-    const totalPaid  = pays.reduce((s, p) => s + p.amount, 0);
-    const debt       = Math.max(0, totalTuition - totalPaid);
+    const { totalTuition, totalPaid, debt } = studentBalance(enrs, pays);
+    const status     = financialStatus({ debt, enrollmentsCount: enrs.length });
     const courses    = enrs.map(e => {
       const c = coursesList.find(c => c.id === e.course_id);
       return { enrollmentId: e.id, courseTitle: c?.title ?? 'دوره نامشخص', signupDate: e.signup_date_jalali ?? '—', courseNumber: e.course_number, tuition: e.final_price };
     });
-    const primaryCourse = courses[0] ?? { enrollmentId: 0, courseTitle: 'ثبت‌نام نشده', signupDate: '—', courseNumber: undefined, tuition: 0 };
-    return { totalTuition, totalPaid, debt, isSettled: debt <= 0 && totalTuition > 0, courses, primaryCourse, paymentsCount: pays.length };
+    // The course shown for the student follows the active course / course-number filter.
+    const matching = courses.filter(c =>
+      (courseFilter === 'all' || c.courseTitle === courseFilter) &&
+      (courseNumberFilter === 'all' || String(c.courseNumber) === courseNumberFilter));
+    const primaryCourse = matching[0] ?? courses[0] ?? { enrollmentId: 0, courseTitle: 'ثبت‌نام نشده', signupDate: '—', courseNumber: undefined, tuition: 0 };
+    return { totalTuition, totalPaid, debt, status, isSettled: status === 'settled', courses, primaryCourse, paymentsCount: pays.length };
   };
 
   const formatToman = (n: number) => n.toLocaleString('fa-IR') + ' تومان';
@@ -169,22 +175,22 @@ export default function StudentsList({
   }, [enrollmentsList]);
 
   // On first open, show only the newest course number (the user can switch to "all" at any time).
+  // It is applied once; students without an enrollment stay visible under it (matchesCourseNumber).
   const courseNumberDefaulted = useRef(false);
   useEffect(() => {
     if (courseNumberDefaulted.current || availableCourseNumbers.length === 0) return;
     courseNumberDefaulted.current = true;
-    setCourseNumberFilter(String(availableCourseNumbers[0]));
+    setCourseNumberFilter(defaultCourseNumberFilter(availableCourseNumbers));
   }, [availableCourseNumbers]);
 
   /* ── Filtered list ── */
   const filteredStudents = useMemo(() => studentsList.filter(s => {
-    const nm = `${s.first_name} ${s.last_name}`.toLowerCase();
-    if (!nm.includes(debouncedSearch.toLowerCase()) && !s.national_code.includes(debouncedSearch) && !s.phone_number.includes(debouncedSearch)) return false;
+    if (!matchesStudentSearch(s, debouncedSearch)) return false;
     const fin = getStudentFinance(s.id);
     if (courseFilter !== 'all' && !fin.courses.some(c => c.courseTitle === courseFilter)) return false;
-    if (courseNumberFilter !== 'all' && !fin.courses.some(c => String(c.courseNumber) === courseNumberFilter)) return false;
-    if (financialFilter === 'settled' && !fin.isSettled) return false;
-    if (financialFilter === 'debtors' && (fin.debt <= 0 || fin.totalTuition === 0)) return false;
+    if (!matchesCourseNumber(fin.courses.map(c => c.courseNumber), courseNumberFilter)) return false;
+    if (financialFilter === 'settled' && fin.status !== 'settled') return false;
+    if (financialFilter === 'debtors' && fin.status !== 'debtor') return false;
     return true;
   }).sort((a, b) => b.id - a.id), [studentsList, enrollmentsList, paymentsList, coursesList, debouncedSearch, courseFilter, courseNumberFilter, financialFilter]);
 
@@ -207,7 +213,9 @@ export default function StudentsList({
     }
   }, [filteredStudents, hasAutoSelected]);
 
+  // The picked student's card is shown even when the current filters hide their row.
   const selectedStudent = useMemo(() => studentsList.find(s => s.id === selectedStudentId) ?? filteredStudents[0] ?? null, [studentsList, selectedStudentId, filteredStudents]);
+  const selectedHiddenByFilters = !!selectedStudent && !filteredStudents.some(s => s.id === selectedStudent.id);
   const selectedFinance = selectedStudent ? getStudentFinance(selectedStudent?.id) : null;
   const hasActiveFilters = searchTerm || courseFilter !== 'all' || courseNumberFilter !== 'all' || financialFilter !== 'all';
 
@@ -300,6 +308,7 @@ export default function StudentsList({
               <UserCheck className="w-4 h-4 text-sky-500" />
               <span className="text-sm font-bold text-slate-700">پرونده فعال</span>
               <span className="text-xs text-slate-400">/ کارآموز انتخاب‌شده</span>
+              {selectedHiddenByFilters && <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">در فیلتر فعلی لیست نیست</span>}
             </div>
             <div className="flex items-center gap-2">
               <StatusBadge status={selectedStudent?.status} />
@@ -387,9 +396,13 @@ export default function StudentsList({
                   <span className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
                     <DollarSign className="w-4 h-4 text-sky-500" />وضعیت مالی پرونده
                   </span>
-                  {selectedFinance?.isSettled ? (
+                  {selectedFinance?.status === 'settled' ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-bold">
                       <CheckCircle className="w-3.5 h-3.5" />تسویه کامل
+                    </span>
+                  ) : selectedFinance?.status === 'none' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-50 text-slate-500 border border-slate-200 rounded-full text-xs font-bold">
+                      بدون ثبت‌نام
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-50 text-rose-600 border border-rose-200 rounded-full text-xs font-bold">
@@ -465,6 +478,12 @@ export default function StudentsList({
               <span className="text-xs font-bold text-sky-600 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full font-mono">
                 {filteredStudents.length} نفر
               </span>
+              {courseNumberFilter !== 'all' && (
+                <button onClick={() => setCourseNumberFilter('all')} title="نمایش کارآموزان همه دوره‌ها"
+                  className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full hover:bg-amber-100 transition cursor-pointer">
+                  فقط دوره شماره {courseNumberFilter} — نمایش همه
+                </button>
+              )}
             </div>
 
             {/* Right: Search + Filters */}
@@ -627,10 +646,12 @@ export default function StudentsList({
                       {/* Financial + Mini Progress */}
                       <td className="px-3 py-3 hidden sm:table-cell">
                         <div className="space-y-1 min-w-[90px]">
-                          {fin.isSettled ? (
+                          {fin.status === 'settled' ? (
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
                               <CheckCircle className="w-3 h-3" />تسویه
                             </span>
+                          ) : fin.status === 'none' ? (
+                            <span className="text-[10px] text-slate-400">—</span>
                           ) : (
                             <span className="text-[10px] font-mono font-bold text-rose-600">{formatToman(fin.debt)}</span>
                           )}

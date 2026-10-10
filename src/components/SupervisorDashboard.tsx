@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
+import { totalOutstanding } from '../utils/finance';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 
 interface SupervisorDashboardProps {
@@ -173,7 +174,7 @@ export default function SupervisorDashboard({
   const activeStudentsCount  = students.filter(s => s.status === 'active').length;
   const totalTuitionRevenue  = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
   const totalReceivedCash    = payments.reduce((sum, p) => sum + p.amount, 0);
-  const totalOutstandingDebt = Math.max(0, totalTuitionRevenue - totalReceivedCash);
+  const totalOutstandingDebt = totalOutstanding(enrollments, payments); // per-enrollment balances, each clamped at 0
 
   const courseDistribution = courses.map(course => {
     const count = enrollments.filter(e => e.course_id === course.id).length;

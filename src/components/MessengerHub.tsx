@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
+import { studentBalance } from '../utils/finance';
 
 interface MessengerHubProps {
   students: Student[];
@@ -283,9 +284,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
     const enr = enrollments.filter(e => e.student_id === st.id);
     const last = enr.slice().sort((a, b) => b.id - a.id)[0];
     const courseTitle = last ? courses.find(c => c.id === last.course_id)?.title : undefined;
-    const tuition = enr.reduce((a, e) => a + (e.final_price || 0), 0);
-    const paid = payments.filter(p => p.student_id === st.id).reduce((a, p) => a + p.amount, 0);
-    const debt = Math.max(0, tuition - paid);
+    const { debt } = studentBalance(enr, payments.filter(p => p.student_id === st.id));
     return { courseTitle, debt: payments.length > 0 || enr.length === 0 ? debt : undefined };
   };
 
