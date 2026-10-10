@@ -19,6 +19,7 @@ import {
   StaffUser,
 } from '../types';
 import { cleanText, photoPath, jalaliToday } from '../utils/normalize';
+import type { DocKind } from '../utils/printDocs';
 
 function resolveApiOrigin(): string {
   const envOrigin = (import.meta as any).env?.VITE_API_ORIGIN as string | undefined;
@@ -441,6 +442,8 @@ export async function fetchEnrollments(): Promise<Enrollment[]> {
     signup_date_jalali:  e.signup_date_jalali ?? e.enrolled_at ?? '',
     final_price:         Number(e.final_price ?? 0),
     receipt_pdf_path:    protectedFileUrl(e.receipt_pdf_path),
+    idcard_pdf_path:     protectedFileUrl(e.idcard_pdf_path),
+    contract_pdf_path:   protectedFileUrl(e.contract_pdf_path),
   }));
 }
 
@@ -629,11 +632,8 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
 // RECEIPT SETTINGS  (stored in academy_settings table)
 // ─────────────────────────────────────────────────────────
 
-export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
-  const res = await apiFetch(`/receipt-settings`);
-  if (!res.ok) throw new Error('Error fetching receipt settings');
-  const body = await res.json();
-  const d = body.data ?? body;
+function normaliseReceiptSettings(raw: any): ReceiptSettings {
+  const d = raw?.data ?? raw ?? {};
   return {
     academy_name: d.academy_name ?? d.name ?? 'آموزشگاه رانندگی کارلا',
     logo_url:     d.logo_url ?? '',
@@ -641,7 +641,14 @@ export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
     address:      d.address ?? '',
     header_text:  d.header_text ?? d.receipt_header ?? '',
     footer_text:  d.footer_text ?? d.receipt_footer ?? '',
+    contract_text: d.contract_text ?? '',
   };
+}
+
+export async function fetchReceiptSettings(): Promise<ReceiptSettings> {
+  const res = await apiFetch(`/receipt-settings`);
+  if (!res.ok) throw new Error('Error fetching receipt settings');
+  return normaliseReceiptSettings(await res.json());
 }
 
 export async function saveReceiptSettings(settings: ReceiptSettings): Promise<ReceiptSettings> {
@@ -655,6 +662,7 @@ export async function saveReceiptSettings(settings: ReceiptSettings): Promise<Re
       address:      settings.address,
       header_text:  settings.header_text,
       footer_text:  settings.footer_text,
+      contract_text: settings.contract_text ?? '',
     }),
   });
   if (!res.ok) throw new Error('Error saving receipt settings');
@@ -693,26 +701,57 @@ export async function fetchEnrollmentReportContext(
   return res.json();
 }
 
+/** Report context of one enrollment mapped for the registration documents (student photos and PDF paths carry the file token). */
+export async function fetchEnrollmentDocContext(enrollmentId: number | string) {
+  const ctx: any = await fetchEnrollmentReportContext(enrollmentId);
+  const e = ctx.enrollment ?? {};
+  const enrollment: Enrollment = {
+    id: e.enrollment_id ?? e.id,
+    student_id: e.student_id,
+    course_id: e.course_id,
+    course_number: e.course_number ?? null,
+    signup_date_jalali: e.signup_date_jalali ?? '',
+    final_price: Number(e.final_price ?? 0),
+    receipt_pdf_path: protectedFileUrl(e.receipt_pdf_path),
+    idcard_pdf_path: protectedFileUrl(e.idcard_pdf_path),
+    contract_pdf_path: protectedFileUrl(e.contract_pdf_path),
+  };
+  return {
+    enrollment,
+    student: ctx.student ? normaliseStudent(ctx.student) : null,
+    course: (ctx.course ?? null) as Course | null,
+    payments: ((ctx.payments ?? []) as any[]).map((p) => ({ ...p, amount: Number(p.amount) || 0 })) as Payment[],
+    settings: normaliseReceiptSettings(ctx.settings),
+  };
+}
+
+/**
+ * POST /api/enrollments/:id/receipt  (kind = Receipt | IDCard | Contract).
+ * Throws on any failure (the caller shows it); the paths come back with the file token like every other protected URL.
+ */
 export async function uploadEnrollmentReceipt(
   enrollmentId: number | string,
   pdf: Blob,
-  opts?: { template_key?: string; paper_size?: string; filename?: string }
-): Promise<{ receipt_pdf_path: string }> {
+  opts?: { kind?: DocKind; filename?: string }
+): Promise<{ kind: DocKind; path: string; receipt_pdf_path: string; idcard_pdf_path: string; contract_pdf_path: string }> {
+  const kind: DocKind = opts?.kind ?? 'Receipt';
   const formData = new FormData();
-  formData.append('pdf', pdf, opts?.filename || `receipt_${enrollmentId}.pdf`);
-  if (opts?.template_key) formData.append('template_key', opts.template_key);
-  if (opts?.paper_size)   formData.append('paper_size',   opts.paper_size);
+  formData.append('kind', kind); // before the file so any server-side stream parsing sees it first
+  formData.append('pdf', pdf, opts?.filename || `${kind}_${enrollmentId}.pdf`);
 
-  const res = await apiFetch(`/enrollments/${enrollmentId}/receipt`, {
-    method: 'POST',
-    body:   formData,
-  });
-  if (!res.ok) {
-    // Non-critical — receipt upload failure shouldn't block registration
-    return { receipt_pdf_path: '' };
-  }
-  const data = await res.json();
-  return { receipt_pdf_path: protectedFileUrl(data.receipt_pdf_path) ?? '' };
+  const res = await apiFetch(`/enrollments/${enrollmentId}/receipt`, { method: 'POST', body: formData });
+  let data: any = null;
+  try { data = await res.json(); } catch { /* non-JSON error body */ }
+  if (!res.ok) throw new Error(data?.error || `ذخیره PDF ناموفق بود (${res.status})`);
+  const path = protectedFileUrl(data?.path);
+  if (!path) throw new Error('پاسخ سرور مسیر فایل را برنگرداند.');
+  return {
+    kind,
+    path,
+    receipt_pdf_path: protectedFileUrl(data.receipt_pdf_path) ?? '',
+    idcard_pdf_path: protectedFileUrl(data.idcard_pdf_path) ?? '',
+    contract_pdf_path: protectedFileUrl(data.contract_pdf_path) ?? '',
+  };
 }
 
 // ─────────────────────────────────────────────────────────

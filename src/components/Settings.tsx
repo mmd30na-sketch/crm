@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { DEFAULT_CONTRACT_TEXT } from '../utils/printDocs';
 import {
   Settings as SettingsIcon,
   BookOpen,
@@ -112,6 +113,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   const [academyAddress, setAcademyAddress] = useState('');
   const [receiptHeader, setReceiptHeader]   = useState('');
   const [receiptFooter, setReceiptFooter]   = useState('');
+  const [contractText, setContractText]     = useState('');
   const [isSavingAcademy, setIsSavingAcademy] = useState(false);
   const [academySuccess, setAcademySuccess] = useState(false);
 
@@ -222,6 +224,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
           setAcademyAddress(data.address || '');
           setReceiptHeader(data.header_text || '');
           setReceiptFooter(data.footer_text || '');
+          setContractText(data.contract_text || DEFAULT_CONTRACT_TEXT);
         }
       } catch (err) {
         console.error('Error fetching settings:', err);
@@ -241,6 +244,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
         address: academyAddress,
         header_text: receiptHeader,
         footer_text: receiptFooter,
+        contract_text: contractText.trim() === DEFAULT_CONTRACT_TEXT.trim() ? '' : contractText,
       });
       setAcademySuccess(true);
       setTimeout(() => setAcademySuccess(false), 2000);
@@ -409,6 +413,21 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   <label className="block text-xs font-semibold text-slate-600 mb-1.5">توضیحات و قوانین پاورقی رسید</label>
                   <textarea rows={3} value={receiptFooter} onChange={e => setReceiptFooter(e.target.value)}
                     className="w-full p-3 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-sky-400 text-slate-800 resize-none leading-relaxed" />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label htmlFor="contract-text" className="block text-xs font-semibold text-slate-600">متن قرارداد آموزشی (هر بند در یک خط)</label>
+                    <button type="button" onClick={() => setContractText(DEFAULT_CONTRACT_TEXT)}
+                      className="text-[11px] font-bold text-sky-700 hover:underline cursor-pointer">بازگردانی متن پیش‌فرض</button>
+                  </div>
+                  <textarea id="contract-text" rows={8} value={contractText} onChange={e => setContractText(e.target.value)} dir="rtl"
+                    className="w-full p-3 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-sky-400 text-slate-800 leading-relaxed" />
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    شماره‌گذاری بندها خودکار است. متغیرهای قابل استفاده:{' '}
+                    <span dir="ltr" className="font-mono">{'{{student_name}} {{national_code}} {{course_title}} {{course_number}} {{tuition}} {{paid}} {{date}} {{academy_name}}'}</span>.
+                    تغییر متن فقط روی قراردادهای تولیدشده بعدی اثر دارد.
+                  </p>
                 </div>
               </div>
 

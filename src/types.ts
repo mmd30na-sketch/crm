@@ -44,6 +44,8 @@ export interface Enrollment {
   signup_date_jalali: string;
   final_price: number;
   receipt_pdf_path?: string;
+  idcard_pdf_path?: string;
+  contract_pdf_path?: string;
 }
 
 export interface Payment {
@@ -110,6 +112,8 @@ export interface ReceiptSettings {
   address: string;
   header_text?: string;
   footer_text?: string;
+  /** Contract clauses, one per line (see src/utils/printDocs.ts for the {{tokens}}). Empty = built-in default text. */
+  contract_text?: string;
 }
 
 export interface ReportTemplate {

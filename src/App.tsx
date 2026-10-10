@@ -18,6 +18,7 @@ import StudentRegistrationForm from './components/StudentRegistrationForm';
 import AccountingDashboard from './components/AccountingDashboard';
 import Settings from './components/Settings';
 import ContractPrintForm from './components/forms/ContractPrintForm';
+import PrintPreview from './components/print/PrintPreview';
 import SupervisorDashboard from './components/SupervisorDashboard';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
@@ -387,6 +388,8 @@ export default function App() {
         >
           {new URLSearchParams(window.location.search).get('print') === 'contract' ? (
               <ContractPrintForm />
+          ) : new URLSearchParams(window.location.search).get('print') === 'all' ? (
+              <PrintPreview enrollmentId={Number(new URLSearchParams(window.location.search).get('enrollment')) || undefined} />
           ) : loading ? (
             <div className="flex flex-col items-center justify-center py-40 space-y-4 fade-in">
               <div className="carla-spinner" />
