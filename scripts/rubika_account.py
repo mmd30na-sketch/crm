@@ -63,14 +63,16 @@ def to_dict(obj):
     except Exception: return {}
 
 
-def make_client(with_session=True):
+def make_client(with_session=True, tmp_auth=None):
     from rubpy import Client
     if with_session:
         tok = read_json(TOKEN_FILE) or {}
         return Client(name=SESSION_NAME, auth=tok.get('auth'), private_key=tok.get('private_key'))
     # temp client for the login flow, does not touch the shared session file
     os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
-    return Client(name=os.path.join(STATE_DIR, 'login_tmp'))
+    tmp = os.path.join(STATE_DIR, 'login_tmp.rp')
+    if os.path.exists(tmp): os.remove(tmp)
+    return Client(name=os.path.join(STATE_DIR, 'login_tmp'), auth=tmp_auth)
 
 
 async def logged_in_client():
@@ -85,7 +87,11 @@ async def logged_in_client():
         return c, None
     c.decode_auth = Crypto.decode_auth(c.auth)
     c.import_key = pkcs1_15.new(RSA.import_key(c.private_key.encode()))
-    me = await c.get_me()
+    try:
+        me = await c.get_me()
+    except Exception as e:
+        await safe_disconnect(c)
+        raise e
     return c, me
 
 
@@ -119,7 +125,9 @@ async def cmd_send_code(args):
     if not phone:
         return {'ok': False, 'error': 'شماره تلفن نامعتبر است.'}
     pass_key = (args.get('pass_key') or '').strip() or None
-    c = make_client(with_session=False)
+    prev = read_json(PENDING_FILE) or {}
+    reuse = prev.get('tmp') if pass_key and prev.get('phone') == phone else None
+    c = make_client(with_session=False, tmp_auth=reuse)
     await c.connect()
     try:
         res = await c.send_code(phone_number=phone, pass_key=pass_key, send_type='SMS')
@@ -128,13 +136,13 @@ async def cmd_send_code(args):
     d = to_dict(res)
     status = d.get('status') or getattr(res, 'status', None)
     if status == 'SendPassKey':
-        write_private(PENDING_FILE, {'phone': phone, 'step': 'password', 'ts': time.time()})
+        write_private(PENDING_FILE, {'phone': phone, 'step': 'password', 'ts': time.time(), 'tmp': c.auth})
         return {'ok': True, 'step': 'password', 'hint': d.get('hint_pass_key') or None}
     if status == 'OK':
         h = d.get('phone_code_hash') or getattr(res, 'phone_code_hash', None)
         if not h:
             return {'ok': False, 'error': 'پاسخ روبیکا phone_code_hash نداشت.'}
-        write_private(PENDING_FILE, {'phone': phone, 'hash': h, 'step': 'code', 'ts': time.time()})
+        write_private(PENDING_FILE, {'phone': phone, 'hash': h, 'step': 'code', 'ts': time.time(), 'tmp': c.auth})
         return {'ok': True, 'step': 'code'}
     return {'ok': False, 'error': f'ارسال کد ناموفق ({status or "نامشخص"})'}
 
@@ -147,40 +155,51 @@ async def cmd_sign_in(args):
         return {'ok': False, 'error': 'ابتدا «ارسال کد» را بزنید (یا کد منقضی شده است).'}
     if not code:
         return {'ok': False, 'error': 'کد را وارد کنید.'}
+    from Crypto.PublicKey import RSA
+    from Crypto.Signature import pkcs1_15
     public_key, private_key = Crypto.create_keys()
-    c = make_client(with_session=False)
+    c = make_client(with_session=False, tmp_auth=p.get('tmp'))
     await c.connect()
+    done = False
     try:
         res = await c.sign_in(phone_code=code, phone_number=p['phone'], phone_code_hash=p['hash'], public_key=public_key)
         d = to_dict(res)
         status = d.get('status') or getattr(res, 'status', None)
         if status != 'OK':
             return {'ok': False, 'error': f'کد تأیید نشد ({status or "نامشخص"})'}
+        done = True
         auth = Crypto.decrypt_RSA_OAEP(private_key, d.get('auth') or res.auth)
         user = d.get('user') or {}
-        # back up any previous shared session before replacing it
+        # Same as rubpy start(): switch this client to the new auth, then registerDevice.
+        # Without registerDevice Rubika answers NOT_REGISTERED for the new session.
+        c.auth = auth
+        c.key = Crypto.passphrase(auth)
+        c.decode_auth = Crypto.decode_auth(auth)
+        c.private_key = private_key
+        c.import_key = pkcs1_15.new(RSA.import_key(private_key.encode()))
+        reg_err = None
+        try:
+            await c.register_device(device_model='Carla CRM')
+        except Exception as e:
+            reg_err = str(e)[:200]
         backup_existing()
         from rubpy.sessions import SQLiteSession
         if os.path.exists(SESSION_FILE): os.remove(SESSION_FILE)
         s = SQLiteSession(SESSION_NAME)
         s.insert(phone_number=user.get('phone') or p['phone'], auth=auth, guid=user.get('user_guid'),
                  user_agent=c.user_agent, private_key=private_key)
+        try: s._connection.close()
+        except Exception: pass
         os.chmod(SESSION_FILE, 0o600)
         write_private(TOKEN_FILE, {'phone_number': user.get('phone') or p['phone'], 'auth': auth,
                                    'private_key': private_key, 'public_key': public_key})
     finally:
         await safe_disconnect(c)
-    try: os.remove(PENDING_FILE)
-    except FileNotFoundError: pass
-    # register the device (same as rubpy's start())
-    try:
-        r = await logged_in_client()
-        if r and r[0]:
-            try: await r[0].register_device(device_model='Carla CRM')
-            except Exception: pass
-            await safe_disconnect(r[0])
-    except Exception:
-        pass
+        for f in ((PENDING_FILE,) if done else ()) + (os.path.join(STATE_DIR, 'login_tmp.rp'),):
+            try: os.remove(f)
+            except FileNotFoundError: pass
+    if reg_err:
+        return {'ok': False, 'error': f'ورود انجام شد ولی ثبت دستگاه ناموفق بود: {reg_err}'}
     return {'ok': True}
 
 
