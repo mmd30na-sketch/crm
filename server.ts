@@ -755,12 +755,13 @@ app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth')) return next();
   if (req.path === '/health') return next();
   if (req.path === '/messenger/webhook') return next();
+  if (req.path === '/messenger/account-ingest') return next();
   if (req.method === 'OPTIONS') return next();
   return requireAuth(req, res, next);
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth') || req.path === '/health' || req.path === '/messenger/webhook' || req.method === 'OPTIONS') return next();
+  if (req.path.startsWith('/auth') || req.path === '/health' || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
@@ -1018,6 +1019,84 @@ app.post('/api/messenger/webhook', asyncHandler(async (req, res) => {
   res.json({ success: true, status: 'RECEIVED_AND_STORED' });
 }));
 
+// ── Main Rubika account (rubpy listener) -> messenger store. Loopback only + shared secret file. ──
+const RUBIKA_STATE_DIR = process.env.RUBIKA_STATE_DIR || '/project/kermanshahcart/crm-data/rubika';
+const INGEST_SECRET_FILE = path.join(RUBIKA_STATE_DIR, 'ingest.secret');
+function ingestSecret(): string {
+  try {
+    if (!fs.existsSync(INGEST_SECRET_FILE)) {
+      fs.mkdirSync(RUBIKA_STATE_DIR, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(INGEST_SECRET_FILE, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+    }
+    return fs.readFileSync(INGEST_SECRET_FILE, 'utf8').trim();
+  } catch { return ''; }
+}
+ingestSecret();
+const rubikaAccountActive = () => (readDb().settings as any)?.gateways?.rubika_account_active !== false;
+const stableThreadId = (guid: string) => 9e12 + (parseInt(crypto.createHash('sha1').update(guid).digest('hex').slice(0, 10), 16) % 1e12);
+
+/** Stores account messages (deduped by ext_id) and upserts their threads; links chats to students by phone. */
+async function storeAccountMessages(items: any[]): Promise<number> {
+  const clean = items.filter(m => m && m.chat_id && m.text && m.ext_id).slice(0, 500);
+  const phones = [...new Set(clean.map(m => normalizeMobile(m.phone || '')).filter(p => /^09\d{9}$/.test(p)))];
+  const studentsByPhone: Record<string, any> = {};
+  for (const ph of phones) {
+    try {
+      studentsByPhone[ph] = chabokan.isMysqlEnabled() ? await chabokan.findStudentByPhone(ph) : null;
+    } catch { /* lookup failure: just no link */ }
+  }
+  const db = readDb();
+  const messages = ((db as any).messages ||= []) as any[];
+  const threads = ((db as any).threads ||= []) as any[];
+  const links = ((db as any).rubika_account_links ||= {}) as Record<string, string>;
+  const seen = new Set(messages.filter(m => m.ext_id).map(m => m.ext_id));
+  let added = 0;
+  for (const m of clean) {
+    const extId = sanitizeString(String(m.ext_id), 120);
+    const chatId = sanitizeString(String(m.chat_id), 100);
+    const title = sanitizeString(m.title || '', 100) || 'کاربر روبیکا';
+    const phone = normalizeMobile(m.phone || '');
+    const out = m.direction === 'out';
+    const when = new Date(Number(m.time) || Date.now()).toISOString();
+    let student: any = /^09\d{9}$/.test(phone) ? studentsByPhone[phone] : null;
+    if (!student && /^09\d{9}$/.test(phone) && !chabokan.isMysqlEnabled()) student = db.students.find((s: any) => normalizeMobile(s.phone_number) === phone);
+    if (student) links[String(student.id)] = chatId;
+    let th = threads.find(t => t.source === 'account' && t.external_id === chatId);
+    if (!th) {
+      th = { thread_id: stableThreadId(chatId), source: 'account', channel: 'rubika', external_id: chatId, title, phone: /^09\d{9}$/.test(phone) ? phone : '', unread_count: 0, updated_at: when, last_message_text: '' };
+      threads.push(th);
+    }
+    if (student) { th.student_id = student.id; th.title = `${student.first_name} ${student.last_name}`.trim() || th.title; }
+    else if (title && title !== 'کاربر روبیکا') th.title = title;
+    if (seen.has(extId)) continue;
+    seen.add(extId); added++;
+    messages.push({
+      id: Date.now() * 1000 + Math.floor(Math.random() * 1000), ext_id: extId, source: 'account', channel: 'rubika',
+      chat_id: chatId, chat_title: th.title, sender: out ? 'admin' : th.title, direction: out ? 'out' : 'in',
+      sender_phone: th.phone || '', message: sanitizeString(String(m.text), 2000), received_at: when, ...(out ? { status: 'sent' } : {}),
+    });
+    if (when >= (th.updated_at || '')) { th.updated_at = when; th.last_message_text = sanitizeString(String(m.text), 200); }
+    if (!out && Date.now() - Date.parse(when) < 10 * 60 * 1000) th.unread_count = (th.unread_count || 0) + 1;
+  }
+  if (added) {
+    messages.sort((a, b) => String(a.received_at || '').localeCompare(String(b.received_at || '')));
+    if (messages.length > MAX_STORED_MESSAGES) messages.splice(0, messages.length - MAX_STORED_MESSAGES);
+  }
+  writeDb(db);
+  return added;
+}
+
+app.post('/api/messenger/account-ingest', asyncHandler(async (req, res) => {
+  const ip = req.socket.remoteAddress || '';
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip) || req.headers['x-forwarded-for']) return res.status(403).json({ error: 'Forbidden' });
+  const secret = ingestSecret();
+  const given = Buffer.from(String(req.headers['x-ingest-secret'] || ''));
+  if (!secret || given.length !== Buffer.byteLength(secret) || !crypto.timingSafeEqual(given, Buffer.from(secret))) return res.status(401).json({ error: 'Unauthorized' });
+  if (!rubikaAccountActive()) return res.json({ ok: true, ignored: true, added: 0 });
+  const items = Array.isArray(req.body?.messages) ? req.body.messages : [];
+  res.json({ ok: true, added: await storeAccountMessages(items) });
+}));
+
 // ── GET: دریافت پیام‌های ورودی ──
 app.get('/api/messenger/messages', (req, res) => {
   const db = readDb();
@@ -1137,6 +1216,16 @@ app.post('/api/messenger/send', async (req, res) => {
   const channel = sanitizeString(req.body?.channel, 20) || 'sms';
   const message = sanitizeString(req.body?.message ?? req.body?.messageText, 1000);
   const phone = normalizeMobile(req.body?.recipient);
+  const accountChat = channel === 'rubika' && req.body?.source === 'account' ? sanitizeString(String(req.body?.chat_id || ''), 100) : '';
+  if (accountChat && message && rubikaAccountActive()) {
+    const r = await runRubikaAccount('send', { guid: accountChat, text: message });
+    const now = Date.now();
+    if (r.ok) await storeAccountMessages([{ ext_id: `${accountChat}:${r.message_id || `local-${now}`}`, chat_id: accountChat, text: message, time: now, direction: 'out' }]);
+    const db = readDb();
+    const stored = ((db as any).messages || []).find((m: any) => m.ext_id === `${accountChat}:${r.message_id || `local-${now}`}`);
+    return res.json({ success: !!r.ok, status: r.ok ? 'sent' : 'failed', message_id: stored?.id, message: r.ok ? 'پیام از اکانت اصلی ارسال شد.' : (r.error || 'ارسال ناموفق بود.') });
+  }
+  if (accountChat && !/^09\d{9}$/.test(phone)) return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است و برای این گفتگو شماره‌ای جهت ارسال با ربات وجود ندارد.' });
   if (!phone || !message) return res.status(400).json({ error: 'گیرنده و متن پیام الزامی است.' });
   if (!/^09\d{9}$/.test(phone)) return res.status(400).json({ error: 'شماره موبایل گیرنده معتبر نیست.' });
   try {

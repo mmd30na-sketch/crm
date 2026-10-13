@@ -820,6 +820,8 @@ export async function sendMessengerMessage(body: {
   messageText: string;
   templateTitle?: string;
   student_id?: number | string;
+  chat_id?: string;
+  source?: 'account';
 }): Promise<{ success: boolean; status: string; message: string; message_id?: number; tracking_id?: string }> {
   const res = await apiFetch(`/messenger/send`, {
     method: 'POST',
@@ -831,6 +833,8 @@ export async function sendMessengerMessage(body: {
       messageText: body.messageText,
       templateTitle: body.templateTitle,
       student_id: body.student_id,
+      chat_id: body.chat_id,
+      source: body.source,
     }),
   });
   if (!res.ok) throw await serverError(res, 'ارسال پیام ناموفق بود.');

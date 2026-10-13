@@ -245,7 +245,25 @@ async def cmd_logout(_):
     return {'ok': True, 'terminated_remote': terminated, 'note': note}
 
 
-CMDS = {'status': cmd_status, 'send_code': cmd_send_code, 'sign_in': cmd_sign_in, 'logout': cmd_logout}
+async def cmd_send(args):
+    guid = str(args.get('guid') or '').strip()
+    text = str(args.get('text') or '')
+    if not guid or not text.strip():
+        return {'ok': False, 'error': 'گیرنده یا متن خالی است.'}
+    r = await logged_in_client()
+    if not r or r[1] is None:
+        if r: await safe_disconnect(r[0])
+        return {'ok': False, 'error': 'اکانت اصلی روبیکا وارد نشده است.'}
+    c = r[0]
+    try:
+        res = to_dict(await c.send_message(guid, text[:4000]))
+        mid = (res.get('message_update') or {}).get('message_id') or (res.get('message_update') or {}).get('message', {}).get('message_id')
+        return {'ok': True, 'message_id': str(mid) if mid else None}
+    finally:
+        await safe_disconnect(c)
+
+
+CMDS = {'send': cmd_send, 'status': cmd_status, 'send_code': cmd_send_code, 'sign_in': cmd_sign_in, 'logout': cmd_logout}
 
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
