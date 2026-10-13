@@ -1035,44 +1035,74 @@ ingestSecret();
 const rubikaAccountActive = () => (readDb().settings as any)?.gateways?.rubika_account_active !== false;
 const stableThreadId = (guid: string) => 9e12 + (parseInt(crypto.createHash('sha1').update(guid).digest('hex').slice(0, 10), 16) % 1e12);
 
+/** Phone -> person in the shared MySQL DB (students, registrations, legacy TblStudents, leads); JSON store fallback. */
+async function lookupPerson(k: string): Promise<chabokan.PhonePerson | null> {
+  if (!k) return null;
+  if (chabokan.isMysqlEnabled()) { try { return await chabokan.findPersonByPhone(k); } catch { return null; } }
+  const st: any = readDb().students.find((s: any) => chabokan.mobileKey(s.phone_number) === k);
+  return st ? { kind: 'student', id: st.id, student_id: st.id, name: `${st.first_name} ${st.last_name}`.trim() } : null;
+}
+function applyPersonLink(db: any, th: any, p: chabokan.PhonePerson | null) {
+  if (!p) return;
+  th.person = { kind: p.kind, id: p.id, name: p.name };
+  if (p.name) th.title = p.name;
+  if (p.student_id) {
+    th.student_id = p.student_id;
+    ((db.rubika_account_links ||= {}) as Record<string, string>)[String(p.student_id)] = th.external_id;
+  }
+}
+/** Re-match every account thread by phone (after a phone sync or DB change). */
+async function relinkAccountThreads(): Promise<{ total: number; withPhone: number; linked: number; students: number }> {
+  const snap = readDb() as any;
+  const keys = [...new Set(((snap.threads || []) as any[]).filter(t => t.source === 'account').map(t => chabokan.mobileKey(t.phone)).filter(Boolean))];
+  const persons: Record<string, chabokan.PhonePerson | null> = {};
+  for (const k of keys) persons[k] = await lookupPerson(k);
+  const db = readDb() as any;
+  const threads = ((db.threads || []) as any[]).filter(t => t.source === 'account');
+  for (const th of threads) { const k = chabokan.mobileKey(th.phone); if (k) applyPersonLink(db, th, persons[k]); }
+  for (const m of (db.messages || []) as any[]) {
+    if (m.source !== 'account') continue;
+    const th = threads.find(t => t.external_id === m.chat_id);
+    if (th) { m.chat_title = th.title; if (th.student_id) m.student_id = th.student_id; if (m.direction !== 'out') m.sender = th.title; }
+  }
+  writeDb(db);
+  return { total: threads.length, withPhone: threads.filter(t => t.phone).length, linked: threads.filter(t => t.person).length, students: threads.filter(t => t.student_id).length };
+}
+
 /** Stores account messages (deduped by ext_id) and upserts their threads; links chats to students by phone. */
 async function storeAccountMessages(items: any[]): Promise<number> {
   const clean = items.filter(m => m && m.chat_id && m.text && m.ext_id).slice(0, 500);
-  const phones = [...new Set(clean.map(m => normalizeMobile(m.phone || '')).filter(p => /^09\d{9}$/.test(p)))];
-  const studentsByPhone: Record<string, any> = {};
-  for (const ph of phones) {
-    try {
-      studentsByPhone[ph] = chabokan.isMysqlEnabled() ? await chabokan.findStudentByPhone(ph) : null;
-    } catch { /* lookup failure: just no link */ }
+  const persons: Record<string, chabokan.PhonePerson | null> = {};
+  for (const m of clean) {
+    const k = chabokan.mobileKey(m.phone);
+    if (k && !(k in persons)) persons[k] = await lookupPerson(k);
   }
   const db = readDb();
   const messages = ((db as any).messages ||= []) as any[];
   const threads = ((db as any).threads ||= []) as any[];
-  const links = ((db as any).rubika_account_links ||= {}) as Record<string, string>;
   const seen = new Set(messages.filter(m => m.ext_id).map(m => m.ext_id));
   let added = 0;
   for (const m of clean) {
     const extId = sanitizeString(String(m.ext_id), 120);
     const chatId = sanitizeString(String(m.chat_id), 100);
     const title = sanitizeString(m.title || '', 100) || 'کاربر روبیکا';
-    const phone = normalizeMobile(m.phone || '');
+    const k = chabokan.mobileKey(m.phone);
+    const phone = k ? `0${k}` : '';
     const out = m.direction === 'out';
     const when = new Date(Number(m.time) || Date.now()).toISOString();
-    let student: any = /^09\d{9}$/.test(phone) ? studentsByPhone[phone] : null;
-    if (!student && /^09\d{9}$/.test(phone) && !chabokan.isMysqlEnabled()) student = db.students.find((s: any) => normalizeMobile(s.phone_number) === phone);
-    if (student) links[String(student.id)] = chatId;
     let th = threads.find(t => t.source === 'account' && t.external_id === chatId);
     if (!th) {
-      th = { thread_id: stableThreadId(chatId), source: 'account', channel: 'rubika', external_id: chatId, title, phone: /^09\d{9}$/.test(phone) ? phone : '', unread_count: 0, updated_at: when, last_message_text: '' };
+      th = { thread_id: stableThreadId(chatId), source: 'account', channel: 'rubika', external_id: chatId, title, phone, unread_count: 0, updated_at: when, last_message_text: '' };
       threads.push(th);
     }
-    if (student) { th.student_id = student.id; th.title = `${student.first_name} ${student.last_name}`.trim() || th.title; }
-    else if (title && title !== 'کاربر روبیکا') th.title = title;
+    if (phone && !th.phone) th.phone = phone;
+    if (title && title !== 'کاربر روبیکا' && !th.person) th.title = title;
+    applyPersonLink(db, th, k ? persons[k] : null);
     if (seen.has(extId)) continue;
     seen.add(extId); added++;
     messages.push({
       id: Date.now() * 1000 + Math.floor(Math.random() * 1000), ext_id: extId, source: 'account', channel: 'rubika',
-      chat_id: chatId, chat_title: th.title, sender: out ? 'admin' : th.title, direction: out ? 'out' : 'in',
+      chat_id: chatId, chat_title: th.title, student_id: th.student_id, sender: out ? 'admin' : th.title, direction: out ? 'out' : 'in',
       sender_phone: th.phone || '', message: sanitizeString(String(m.text), 2000), received_at: when, ...(out ? { status: 'sent' } : {}),
     });
     if (when >= (th.updated_at || '')) { th.updated_at = when; th.last_message_text = sanitizeString(String(m.text), 200); }
@@ -1094,7 +1124,20 @@ app.post('/api/messenger/account-ingest', asyncHandler(async (req, res) => {
   if (!secret || given.length !== Buffer.byteLength(secret) || !crypto.timingSafeEqual(given, Buffer.from(secret))) return res.status(401).json({ error: 'Unauthorized' });
   if (!rubikaAccountActive()) return res.json({ ok: true, ignored: true, added: 0 });
   const items = Array.isArray(req.body?.messages) ? req.body.messages : [];
-  res.json({ ok: true, added: await storeAccountMessages(items) });
+  const added = items.length ? await storeAccountMessages(items) : 0;
+  const phones = Array.isArray(req.body?.phones) ? req.body.phones.slice(0, 500) : [];
+  if (phones.length) {
+    const db = readDb() as any;
+    for (const p of phones) {
+      const th = ((db.threads || []) as any[]).find(t => t.source === 'account' && t.external_id === String(p?.chat_id || ''));
+      const k = chabokan.mobileKey(p?.phone);
+      if (th && k) th.phone = `0${k}`;
+      if (th && p?.title && !th.person) th.title = sanitizeString(String(p.title), 100);
+    }
+    writeDb(db);
+  }
+  const relink = phones.length || req.body?.relink ? await relinkAccountThreads() : undefined;
+  res.json({ ok: true, added, relink });
 }));
 
 // ── GET: دریافت پیام‌های ورودی ──

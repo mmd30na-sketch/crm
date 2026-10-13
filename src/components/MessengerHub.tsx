@@ -59,6 +59,7 @@ interface ChatThread {
   /** Main Rubika account chat (object_guid); replies go out through the account. */
   chatId?: string;
   source?: 'account';
+  person?: { kind: string; id: number | string; name: string };
   channel: 'rubika' | 'bale' | 'eitaa' | 'sms';
   lastMessage: string;
   time: string;
@@ -135,10 +136,10 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
             for (const rTh of realThreads) {
               if (rTh.source === 'account') {
                 const ex = updated.find(t => t.chatId === rTh.external_id);
-                if (ex) { ex.senderName = rTh.title || ex.senderName; if (rTh.student_id) ex.studentId = rTh.student_id; continue; }
+                if (ex) { ex.senderName = rTh.title || ex.senderName; ex.person = rTh.person; if (rTh.phone) ex.phone = rTh.phone; if (rTh.student_id) ex.studentId = rTh.student_id; continue; }
                 updated.push({
                   id: rTh.thread_id, studentId: rTh.student_id, senderName: rTh.title || 'کاربر روبیکا', avatar: '',
-                  courseTitle: 'اکانت اصلی روبیکا', phone: rTh.phone || '', chatId: rTh.external_id, source: 'account',
+                  courseTitle: 'اکانت اصلی روبیکا', phone: rTh.phone || '', chatId: rTh.external_id, source: 'account', person: rTh.person,
                   channel: 'rubika', lastMessage: rTh.last_message_text || '',
                   time: rTh.updated_at ? new Date(rTh.updated_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : '',
                   unreadCount: rTh.unread_count || 0, messages: [],
@@ -544,6 +545,11 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className="text-[10px] text-slate-400 truncate">{thread.courseTitle}</span>
                         <ChannelBadge channel={thread.channel} />
+                        {thread.person && (
+                          <span title={thread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${thread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[thread.person.kind] || 'مرتبط'}
+                          </span>
+                        )}
                       </div>
 
                       <p className={`text-xs truncate ${thread.unreadCount > 0 ? 'font-bold text-slate-900' : 'text-slate-500'}`}>
@@ -573,6 +579,11 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                       <div className="flex items-center gap-2">
                         <h3 className="text-xs font-bold text-slate-900">{activeThread.senderName}</h3>
                         <ChannelBadge channel={activeThread.channel} />
+                        {activeThread.person && (
+                          <span title={activeThread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${activeThread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[activeThread.person.kind] || 'مرتبط'}
+                          </span>
+                        )}
                       </div>
                       <p className="text-[10px] text-slate-400">{activeThread.courseTitle} — {activeThread.phone}</p>
                     </div>

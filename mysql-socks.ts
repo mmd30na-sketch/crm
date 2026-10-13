@@ -1108,3 +1108,55 @@ export async function findStudentByPhone(phone: string) {
   );
   return rows.length === 1 ? rows[0] : null;
 }
+
+/** Iranian mobile -> "9XXXXXXXXX" (10 digits) from any spelling: Persian/Arabic digits, +98, 0098, 098, spaces, dashes. */
+export function mobileKey(v: unknown): string {
+  const d = String(v ?? '')
+    .replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06F0))
+    .replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660))
+    .replace(/\D/g, '');
+  const k = d.replace(/^(?:0098|098|98|0)(?=9\d{9}$)/, '');
+  return /^9\d{9}$/.test(k) ? k : '';
+}
+
+export type PhonePerson = { kind: 'student' | 'registration' | 'legacy' | 'lead'; id: number | string; student_id?: number; name: string };
+let phoneDirCache: { at: number; map: Map<string, PhonePerson[]> } | null = null;
+
+/** Every phone number the shared DB knows (students, registrations, legacy TblStudents, leads), keyed by mobileKey. Read-only. */
+export async function phoneDirectory(maxAgeMs = 60_000): Promise<Map<string, PhonePerson[]>> {
+  if (phoneDirCache && Date.now() - phoneDirCache.at < maxAgeMs) return phoneDirCache.map;
+  const map = new Map<string, PhonePerson[]>();
+  const add = (phone: unknown, p: PhonePerson) => {
+    const k = mobileKey(phone); if (!k) return;
+    const list = map.get(k) || []; list.push(p); map.set(k, list);
+  };
+  const safe = async (q: string) => { try { return await sql<any>(q); } catch { return []; } };
+  const students = await safe(`SELECT student_id, first_name, last_name, national_code, phone_number FROM students`);
+  const byNc = new Map<string, any>();
+  for (const s of students) {
+    add(s.phone_number, { kind: 'student', id: s.student_id, student_id: s.student_id, name: `${s.first_name || ''} ${s.last_name || ''}`.trim() });
+    const nc = String(s.national_code || '').replace(/\D/g, ''); if (nc) byNc.set(nc, s);
+  }
+  for (const r of await safe(`SELECT registration_id, full_name, phone_number, student_id, national_code FROM registrations`)) {
+    const sid = r.student_id || byNc.get(String(r.national_code || '').replace(/\D/g, ''))?.student_id;
+    add(r.phone_number, sid ? { kind: 'student', id: sid, student_id: sid, name: r.full_name || '' } : { kind: 'registration', id: r.registration_id, name: r.full_name || '' });
+  }
+  for (const t of await safe(`SELECT StudentID, firstName, lastName, Ncode, phoneNumber FROM TblStudents`)) {
+    const s = byNc.get(String(t.Ncode || '').replace(/\D/g, ''));
+    const name = `${t.firstName || ''} ${t.lastName || ''}`.trim();
+    add(t.phoneNumber, s ? { kind: 'student', id: s.student_id, student_id: s.student_id, name } : { kind: 'legacy', id: t.StudentID, name });
+  }
+  for (const l of await safe(`SELECT lead_id, first_name, last_name, phone_number FROM leads`)) {
+    add(l.phone_number, { kind: 'lead', id: l.lead_id, name: `${l.first_name || ''} ${l.last_name || ''}`.trim() });
+  }
+  phoneDirCache = { at: Date.now(), map };
+  return map;
+}
+
+/** Best person for a phone: a students row wins (newest id), then registration, legacy, lead. */
+export async function findPersonByPhone(phone: unknown): Promise<PhonePerson | null> {
+  const k = mobileKey(phone); if (!k) return null;
+  const list = (await phoneDirectory()).get(k) || [];
+  const rank = { student: 0, registration: 1, legacy: 2, lead: 3 } as const;
+  return list.slice().sort((a, b) => rank[a.kind] - rank[b.kind] || Number(b.id) - Number(a.id))[0] || null;
+}

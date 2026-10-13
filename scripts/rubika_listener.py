@@ -24,22 +24,40 @@ def secret():
         return f.read().strip()
 
 
-def post(messages):
-    if not messages: return {'ok': True, 'added': 0}
-    body = json.dumps({'messages': messages}).encode()
+def post(messages, phones=None, relink=False):
+    if not messages and not phones and not relink: return {'ok': True, 'added': 0}
+    body = json.dumps({'messages': messages or [], 'phones': phones or [], 'relink': relink}).encode()
     req = urllib.request.Request(INGEST_URL, data=body, method='POST', headers={
         'Content-Type': 'application/json', 'X-Ingest-Secret': secret()})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode() or '{}')
 
 
+_contacts = {}
+
+
+async def load_contacts(c):
+    """guid -> (name, phone) from the account's address book (read-only)."""
+    start, pages = None, 0
+    while pages < 20:
+        pages += 1
+        try: r = ra.to_dict(await c.get_contacts(start))
+        except Exception: break
+        for u in r.get('users') or []:
+            g = u.get('user_guid')
+            if g: _contacts[g] = (' '.join(x for x in [u.get('first_name'), u.get('last_name')] if x).strip() or None, u.get('phone') or None)
+        start = r.get('next_start_id')
+        if not r.get('has_continue') or not start: break
+    return len(_contacts)
+
+
 async def chat_info(c, guid):
     if guid in _names: return _names[guid]
-    title, phone = None, None
+    title, phone = _contacts.get(guid, (None, None))
     try:
         u = ra.to_dict(await c.get_user_info(guid)).get('user') or {}
-        title = ' '.join(x for x in [u.get('first_name'), u.get('last_name')] if x).strip() or None
-        phone = u.get('phone') or None
+        title = ' '.join(x for x in [u.get('first_name'), u.get('last_name')] if x).strip() or title
+        phone = u.get('phone') or phone
     except Exception:
         pass
     _names[guid] = (title, phone)
@@ -106,12 +124,40 @@ async def backfill(n_dialogs=50, per_chat=20, dry=False):
     print(json.dumps({'ok': True, 'chats': total_chats, 'messages': total_msgs, 'dry_run': dry}))
 
 
+async def sync_phones(n_dialogs=200):
+    """Resolve the phone of every private chat (user info, then contacts) and let the CRM re-link threads."""
+    c, my = await connect()
+    if not c: print(json.dumps({'ok': False, 'error': 'not logged in'})); return
+    phones, chats_seen = [], 0
+    try:
+        nc = await load_contacts(c)
+        start_id = None
+        while chats_seen < n_dialogs:
+            r = ra.to_dict(await c.get_chats(start_id))
+            chats = r.get('chats') or []
+            for ch in chats:
+                if (ch.get('abs_object') or {}).get('type') != 'User': continue
+                chats_seen += 1
+                g = ch.get('object_guid')
+                title, phone = await chat_info(c, g)
+                if phone: phones.append({'chat_id': g, 'phone': phone, 'title': title})
+            if not r.get('has_continue') or not chats: break
+            start_id = r.get('next_start_id') or chats[-1].get('time')
+            if not start_id: break
+    finally:
+        await ra.safe_disconnect(c)
+    res = post([], phones, relink=True)
+    print(json.dumps({'ok': True, 'contacts': nc, 'chats': chats_seen, 'with_phone': len(phones), 'relink': res.get('relink')}), flush=True)
+
+
 async def listen():
     from rubpy import Client
     c0, my = await connect()
     if not c0:
         print('not logged in; retrying in 60s', flush=True); await asyncio.sleep(60); sys.exit(1)
     await ra.safe_disconnect(c0)
+    try: await sync_phones()
+    except Exception as e: print('phone sync failed:', str(e)[:200], flush=True)
     client = ra.make_client()
 
     @client.on_message_updates()
@@ -129,6 +175,8 @@ async def listen():
         except Exception as e:
             print('ingest error:', str(e)[:200], flush=True)
 
+    try: await load_contacts(client) if hasattr(client, 'connection') else None
+    except Exception: pass
     await client.start()   # session is valid (checked above), so no interactive prompt
     print('listening as', client.guid and client.guid[:6] + '…', flush=True)
     await client.get_updates()
@@ -136,7 +184,9 @@ async def listen():
 
 if __name__ == '__main__':
     a = sys.argv[1:]
-    if a and a[0] == 'backfill':
+    if a and a[0] == 'sync-phones':
+        asyncio.run(sync_phones())
+    elif a and a[0] == 'backfill':
         nums = [int(x) for x in a[1:] if x.isdigit()]
         asyncio.run(backfill(*(nums + [50, 20])[:2], dry='--dry-run' in a))
     else:
