@@ -758,6 +758,11 @@ export async function uploadEnrollmentReceipt(
 // GATEWAYS (RUBIKA & SMS.IR)
 // ─────────────────────────────────────────────────────────
 
+export async function testRubikaBot(): Promise<{ ok: boolean; bot?: { bot_title?: string; username?: string; bot_id?: string } | null; error?: string }> {
+  const res = await apiFetch(`/settings/gateways/rubika-test`, { method: 'POST' });
+  try { return await res.json(); } catch { return { ok: false, error: 'پاسخ نامعتبر از سرور' }; }
+}
+
 export async function fetchGatewaySettings(): Promise<{
   sms_provider: string;
   sms_api_key: string;

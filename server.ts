@@ -2333,6 +2333,26 @@ app.post('/api/settings/gateways', (req, res) => {
   res.json({ success: true });
 });
 
+// Rubika bot connectivity test: calls getMe only, never sends a message. Token stays server-side.
+app.post('/api/settings/gateways/rubika-test', (req, res) => {
+  const botToken = getGateways().rubika_bot_token;
+  if (!botToken) return res.status(400).json({ ok: false, error: 'توکن ربات روبیکا ذخیره نشده است.' });
+  const r = https.request({ hostname: 'botapi.rubika.ir', port: 443, path: `/v3/${botToken}/getMe`, method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': 2 }, timeout: 10000 }, (resp) => {
+    let data = '';
+    resp.on('data', (c) => { data += c; });
+    resp.on('end', () => {
+      let j: any = null; try { j = JSON.parse(data); } catch { /* not json */ }
+      const bot = j?.data?.bot || j?.bot || null;
+      if (j && (j.status === 'OK' || bot)) return res.json({ ok: true, bot: bot ? { bot_title: bot.bot_title, username: bot.username, bot_id: bot.bot_id } : null });
+      res.status(502).json({ ok: false, error: (j && (j.status || j.message)) ? String(j.status || j.message).slice(0, 200) : 'پاسخ نامعتبر از روبیکا' });
+    });
+  });
+  r.on('timeout', () => r.destroy(new Error('timeout')));
+  r.on('error', (e) => { if (!res.headersSent) res.status(502).json({ ok: false, error: 'اتصال به botapi.rubika.ir ناموفق: ' + e.message }); });
+  r.write('{}'); r.end();
+});
+
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
 app.get('/api/dashboard-notes', (req, res) => {
   const d: any = (readDb() as any).dashboard || {};

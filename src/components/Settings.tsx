@@ -50,6 +50,23 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   const [smsSenderLine, setSmsSenderLine]             = useState('');
   const [smsAutoSendRegister, setSmsAutoSendRegister] = useState(true);
 
+  const RUBIKA_WEBHOOK_URL = 'https://crm.mmd30na.ir/api/messenger/webhook';
+  const [webhookCopied, setWebhookCopied] = useState(false);
+  const [rubikaTesting, setRubikaTesting] = useState(false);
+  const [rubikaTestResult, setRubikaTestResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const copyWebhook = async () => {
+    try { await navigator.clipboard.writeText(RUBIKA_WEBHOOK_URL); setWebhookCopied(true); setTimeout(() => setWebhookCopied(false), 2000); } catch { /* clipboard blocked */ }
+  };
+  const handleTestRubika = async () => {
+    setRubikaTesting(true); setRubikaTestResult(null);
+    try {
+      const r = await api.testRubikaBot();
+      setRubikaTestResult(r.ok
+        ? { ok: true, text: `اتصال برقرار است${r.bot?.bot_title ? ` — ${r.bot.bot_title}` : ''}${r.bot?.username ? ` (@${r.bot.username})` : ''}` }
+        : { ok: false, text: r.error || 'اتصال ناموفق' });
+    } catch { setRubikaTestResult({ ok: false, text: 'خطا در ارتباط با سرور' }); }
+    finally { setRubikaTesting(false); }
+  };
   const [isSavingGateways, setIsSavingGateways] = useState(false);
   const [gatewaysSuccess, setGatewaysSuccess]   = useState(false);
   const [gatewaysError, setGatewaysError]       = useState('');
@@ -539,16 +556,35 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Rubika Config */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center gap-2 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
-                    <MessageSquare className="w-4 h-4 text-violet-600" />بات پیام‌رسان روبیکا (Carla Bot)
+                  <div className="flex items-center justify-between gap-2 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
+                    <span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-violet-600" />روبیکا (Carla Bot)</span>
+                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
+                      <input type="checkbox" checked={rubikaIsActive} onChange={e => setRubikaIsActive(e.target.checked)} />
+                      {rubikaIsActive ? 'فعال' : 'غیرفعال'}
+                    </label>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">توکن امنیتی (Bot Token){rubikaTokenSet && <span className="text-emerald-600 font-bold mr-1">— ذخیره شده (برای تغییر، مقدار جدید بنویسید)</span>}</label>
-                    <input type="password" autoComplete="off" value={rubikaBotToken} onChange={e => setRubikaBotToken(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">توکن ربات (Bot Token){rubikaTokenSet && <span className="text-emerald-600 font-bold mr-1">— ذخیره شده (برای تغییر، مقدار جدید بنویسید)</span>}</label>
+                    <input type="password" autoComplete="off" dir="ltr" placeholder={rubikaTokenSet ? '••••••••' : ''} value={rubikaBotToken} onChange={e => setRubikaBotToken(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">شناسه کانال روبیکا</label>
-                    <input type="text" value={rubikaChannelId} onChange={e => setRubikaChannelId(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                    <input type="text" dir="ltr" value={rubikaChannelId} onChange={e => setRubikaChannelId(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">آدرس Webhook (در تنظیمات ربات وارد کنید)</label>
+                    <div className="flex gap-2">
+                      <input type="text" readOnly dir="ltr" value={RUBIKA_WEBHOOK_URL} onFocus={e => e.target.select()} className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-slate-100 text-slate-600" />
+                      <button type="button" onClick={copyWebhook} className="px-3 py-2 text-[11px] font-bold border border-slate-200 rounded-lg bg-white hover:bg-slate-100 cursor-pointer">{webhookCopied ? 'کپی شد ✓' : 'کپی'}</button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button type="button" onClick={handleTestRubika} disabled={rubikaTesting || !rubikaTokenSet}
+                      title={rubikaTokenSet ? '' : 'ابتدا توکن را ذخیره کنید'}
+                      className="px-3 py-2 text-[11px] font-bold rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white cursor-pointer">
+                      {rubikaTesting ? 'در حال تست...' : 'تست اتصال ربات'}
+                    </button>
+                    {rubikaTestResult && <span className={`text-[11px] font-bold ${rubikaTestResult.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{rubikaTestResult.text}</span>}
                   </div>
                 </div>
 
