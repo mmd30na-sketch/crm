@@ -58,7 +58,7 @@ interface ChatThread {
   phone: string;
   /** Main Rubika account chat (object_guid); replies go out through the account. */
   chatId?: string;
-  source?: 'account';
+  source?: 'account' | 'bot';
   person?: { kind: string; id: number | string; name: string };
   channel: 'rubika' | 'bale' | 'eitaa' | 'sms';
   lastMessage: string;
@@ -134,12 +134,12 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
 
           if (realThreads && realThreads.length > 0) {
             for (const rTh of realThreads) {
-              if (rTh.source === 'account') {
-                const ex = updated.find(t => t.chatId === rTh.external_id);
+              if (rTh.source === 'account' || rTh.source === 'bot') {
+                const ex = updated.find(t => t.source === rTh.source && t.chatId === rTh.external_id);
                 if (ex) { ex.senderName = rTh.title || ex.senderName; ex.person = rTh.person; if (rTh.phone) ex.phone = rTh.phone; if (rTh.student_id) ex.studentId = rTh.student_id; continue; }
                 updated.push({
                   id: rTh.thread_id, studentId: rTh.student_id, senderName: rTh.title || 'کاربر روبیکا', avatar: '',
-                  courseTitle: 'اکانت اصلی روبیکا', phone: rTh.phone || '', chatId: rTh.external_id, source: 'account', person: rTh.person,
+                  courseTitle: rTh.source === 'bot' ? 'ربات روبیکا' : 'اکانت اصلی روبیکا', phone: rTh.phone || '', chatId: rTh.external_id, source: rTh.source, person: rTh.person,
                   channel: 'rubika', lastMessage: rTh.last_message_text || '',
                   time: rTh.updated_at ? new Date(rTh.updated_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : '',
                   unreadCount: rTh.unread_count || 0, messages: [],
@@ -174,11 +174,11 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
 
           if (rawMsgs && rawMsgs.length > 0) {
             for (const msg of rawMsgs) {
-              if (msg.source === 'account' && msg.chat_id) {
-                let th = updated.find(t => t.chatId === msg.chat_id);
+              if ((msg.source === 'account' || msg.source === 'bot') && msg.chat_id) {
+                let th = updated.find(t => t.source === msg.source && t.chatId === msg.chat_id);
                 if (!th) {
-                  th = { id: msg.id, senderName: msg.chat_title || 'کاربر روبیکا', avatar: '', courseTitle: 'اکانت اصلی روبیکا',
-                    phone: phoneKey(msg.sender_phone) || '', chatId: msg.chat_id, source: 'account', channel: 'rubika',
+                  th = { id: msg.id, senderName: msg.chat_title || 'کاربر روبیکا', avatar: '', courseTitle: msg.source === 'bot' ? 'ربات روبیکا' : 'اکانت اصلی روبیکا',
+                    phone: phoneKey(msg.sender_phone) || '', chatId: msg.chat_id, source: msg.source, channel: 'rubika',
                     lastMessage: '', time: '', unreadCount: 0, messages: [] };
                   updated.push(th);
                 }
@@ -310,7 +310,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
         recipient: activeThread.phone,
         messageText: textToSend,
         student_id: activeThread.studentId,
-        ...(activeThread.chatId ? { chat_id: activeThread.chatId, source: 'account' as const } : {}),
+        ...(activeThread.chatId ? { chat_id: activeThread.chatId, source: activeThread.source || 'account' } : {}),
       });
       // Reuse the server id so the polled copy of this message is recognised, not shown twice.
       if (r.success) patchMessage({ id: r.message_id ?? localId, status: 'sent' });

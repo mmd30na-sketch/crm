@@ -1048,21 +1048,22 @@ function applyPersonLink(db: any, th: any, p: chabokan.PhonePerson | null) {
   if (p.name) th.title = p.name;
   if (p.student_id) {
     th.student_id = p.student_id;
-    ((db.rubika_account_links ||= {}) as Record<string, string>)[String(p.student_id)] = th.external_id;
+    const linkKey = th.source === 'bot' ? 'rubika_links' : 'rubika_account_links';
+    ((db[linkKey] ||= {}) as Record<string, string>)[String(p.student_id)] = th.external_id;
   }
 }
 /** Re-match every account thread by phone (after a phone sync or DB change). */
 async function relinkAccountThreads(): Promise<{ total: number; withPhone: number; linked: number; students: number }> {
   const snap = readDb() as any;
-  const keys = [...new Set(((snap.threads || []) as any[]).filter(t => t.source === 'account').map(t => chabokan.mobileKey(t.phone)).filter(Boolean))];
+  const keys = [...new Set(((snap.threads || []) as any[]).filter(t => t.source === 'account' || t.source === 'bot').map(t => chabokan.mobileKey(t.phone)).filter(Boolean))];
   const persons: Record<string, chabokan.PhonePerson | null> = {};
   for (const k of keys) persons[k] = await lookupPerson(k);
   const db = readDb() as any;
-  const threads = ((db.threads || []) as any[]).filter(t => t.source === 'account');
+  const threads = ((db.threads || []) as any[]).filter(t => t.source === 'account' || t.source === 'bot');
   for (const th of threads) { const k = chabokan.mobileKey(th.phone); if (k) applyPersonLink(db, th, persons[k]); }
   for (const m of (db.messages || []) as any[]) {
-    if (m.source !== 'account') continue;
-    const th = threads.find(t => t.external_id === m.chat_id);
+    if (m.source !== 'account' && m.source !== 'bot') continue;
+    const th = threads.find(t => t.source === m.source && t.external_id === m.chat_id);
     if (th) { m.chat_title = th.title; if (th.student_id) m.student_id = th.student_id; if (m.direction !== 'out') m.sender = th.title; }
   }
   writeDb(db);
@@ -1090,9 +1091,10 @@ async function storeAccountMessages(items: any[]): Promise<number> {
     const phone = k ? `0${k}` : '';
     const out = m.direction === 'out';
     const when = new Date(Number(m.time) || Date.now()).toISOString();
-    let th = threads.find(t => t.source === 'account' && t.external_id === chatId);
+    const src = m.source === 'bot' ? 'bot' : 'account';
+    let th = threads.find(t => t.source === src && t.external_id === chatId);
     if (!th) {
-      th = { thread_id: stableThreadId(chatId), source: 'account', channel: 'rubika', external_id: chatId, title, phone, unread_count: 0, updated_at: when, last_message_text: '' };
+      th = { thread_id: stableThreadId(src === 'bot' ? `bot:${chatId}` : chatId), source: src, channel: 'rubika', external_id: chatId, title, phone, unread_count: 0, updated_at: when, last_message_text: '' };
       threads.push(th);
     }
     if (phone && !th.phone) th.phone = phone;
@@ -1101,7 +1103,7 @@ async function storeAccountMessages(items: any[]): Promise<number> {
     if (seen.has(extId)) continue;
     seen.add(extId); added++;
     messages.push({
-      id: Date.now() * 1000 + Math.floor(Math.random() * 1000), ext_id: extId, source: 'account', channel: 'rubika',
+      id: Date.now() * 1000 + Math.floor(Math.random() * 1000), ext_id: extId, source: src, channel: 'rubika',
       chat_id: chatId, chat_title: th.title, student_id: th.student_id, sender: out ? 'admin' : th.title, direction: out ? 'out' : 'in',
       sender_phone: th.phone || '', message: sanitizeString(String(m.text), 2000), received_at: when, ...(out ? { status: 'sent' } : {}),
     });
@@ -1122,8 +1124,8 @@ app.post('/api/messenger/account-ingest', asyncHandler(async (req, res) => {
   const secret = ingestSecret();
   const given = Buffer.from(String(req.headers['x-ingest-secret'] || ''));
   if (!secret || given.length !== Buffer.byteLength(secret) || !crypto.timingSafeEqual(given, Buffer.from(secret))) return res.status(401).json({ error: 'Unauthorized' });
-  if (!rubikaAccountActive()) return res.json({ ok: true, ignored: true, added: 0 });
-  const items = Array.isArray(req.body?.messages) ? req.body.messages : [];
+  // Bot messages (ker.py) are always stored; account messages only while the account is switched on.
+  const items = (Array.isArray(req.body?.messages) ? req.body.messages : []).filter((m: any) => m?.source === 'bot' || rubikaAccountActive());
   const added = items.length ? await storeAccountMessages(items) : 0;
   const phones = Array.isArray(req.body?.phones) ? req.body.phones.slice(0, 500) : [];
   if (phones.length) {
@@ -1267,6 +1269,17 @@ app.post('/api/messenger/send', async (req, res) => {
     const db = readDb();
     const stored = ((db as any).messages || []).find((m: any) => m.ext_id === `${accountChat}:${r.message_id || `local-${now}`}`);
     return res.json({ success: !!r.ok, status: r.ok ? 'sent' : 'failed', message_id: stored?.id, message: r.ok ? 'پیام از اکانت اصلی ارسال شد.' : (r.error || 'ارسال ناموفق بود.') });
+  }
+  const botChat = channel === 'rubika' && req.body?.source === 'bot' ? sanitizeString(String(req.body?.chat_id || ''), 100) : '';
+  if (botChat && message) {
+    // Reply on a bot thread: Rubika bot API sendMessage only (ker.py stays the only consumer of updates).
+    let ok = false; let err = '';
+    try { const r = await sendRubikaMessage(botChat, message); ok = r?.status === 'OK'; if (!ok) err = String(r?.status || r?.raw || 'نامشخص').slice(0, 120); }
+    catch (e: any) { err = e?.message || 'خطا'; }
+    const now = Date.now(); const extId = `bot:${botChat}:out-${now}`;
+    if (ok) await storeAccountMessages([{ source: 'bot', ext_id: extId, chat_id: botChat, text: message, time: now, direction: 'out' }]);
+    const stored = (((readDb() as any).messages) || []).find((m: any) => m.ext_id === extId);
+    return res.json({ success: ok, status: ok ? 'sent' : 'failed', message_id: stored?.id, message: ok ? 'پیام از ربات روبیکا ارسال شد.' : `ارسال با ربات ناموفق بود: ${err}` });
   }
   if (accountChat && !/^09\d{9}$/.test(phone)) return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است و برای این گفتگو شماره‌ای جهت ارسال با ربات وجود ندارد.' });
   if (!phone || !message) return res.status(400).json({ error: 'گیرنده و متن پیام الزامی است.' });

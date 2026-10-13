@@ -821,7 +821,7 @@ export async function sendMessengerMessage(body: {
   templateTitle?: string;
   student_id?: number | string;
   chat_id?: string;
-  source?: 'account';
+  source?: 'account' | 'bot';
 }): Promise<{ success: boolean; status: string; message: string; message_id?: number; tracking_id?: string }> {
   const res = await apiFetch(`/messenger/send`, {
     method: 'POST',
