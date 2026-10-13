@@ -270,7 +270,9 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
   const [smsLogs, setSmsLogs] = useState<SmsLog[]>([]);
 
 
-  const activeThread = useMemo(() => threads.find(t => t.id === activeThreadId) ?? threads[0], [threads, activeThreadId]);
+  const activeThread = useMemo(() => threads.find(t => t.id === activeThreadId) ?? threads.find(t => !!(t.chatId || t.phone)) ?? threads[0], [threads, activeThreadId]);
+  /** A reply needs a destination: an account chat (object_guid) or a mobile number. Old webhook rows can have neither. */
+  const canReply = !!activeThread && !!(activeThread.chatId || /^0?9\d{9}$/.test(String(activeThread.phone || '').replace(/\D/g, '').replace(/^98/, '0')));
 
   /* Filter threads */
   const filteredThreads = useMemo(() => threads.filter(t => {
@@ -285,7 +287,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
 
   /* Send message in chat thread */
   const handleSendMessage = async () => {
-    if (!messageInput.trim() || !activeThread) return;
+    if (!messageInput.trim() || !activeThread || !canReply) return;
     const textToSend = messageInput.trim();
     const localId = Date.now();
     const threadId = activeThread.id;
@@ -667,7 +669,8 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
-                      placeholder={`پاسخ به ${activeThread.senderName}...`}
+                      placeholder={canReply ? `پاسخ به ${activeThread.senderName}...` : 'این گفتگو شماره یا شناسه روبیکا ندارد؛ پاسخ ممکن نیست.'}
+                      disabled={!canReply}
                       value={messageInput}
                       onChange={e => setMessageInput(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
@@ -675,7 +678,8 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                     />
                     <button
                       onClick={handleSendMessage}
-                      disabled={!messageInput.trim()}
+                      disabled={!messageInput.trim() || !canReply}
+                      title={canReply ? '' : 'این گفتگو مقصد ندارد'}
                       className="px-4 py-2 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
                     >
                       <Send className="w-3.5 h-3.5" />
