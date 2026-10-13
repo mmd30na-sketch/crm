@@ -10,3 +10,4 @@ coverage/
 *.bak
 
 ocr-eval-data/
+__pycache__/
