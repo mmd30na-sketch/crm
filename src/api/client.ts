@@ -763,6 +763,20 @@ export async function testRubikaBot(): Promise<{ ok: boolean; bot?: { bot_title?
   try { return await res.json(); } catch { return { ok: false, error: 'پاسخ نامعتبر از سرور' }; }
 }
 
+export type RubikaAccountStatus = { ok: boolean; logged_in?: boolean; name?: string | null; username?: string | null; phone?: string | null;
+  pending?: { phone?: string; step?: string } | null; step?: 'code' | 'password'; hint?: string | null; error?: string; note?: string | null; active?: boolean };
+async function rubikaAccountCall(pathPart: string, body?: unknown): Promise<RubikaAccountStatus> {
+  const res = await apiFetch(`/settings/rubika-account${pathPart}`, body === undefined ? undefined : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try { return await res.json(); } catch { return { ok: false, error: 'پاسخ نامعتبر از سرور' }; }
+}
+export const fetchRubikaAccount = () => rubikaAccountCall('');
+export const rubikaAccountSendCode = (phone: string, pass_key?: string) => rubikaAccountCall('/send-code', { phone, pass_key });
+export const rubikaAccountSignIn = (code: string) => rubikaAccountCall('/sign-in', { code });
+export const rubikaAccountLogout = () => rubikaAccountCall('/logout', {});
+export const rubikaAccountSetActive = (active: boolean) => rubikaAccountCall('/active', { active });
+
 export async function fetchGatewaySettings(): Promise<{
   sms_provider: string;
   sms_api_key: string;

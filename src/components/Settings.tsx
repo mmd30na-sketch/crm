@@ -67,6 +67,38 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     } catch { setRubikaTestResult({ ok: false, text: 'خطا در ارتباط با سرور' }); }
     finally { setRubikaTesting(false); }
   };
+  /* Main Rubika account (rubpy) */
+  const [rbAcc, setRbAcc] = useState<api.RubikaAccountStatus | null>(null);
+  const [rbPhone, setRbPhone] = useState('');
+  const [rbCode, setRbCode] = useState('');
+  const [rbPass, setRbPass] = useState('');
+  const [rbStep, setRbStep] = useState<'idle' | 'code' | 'password'>('idle');
+  const [rbHint, setRbHint] = useState('');
+  const [rbBusy, setRbBusy] = useState(false);
+  const [rbMsg, setRbMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const loadRbAcc = () => api.fetchRubikaAccount().then(setRbAcc).catch(() => setRbAcc({ ok: false, error: 'خواندن وضعیت ممکن نشد' }));
+  useEffect(() => { loadRbAcc(); }, []);
+  const rbSendCode = async () => {
+    setRbBusy(true); setRbMsg(null);
+    const r = await api.rubikaAccountSendCode(rbPhone, rbStep === 'password' ? rbPass : undefined);
+    setRbBusy(false);
+    if (!r.ok) return setRbMsg({ ok: false, text: r.error || 'خطا' });
+    if (r.step === 'password') { setRbStep('password'); setRbHint(r.hint || ''); setRbMsg({ ok: true, text: 'این حساب رمز دومرحله‌ای دارد؛ رمز را وارد و دوباره «ارسال کد» را بزنید.' }); }
+    else { setRbStep('code'); setRbPass(''); setRbMsg({ ok: true, text: 'کد به روبیکا/پیامک شما ارسال شد.' }); }
+  };
+  const rbSignIn = async () => {
+    setRbBusy(true); setRbMsg(null);
+    const r = await api.rubikaAccountSignIn(rbCode);
+    setRbBusy(false); setRbCode('');
+    if (!r.ok) return setRbMsg({ ok: false, text: r.error || 'خطا' });
+    setRbStep('idle'); setRbMsg({ ok: true, text: 'ورود موفق بود.' }); loadRbAcc();
+  };
+  const rbLogout = async () => {
+    if (!window.confirm('از اکانت اصلی روبیکا خارج شوید؟ ارسال پیام از سایت هم متوقف می‌شود.')) return;
+    setRbBusy(true); const r = await api.rubikaAccountLogout(); setRbBusy(false);
+    setRbMsg({ ok: !!r.ok, text: r.ok ? (r.note || 'خارج شدید.') : (r.error || 'خطا') }); loadRbAcc();
+  };
+  const rbToggle = async (v: boolean) => { const r = await api.rubikaAccountSetActive(v); if (r.ok) setRbAcc(a => ({ ...(a || { ok: true }), active: v })); };
   const [isSavingGateways, setIsSavingGateways] = useState(false);
   const [gatewaysSuccess, setGatewaysSuccess]   = useState(false);
   const [gatewaysError, setGatewaysError]       = useState('');
@@ -557,7 +589,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 {/* Rubika Config */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
-                    <span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-violet-600" />روبیکا (Carla Bot)</span>
+                    <span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-violet-600" />ربات روبیکا (Carla Bot)</span>
                     <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
                       <input type="checkbox" checked={rubikaIsActive} onChange={e => setRubikaIsActive(e.target.checked)} />
                       {rubikaIsActive ? 'فعال' : 'غیرفعال'}
@@ -586,6 +618,53 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                     </button>
                     {rubikaTestResult && <span className={`text-[11px] font-bold ${rubikaTestResult.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{rubikaTestResult.text}</span>}
                   </div>
+                </div>
+
+                {/* Rubika main account (rubpy) */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
+                    <span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-fuchsia-600" />اکانت اصلی روبیکا (rubpy)</span>
+                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
+                      <input type="checkbox" checked={rbAcc?.active !== false} onChange={e => rbToggle(e.target.checked)} />
+                      {rbAcc?.active !== false ? 'فعال' : 'غیرفعال'}
+                    </label>
+                  </div>
+                  <div className="text-[11px] font-semibold">
+                    {rbAcc === null ? <span className="text-slate-400">در حال بررسی...</span>
+                      : rbAcc.logged_in
+                        ? <span className="text-emerald-600">● متصل — {rbAcc.name || 'بدون نام'}{rbAcc.username ? ` (@${rbAcc.username})` : ''} <span dir="ltr" className="font-mono">{rbAcc.phone}</span></span>
+                        : <span className="text-rose-600">● متصل نیست</span>}
+                  </div>
+                  {rbAcc?.logged_in ? (
+                    <button type="button" onClick={rbLogout} disabled={rbBusy} className="px-3 py-2 text-[11px] font-bold rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white cursor-pointer">خروج</button>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">شماره موبایل</label>
+                        <div className="flex gap-2">
+                          <input type="tel" dir="ltr" placeholder="09xxxxxxxxx" value={rbPhone} onChange={e => setRbPhone(e.target.value)} className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                          <button type="button" onClick={rbSendCode} disabled={rbBusy || !rbPhone.trim()} className="px-3 py-2 text-[11px] font-bold rounded-lg bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-50 text-white cursor-pointer">ارسال کد</button>
+                        </div>
+                      </div>
+                      {rbStep === 'password' && (
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1">رمز دومرحله‌ای{rbHint ? ` (راهنما: ${rbHint})` : ''}</label>
+                          <input type="password" autoComplete="off" dir="ltr" value={rbPass} onChange={e => setRbPass(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                        </div>
+                      )}
+                      {rbStep === 'code' && (
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1">کد تأیید</label>
+                          <div className="flex gap-2">
+                            <input type="text" inputMode="numeric" autoComplete="one-time-code" dir="ltr" value={rbCode} onChange={e => setRbCode(e.target.value)} className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                            <button type="button" onClick={rbSignIn} disabled={rbBusy || !rbCode.trim()} className="px-3 py-2 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white cursor-pointer">تأیید</button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {rbBusy && <span className="text-[11px] text-slate-500">لطفاً صبر کنید...</span>}
+                  {rbMsg && <span className={`block text-[11px] font-bold ${rbMsg.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{rbMsg.text}</span>}
                 </div>
 
                 {/* SMS Config */}

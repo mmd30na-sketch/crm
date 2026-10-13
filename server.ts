@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import https from 'https';
+import { execFile } from 'child_process';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -2351,6 +2352,52 @@ app.post('/api/settings/gateways/rubika-test', (req, res) => {
   r.on('timeout', () => r.destroy(new Error('timeout')));
   r.on('error', (e) => { if (!res.headersSent) res.status(502).json({ ok: false, error: 'اتصال به botapi.rubika.ir ناموفق: ' + e.message }); });
   r.write('{}'); r.end();
+});
+
+// Main Rubika account (rubpy self-bot), shared with the site's session. Admin only.
+// The Python helper keeps login state (phone_code_hash etc.) server-side and only prints status JSON.
+function runRubikaAccount(cmd: string, args: Record<string, unknown> = {}): Promise<any> {
+  const script = path.join(process.cwd(), 'scripts', 'rubika_account.py');
+  return new Promise((resolve) => {
+    const child = execFile(process.env.RUBIKA_PYTHON || 'python3', [script, cmd], { timeout: 45000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      const line = String(stdout || '').trim().split('\n').pop() || '';
+      try { return resolve(JSON.parse(line)); } catch { /* fall through */ }
+      resolve({ ok: false, error: err ? 'اجرای ماژول روبیکا ناموفق بود.' : 'پاسخ نامعتبر از ماژول روبیکا' });
+    });
+    child.stdin?.end(JSON.stringify(args));
+  });
+}
+const rubikaAccountPublic = (r: any) => {
+  const keep = ['ok', 'logged_in', 'name', 'username', 'phone', 'pending', 'step', 'hint', 'error', 'note', 'terminated_remote'];
+  const o: any = {}; for (const k of keep) if (r && r[k] !== undefined) o[k] = r[k];
+  return o;
+};
+app.get('/api/settings/rubika-account', requireAdmin, async (req, res) => {
+  const r = await runRubikaAccount('status');
+  res.json({ ...rubikaAccountPublic(r), active: (readDb().settings as any)?.gateways?.rubika_account_active !== false });
+});
+app.post('/api/settings/rubika-account/send-code', requireAdmin, async (req, res) => {
+  const phone = sanitizeString(String(req.body?.phone || ''), 20);
+  const pass_key = typeof req.body?.pass_key === 'string' ? req.body.pass_key.slice(0, 100) : undefined;
+  if (!phone) return res.status(400).json({ ok: false, error: 'شماره تلفن را وارد کنید.' });
+  const r = await runRubikaAccount('send_code', { phone, pass_key });
+  res.status(r.ok ? 200 : 400).json(rubikaAccountPublic(r));
+});
+app.post('/api/settings/rubika-account/sign-in', requireAdmin, async (req, res) => {
+  const code = String(req.body?.code || '').slice(0, 12);
+  const r = await runRubikaAccount('sign_in', { code });
+  res.status(r.ok ? 200 : 400).json(rubikaAccountPublic(r));
+});
+app.post('/api/settings/rubika-account/logout', requireAdmin, async (req, res) => {
+  const r = await runRubikaAccount('logout');
+  res.status(r.ok ? 200 : 500).json(rubikaAccountPublic(r));
+});
+app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
+  const db = readDb();
+  const g: any = { ...((db.settings as any)?.gateways || {}), rubika_account_active: !!req.body?.active };
+  db.settings = { ...(db.settings as any), gateways: g };
+  writeDb(db);
+  res.json({ ok: true, active: g.rubika_account_active });
 });
 
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
