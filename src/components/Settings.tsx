@@ -50,7 +50,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   const [smsSenderLine, setSmsSenderLine]             = useState('');
   const [smsAutoSendRegister, setSmsAutoSendRegister] = useState(true);
 
-  const RUBIKA_WEBHOOK_URL = 'https://crm.mmd30na.ir/api/messenger/webhook';
+  const RUBIKA_WEBHOOK_URL = `${typeof window !== 'undefined' && /^https?:/.test(window.location.origin) ? window.location.origin : 'https://management.kermanshahcart.ir'}/api/messenger/webhook`;
   const [webhookCopied, setWebhookCopied] = useState(false);
   const [rubikaTesting, setRubikaTesting] = useState(false);
   const [rubikaTestResult, setRubikaTestResult] = useState<{ ok: boolean; text: string } | null>(null);
