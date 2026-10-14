@@ -423,6 +423,25 @@ if (!fs.existsSync(DB_PATH)) {
 
 app.use(express.json({ limit: '2mb' }));
 
+/** Audit trail of every write (who, what endpoint, result). No bodies, so no personal data or secrets. */
+app.use('/api', (req, res, next) => {
+  const write = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS';
+  if (!write || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/auth/file-token') return next();
+  res.on('finish', () => {
+    const session = sessionFromRequest(req);
+    const segs = req.path.split('/').filter(Boolean);
+    const username = session?.username
+      || (req.path === '/auth/login' ? sanitizeString(req.body?.username, 80) || null : null);
+    void chabokan.insertAudit({
+      username, role: session?.role || null, method: req.method, path: req.path,
+      entity: segs[0] ? segs[0].slice(0, 40) : null, entity_id: segs[1] ? segs[1].slice(0, 64) : null,
+      status: res.statusCode, ip: String(req.ip || '').slice(0, 64) || null,
+    });
+  });
+  next();
+});
+
+
 const ALLOWED_ORIGINS = [
   'https://mmd30na-sketch.github.io',
   'https://crm.mmd30na.cloud',
@@ -821,24 +840,6 @@ app.use('/api', (req, res, next) => {
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
-  next();
-});
-
-/** Audit trail of every write (who, what endpoint, result). No bodies, so no personal data or secrets. */
-app.use('/api', (req, res, next) => {
-  const write = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS';
-  if (!write || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/auth/file-token') return next();
-  res.on('finish', () => {
-    const session = sessionFromRequest(req);
-    const segs = req.path.split('/').filter(Boolean);
-    const username = session?.username
-      || (req.path === '/auth/login' ? sanitizeString(req.body?.username, 80) || null : null);
-    void chabokan.insertAudit({
-      username, role: session?.role || null, method: req.method, path: req.path,
-      entity: segs[0] ? segs[0].slice(0, 40) : null, entity_id: segs[1] ? segs[1].slice(0, 64) : null,
-      status: res.statusCode, ip: String(req.ip || '').slice(0, 64) || null,
-    });
-  });
   next();
 });
 
