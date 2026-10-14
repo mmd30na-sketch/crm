@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
+import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -822,6 +823,9 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
     return true;
   }
   if (path.startsWith('/messenger')) return role === 'cashier';
+  if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
+  if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
+  if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
   if (!write) return role === 'cashier';
   return false;
@@ -2639,6 +2643,32 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
 });
 
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
+registerPhase4(app, {
+  session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  normalizeMobile,
+  readJsonDb: () => readDb(),
+  sendAccount: async (guid, text) => {
+    if (!rubikaAccountActive()) return { ok: false, error: 'اکانت اصلی روبیکا غیرفعال است' };
+    const r = await runRubikaAccount('send', { guid, text });
+    if (r?.ok) await storeAccountMessages([{ ext_id: `${guid}:${r.message_id || `bulk-${Date.now()}`}`, chat_id: guid, text, time: Date.now(), direction: 'out' }]);
+    return { ok: !!r?.ok, error: r?.error };
+  },
+  sendBot: async (chatId, text) => {
+    try {
+      const r = await sendRubikaMessage(chatId, text);
+      const ok = r?.status === 'OK';
+      if (ok) await storeAccountMessages([{ source: 'bot', ext_id: `bot:${chatId}:out-${Date.now()}`, chat_id: chatId, text, time: Date.now(), direction: 'out' }]);
+      return { ok, error: ok ? undefined : String(r?.status || 'خطا') };
+    } catch (e: any) { return { ok: false, error: e?.message }; }
+  },
+  staffDirectory: () => {
+    const d = readDb();
+    return [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin', is_active: true },
+      ...d.staff_users.map((u: any) => ({ username: u.username, full_name: u.full_name, role: u.role, is_active: !!u.is_active }))];
+  },
+});
+
 app.get('/api/settings/audit-log', requireAdmin, asyncHandler(async (req, res) => {
   const q = req.query as Record<string, string>;
   res.json(await chabokan.listAudit({
@@ -2715,6 +2745,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Vite Integration middleware & SPA fallback
 async function startServer() {
   await chabokan.initMysql();
+  await ensurePhase4Schema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
