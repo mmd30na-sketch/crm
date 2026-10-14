@@ -72,6 +72,21 @@ export async function login(username: string, password: string): Promise<{ token
   return data;
 }
 
+/** Exchange a one-time SSO ticket (from the public site's admin panel) for a CRM session. */
+export async function ssoExchange(ticket: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/auth/sso`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticket }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.token) return false;
+    setAuthToken(data.token);
+    return true;
+  } catch { return false; }
+}
+
 export async function fetchMe(): Promise<{ user: any; db?: string }> {
   const res = await apiFetch('/auth/me');
   if (!res.ok) throw new Error('Unauthorized');

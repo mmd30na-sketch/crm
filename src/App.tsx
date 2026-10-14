@@ -156,6 +156,16 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      try {
+        const u = new URL(window.location.href);
+        const ssoTicket = u.searchParams.get('sso_ticket');
+        if (ssoTicket) {
+          u.searchParams.delete('sso_ticket');
+          window.history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+          setAuthChecking(true);
+          await api.ssoExchange(ssoTicket);
+        }
+      } catch {}
       if (!api.getAuthToken()) {
         setAuthChecking(false);
         setAuthed(false);

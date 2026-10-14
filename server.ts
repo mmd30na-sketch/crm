@@ -696,6 +696,62 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// ── SSO from the public site's admin panel ──────────────────────────────────────────────────────────
+// The site mints a one-time ticket: base64url(JSON{jti,exp,iss:'kermanshah-site'}).HMAC-SHA256(CRM_SSO_SECRET).
+// Valid for at most 60s, single use (jti remembered in memory until expiry). The CRM session token is returned
+// in the POST response body only, never in a URL. Maps to CRM_SSO_USER (a local staff username) or the env admin.
+const ssoBuckets = new Map<string, { count: number; resetAt: number }>();
+const ssoUsedJti = new Map<string, number>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, exp] of ssoUsedJti) if (now > exp) ssoUsedJti.delete(k);
+  for (const [k, b] of ssoBuckets) if (now > b.resetAt) ssoBuckets.delete(k);
+}, 60_000).unref();
+
+function verifySsoTicket(ticket: string): { ok: true; jti: string; exp: number } | { ok: false; reason: string } {
+  const secret = process.env.CRM_SSO_SECRET || '';
+  if (secret.length < 32) return { ok: false, reason: 'not_configured' };
+  const parts = String(ticket || '').split('.');
+  if (parts.length !== 2 || parts[0].length > 400) return { ok: false, reason: 'malformed' };
+  const expected = crypto.createHmac('sha256', secret).update(parts[0]).digest('base64url');
+  const a = Buffer.from(parts[1]); const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { ok: false, reason: 'bad_signature' };
+  let p: any;
+  try { p = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')); } catch { return { ok: false, reason: 'malformed' }; }
+  const now = Date.now();
+  if (p?.iss !== 'kermanshah-site' || typeof p.jti !== 'string' || p.jti.length < 16 || typeof p.exp !== 'number') return { ok: false, reason: 'malformed' };
+  if (now > p.exp || p.exp - now > 65_000) return { ok: false, reason: 'expired' };
+  if (ssoUsedJti.has(p.jti)) return { ok: false, reason: 'reused' };
+  return { ok: true, jti: p.jti, exp: p.exp };
+}
+
+app.post('/api/auth/sso', (req, res) => {
+  if (overLimit(ssoBuckets, clientIp(req), 10)) return res.status(429).json({ error: 'Too many attempts' });
+  const v = verifySsoTicket(String(req.body?.ticket || ''));
+  if (!v.ok) { console.warn(`[sso] rejected (${v.reason})`); return res.status(401).json({ error: 'ورود خودکار ناموفق بود؛ دوباره از پنل سایت تلاش کنید.' }); }
+  ssoUsedJti.set(v.jti, v.exp + 5_000);
+  const want = String(process.env.CRM_SSO_USER || '').trim();
+  const envUser = process.env.CRM_ADMIN_USER || 'admin';
+  if (want && want !== envUser) {
+    const st = readDb().staff_users.find((s) => s.username.toLowerCase() === want.toLowerCase());
+    if (!st || !st.is_active || !st.password_hash) { console.warn('[sso] rejected (mapped_user_missing)'); return res.status(401).json({ error: 'کاربر SSO در CRM پیدا نشد.' }); }
+    const token = signToken({ username: st.username, role: st.role, user_id: st.id, source: 'local', pwv: passwordTag(st.password_hash), sso: true });
+    console.log('[sso] success');
+    return res.json({ token, user: { username: st.username, role: st.role, full_name: st.full_name } });
+  }
+  const token = signToken({ username: envUser, role: 'admin', source: 'env', pwv: envAdminPasswordTag(), sso: true });
+  console.log('[sso] success');
+  return res.json({ token, user: { username: envUser, role: 'admin', full_name: 'مدیر سیستم' } });
+});
+
+// GET form: does not consume the ticket, just hands it to the SPA, which exchanges it via POST.
+app.get('/api/auth/sso', (req, res) => {
+  if (overLimit(ssoBuckets, clientIp(req), 10)) return res.status(429).send('Too many attempts');
+  const t = String(req.query.ticket || '');
+  if (!/^[A-Za-z0-9_-]{10,400}\.[A-Za-z0-9_-]{20,100}$/.test(t)) return res.redirect(302, '/');
+  return res.redirect(302, `/?sso_ticket=${encodeURIComponent(t)}`);
+});
+
 app.get('/api/auth/me', requireAuth, (req, res) => {
   res.json({ user: (req as any).user || null, db: chabokan.isMysqlEnabled() ? 'chabokan-mysql' : 'json' });
 });
