@@ -396,7 +396,15 @@ export default function StudentRegistrationForm({
 
   useEffect(() => {
     api.fetchRegistrations()
-      .then((rows) => setPendingRegs(rows.filter((r) => r.status === 'pending' && !r.student_id)))
+      .then((rows) => {
+        const pending = rows.filter((r) => r.status === 'pending' && !r.student_id);
+        setPendingRegs(pending);
+        // Opened from the dashboard's pending-registrations panel: preselect that registration.
+        let wanted: string | null = null;
+        try { wanted = sessionStorage.getItem('crm_open_registration_id'); sessionStorage.removeItem('crm_open_registration_id'); } catch { /* storage blocked */ }
+        const reg = wanted ? pending.find((r) => String(r.id) === wanted) : undefined;
+        if (reg) setTimeout(() => applyPendingRegistration(reg), 0);
+      })
       .catch(() => setPendingRegs([]));
   }, []);
 

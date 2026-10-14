@@ -52,6 +52,15 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
 
   const RUBIKA_WEBHOOK_URL = `${typeof window !== 'undefined' && /^https?:/.test(window.location.origin) ? window.location.origin : 'https://management.kermanshahcart.ir'}/api/messenger/webhook`;
   const [webhookCopied, setWebhookCopied] = useState(false);
+  /* Read-only: channels & groups owned by the main account (@Kermanshahcart) */
+  const RUBIKA_ACCOUNT_CHATS: { title: string; guid: string; type: 'channel' | 'group' }[] = [
+    { title: 'آموزشگاه کرمانشاه (دوره تیر)', guid: 'c0DpoJd08a9a9c44d0acc2fb90659d52', type: 'channel' },
+    { title: 'آموزشگاه کرمانشاه (دوره مهر)', guid: 'c0D59vX00cf41f209ab4a34faee18473', type: 'channel' },
+    { title: 'فایل های کارآموزان', guid: 'c0D6pWN0149ca457b5f9bdebff4a32df', type: 'channel' },
+    { title: 'نمونه سئوالات کارت هوشمند', guid: 'c0DJaY10a60405e14a73553430cf50f5', type: 'channel' },
+    { title: 'فایل کارآموزان', guid: 'g0II4iG0658364ec6441a07a576faf80', type: 'group' },
+    { title: 'فمیلی بیزنس', guid: 'g0GuMx307525bdf3b888c352f30551ec', type: 'group' },
+  ];
   const [rubikaTesting, setRubikaTesting] = useState(false);
   const [rubikaTestResult, setRubikaTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const copyWebhook = async () => {
@@ -585,87 +594,122 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 </h3>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* ── Rubika (bot + main account) ── */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <MessageSquare className="w-4 h-4 text-violet-600" />روبیکا
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                 {/* Rubika Config */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-2 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
-                    <span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-violet-600" />ربات روبیکا (Carla Bot)</span>
-                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
-                      <input type="checkbox" checked={rubikaIsActive} onChange={e => setRubikaIsActive(e.target.checked)} />
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4 min-w-0">
+                  <div className="flex items-center justify-between gap-3 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
+                    <span className="flex items-center gap-2 min-w-0"><MessageSquare className="w-4 h-4 shrink-0 text-violet-600" /><span className="truncate">ربات روبیکا</span></span>
+                    <label className={`shrink-0 flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-md border cursor-pointer ${rubikaIsActive ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
+                      <input type="checkbox" className="accent-emerald-600" checked={rubikaIsActive} onChange={e => setRubikaIsActive(e.target.checked)} />
                       {rubikaIsActive ? 'فعال' : 'غیرفعال'}
                     </label>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">توکن ربات (Bot Token){rubikaTokenSet && <span className="text-emerald-600 font-bold mr-1">— ذخیره شده (برای تغییر، مقدار جدید بنویسید)</span>}</label>
-                    <input type="password" autoComplete="off" dir="ltr" placeholder={rubikaTokenSet ? '••••••••' : ''} value={rubikaBotToken} onChange={e => setRubikaBotToken(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                    <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                      <label className="text-[11px] font-semibold text-slate-600">توکن ربات <span dir="ltr" className="text-slate-400 font-normal">(Bot Token)</span></label>
+                      {rubikaTokenSet && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">ذخیره شده</span>}
+                    </div>
+                    <input type="password" autoComplete="off" dir="ltr" placeholder={rubikaTokenSet ? '••••••••' : 'Bot token'} value={rubikaBotToken} onChange={e => setRubikaBotToken(e.target.value)} className="w-full px-3 py-2 text-xs text-left border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400" />
+                    {rubikaTokenSet && <p className="mt-1 text-[10px] text-slate-400">برای تغییر توکن، مقدار جدید را وارد و ذخیره کنید.</p>}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">شناسه کانال روبیکا</label>
-                    <input type="text" dir="ltr" value={rubikaChannelId} onChange={e => setRubikaChannelId(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                    <input type="text" dir="ltr" placeholder="c0..." value={rubikaChannelId} onChange={e => setRubikaChannelId(e.target.value)} className="w-full px-3 py-2 text-xs text-left border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400" />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">آدرس Webhook (در تنظیمات ربات وارد کنید)</label>
-                    <div className="flex gap-2">
-                      <input type="text" readOnly dir="ltr" value={RUBIKA_WEBHOOK_URL} onFocus={e => e.target.select()} className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-slate-100 text-slate-600" />
-                      <button type="button" onClick={copyWebhook} className="px-3 py-2 text-[11px] font-bold border border-slate-200 rounded-lg bg-white hover:bg-slate-100 cursor-pointer">{webhookCopied ? 'کپی شد ✓' : 'کپی'}</button>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">آدرس Webhook <span className="text-slate-400 font-normal">(در تنظیمات ربات وارد کنید)</span></label>
+                    <div className="flex gap-2 min-w-0">
+                      <input type="text" readOnly dir="ltr" value={RUBIKA_WEBHOOK_URL} onFocus={e => e.target.select()} className="flex-1 min-w-0 px-3 py-2 text-xs text-left border border-slate-200 rounded-lg font-mono bg-slate-100 text-slate-600 truncate" />
+                      <button type="button" onClick={copyWebhook} className={`shrink-0 px-3 py-2 text-[11px] font-bold border rounded-lg cursor-pointer transition ${webhookCopied ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white hover:bg-slate-100 text-slate-700'}`}>{webhookCopied ? 'کپی شد ✓' : 'کپی'}</button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
                     <button type="button" onClick={handleTestRubika} disabled={rubikaTesting || !rubikaTokenSet}
                       title={rubikaTokenSet ? '' : 'ابتدا توکن را ذخیره کنید'}
-                      className="px-3 py-2 text-[11px] font-bold rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white cursor-pointer">
+                      className="shrink-0 px-3 py-2 text-[11px] font-bold rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white cursor-pointer flex items-center gap-1.5">
+                      {rubikaTesting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                       {rubikaTesting ? 'در حال تست...' : 'تست اتصال ربات'}
                     </button>
-                    {rubikaTestResult && <span className={`text-[11px] font-bold ${rubikaTestResult.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{rubikaTestResult.text}</span>}
+                    {!rubikaTokenSet && <span className="text-[10px] text-slate-400">ابتدا توکن را ذخیره کنید.</span>}
+                    {rubikaTestResult && <span className={`text-[11px] font-bold px-2 py-1 rounded-md break-words ${rubikaTestResult.ok ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>{rubikaTestResult.text}</span>}
                   </div>
                 </div>
 
                 {/* Rubika main account (rubpy) */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between gap-2 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
-                    <span className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-fuchsia-600" />اکانت اصلی روبیکا (rubpy)</span>
-                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
-                      <input type="checkbox" checked={rbAcc?.active !== false} onChange={e => rbToggle(e.target.checked)} />
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4 min-w-0">
+                  <div className="flex items-center justify-between gap-3 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
+                    <span className="flex items-center gap-2 min-w-0"><MessageSquare className="w-4 h-4 shrink-0 text-fuchsia-600" /><span className="truncate">اکانت اصلی روبیکا</span></span>
+                    <label className={`shrink-0 flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-md border cursor-pointer ${rbAcc?.active !== false ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
+                      <input type="checkbox" className="accent-emerald-600" checked={rbAcc?.active !== false} onChange={e => rbToggle(e.target.checked)} />
                       {rbAcc?.active !== false ? 'فعال' : 'غیرفعال'}
                     </label>
                   </div>
-                  <div className="text-[11px] font-semibold">
+                  <div className={`rounded-lg border px-3 py-2 text-[11px] font-semibold ${rbAcc?.logged_in ? 'border-emerald-200 bg-emerald-50' : rbAcc === null ? 'border-slate-200 bg-white' : 'border-rose-200 bg-rose-50'}`}>
                     {rbAcc === null ? <span className="text-slate-400">در حال بررسی...</span>
                       : rbAcc.logged_in
-                        ? <span className="text-emerald-600">● متصل — {rbAcc.name || 'بدون نام'}{rbAcc.username ? ` (@${rbAcc.username})` : ''} <span dir="ltr" className="font-mono">{rbAcc.phone}</span></span>
-                        : <span className="text-rose-600">● متصل نیست</span>}
+                        ? <div className="flex items-center gap-x-2 gap-y-1 flex-wrap text-emerald-700">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                            <span>متصل</span>
+                            <span className="text-slate-700 font-bold">{rbAcc.name || 'بدون نام'}</span>
+                            {rbAcc.username && <bdi dir="ltr" className="font-mono text-slate-500">@{rbAcc.username}</bdi>}
+                            {rbAcc.phone && <bdi dir="ltr" className="font-mono text-slate-500">{rbAcc.phone}</bdi>}
+                          </div>
+                        : <div className="flex items-center gap-2 text-rose-700"><span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />متصل نیست — برای ورود شماره موبایل را وارد کنید.</div>}
                   </div>
                   {rbAcc?.logged_in ? (
-                    <button type="button" onClick={rbLogout} disabled={rbBusy} className="px-3 py-2 text-[11px] font-bold rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white cursor-pointer">خروج</button>
+                    <>
+                      <div className="space-y-2">
+                        <div className="text-[11px] font-semibold text-slate-600">کانال‌ها و گروه‌های این اکانت</div>
+                        <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-[11px]">
+                          {RUBIKA_ACCOUNT_CHATS.map(c => (
+                            <li key={c.guid} className="flex items-center justify-between gap-2 px-3 py-1.5 min-w-0">
+                              <span className="truncate text-slate-700">{c.title}</span>
+                              <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${c.type === 'channel' ? 'text-sky-700 bg-sky-50' : 'text-amber-700 bg-amber-50'}`}>{c.type === 'channel' ? 'کانال' : 'گروه'}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <button type="button" onClick={rbLogout} disabled={rbBusy} className="px-3 py-2 text-[11px] font-bold rounded-lg border border-rose-200 text-rose-700 bg-white hover:bg-rose-50 disabled:opacity-50 cursor-pointer">خروج از اکانت</button>
+                    </>
                   ) : (
                     <>
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-600 mb-1">شماره موبایل</label>
-                        <div className="flex gap-2">
-                          <input type="tel" dir="ltr" placeholder="09xxxxxxxxx" value={rbPhone} onChange={e => setRbPhone(e.target.value)} className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
-                          <button type="button" onClick={rbSendCode} disabled={rbBusy || !rbPhone.trim()} className="px-3 py-2 text-[11px] font-bold rounded-lg bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-50 text-white cursor-pointer">ارسال کد</button>
+                        <div className="flex gap-2 min-w-0">
+                          <input type="tel" dir="ltr" placeholder="09xxxxxxxxx" value={rbPhone} onChange={e => setRbPhone(e.target.value)} className="flex-1 min-w-0 px-3 py-2 text-xs text-left border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-fuchsia-200 focus:border-fuchsia-400" />
+                          <button type="button" onClick={rbSendCode} disabled={rbBusy || !rbPhone.trim()} className="shrink-0 px-3 py-2 text-[11px] font-bold rounded-lg bg-fuchsia-600 hover:bg-fuchsia-700 disabled:opacity-50 disabled:cursor-not-allowed text-white cursor-pointer">{rbStep === 'password' ? 'ادامه' : 'ارسال کد'}</button>
                         </div>
                       </div>
                       {rbStep === 'password' && (
                         <div>
-                          <label className="block text-[11px] font-semibold text-slate-600 mb-1">رمز دومرحله‌ای{rbHint ? ` (راهنما: ${rbHint})` : ''}</label>
-                          <input type="password" autoComplete="off" dir="ltr" value={rbPass} onChange={e => setRbPass(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1">رمز دومرحله‌ای{rbHint ? <span className="text-slate-400 font-normal"> (راهنما: <bdi>{rbHint}</bdi>)</span> : ''}</label>
+                          <input type="password" autoComplete="off" dir="ltr" value={rbPass} onChange={e => setRbPass(e.target.value)} className="w-full px-3 py-2 text-xs text-left border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-fuchsia-200 focus:border-fuchsia-400" />
                         </div>
                       )}
                       {rbStep === 'code' && (
                         <div>
                           <label className="block text-[11px] font-semibold text-slate-600 mb-1">کد تأیید</label>
-                          <div className="flex gap-2">
-                            <input type="text" inputMode="numeric" autoComplete="one-time-code" dir="ltr" value={rbCode} onChange={e => setRbCode(e.target.value)} className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
-                            <button type="button" onClick={rbSignIn} disabled={rbBusy || !rbCode.trim()} className="px-3 py-2 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white cursor-pointer">تأیید</button>
+                          <div className="flex gap-2 min-w-0">
+                            <input type="text" inputMode="numeric" autoComplete="one-time-code" dir="ltr" value={rbCode} onChange={e => setRbCode(e.target.value)} className="flex-1 min-w-0 px-3 py-2 text-xs text-left tracking-widest border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400" />
+                            <button type="button" onClick={rbSignIn} disabled={rbBusy || !rbCode.trim()} className="shrink-0 px-3 py-2 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white cursor-pointer">تأیید</button>
                           </div>
                         </div>
                       )}
                     </>
                   )}
-                  {rbBusy && <span className="text-[11px] text-slate-500">لطفاً صبر کنید...</span>}
-                  {rbMsg && <span className={`block text-[11px] font-bold ${rbMsg.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{rbMsg.text}</span>}
+                  {rbBusy && <span className="flex items-center gap-1.5 text-[11px] text-slate-500"><RefreshCw className="w-3.5 h-3.5 animate-spin" />لطفاً صبر کنید...</span>}
+                  {rbMsg && <span className={`block text-[11px] font-bold px-2 py-1 rounded-md break-words ${rbMsg.ok ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>{rbMsg.text}</span>}
                 </div>
+                </div>
+              </div>
+
+              {/* ── SMS ── */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 
                 {/* SMS Config */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
@@ -681,7 +725,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">کلید API{smsKeySet && <span className="text-emerald-600 font-bold mr-1">— ذخیره شده (برای تغییر، مقدار جدید بنویسید)</span>}</label>
-                    <input type="password" autoComplete="off" value={smsApiKey} onChange={e => setSmsApiKey(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                    <input type="password" autoComplete="off" dir="ltr" value={smsApiKey} onChange={e => setSmsApiKey(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
                   </div>
                   <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-600 cursor-pointer">
                     <input type="checkbox" checked={smsAutoSendRegister} onChange={e => setSmsAutoSendRegister(e.target.checked)} />
@@ -689,12 +733,12 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   </label>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">خط اختصاصی ارسال</label>
-                    <input type="text" value={smsSenderLine} onChange={e => setSmsSenderLine(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
+                    <input type="text" dir="ltr" value={smsSenderLine} onChange={e => setSmsSenderLine(e.target.value)} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white" />
                   </div>
                 </div>
               </div>
 
-              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap gap-2 justify-between items-center pt-3 border-t border-slate-100">
                 {gatewaysError && <span role="alert" className="text-xs font-bold text-rose-600">{gatewaysError}</span>}
                 {gatewaysSuccess && (
                   <span className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">

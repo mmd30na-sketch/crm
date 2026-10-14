@@ -20,6 +20,7 @@ import Settings from './components/Settings';
 import ContractPrintForm from './components/forms/ContractPrintForm';
 import PrintPreview from './components/print/PrintPreview';
 import SupervisorDashboard from './components/SupervisorDashboard';
+import PendingRegistrationsPanel from './components/PendingRegistrationsPanel';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
 
@@ -397,6 +398,9 @@ export default function App() {
             </div>
           ) : (
             <div className="fade-in">
+              {activeTab === 'supervisor' && role === 'admin' && (
+                <PendingRegistrationsPanel onActiveTabChange={handleActiveTabChange} />
+              )}
               {activeTab === 'supervisor' && role === 'admin' && (
                 <SupervisorDashboard
                   students={students}

@@ -2341,6 +2341,22 @@ function requireRegistrationStore(res: express.Response): boolean {
   return false;
 }
 
+// "Reviewed" marks for pending website registrations: kept in the CRM JSON store (no MySQL schema change; Directus shares that DB).
+app.get('/api/registrations/reviews', (req, res) => {
+  res.json((readDb() as any).registration_reviews || {});
+});
+app.post('/api/registrations/:code/review', (req, res) => {
+  const code = sanitizeString(req.params.code, 50);
+  if (!code) return res.status(400).json({ error: 'کد پیگیری الزامی است.' });
+  const db: any = readDb();
+  const map = db.registration_reviews || {};
+  if (req.body?.reviewed === false) delete map[code];
+  else map[code] = { at: new Date().toISOString(), by: String((req as any).user?.username || '') };
+  db.registration_reviews = map;
+  writeDb(db);
+  res.json(map);
+});
+
 // Streams a site-uploaded document (before approval it only exists in the site's uploads dir).
 app.get('/api/registrations/:code/file/:kind', async (req, res) => {
   try {

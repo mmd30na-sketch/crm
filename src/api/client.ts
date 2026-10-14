@@ -414,6 +414,20 @@ export async function rejectRegistration(trackingCode: string, reason?: string):
 }
 
 /** Loads a site-uploaded document through the authenticated route; returns a blob URL, or null when it is missing. */
+export interface RegistrationReview { at: string; by?: string }
+export async function fetchRegistrationReviews(): Promise<Record<string, RegistrationReview>> {
+  const res = await apiFetch('/registrations/reviews');
+  if (!res.ok) throw new Error('Error fetching registration reviews');
+  return res.json();
+}
+export async function setRegistrationReviewed(trackingCode: string, reviewed: boolean): Promise<Record<string, RegistrationReview>> {
+  const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/review`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewed }),
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'ثبت وضعیت بررسی ناموفق بود'); }
+  return res.json();
+}
+
 export async function fetchRegistrationFileUrl(trackingCode: string, kind: 'national_card' | 'personal_photo'): Promise<string | null> {
   try {
     const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/file/${kind}`);
