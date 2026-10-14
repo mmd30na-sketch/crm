@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { Course, StaffRole, StaffUser } from '../types';
 import * as api from '../api/client';
+import AuditBackupPanel from './AuditBackupPanel';
 
 interface SettingsProps {
   courses: Course[];
@@ -354,7 +355,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     { id: 'academy', label: 'مشخصات آموزشگاه', icon: Building, color: 'sky' },
     { id: 'courses', label: 'لیست دوره‌ها', icon: BookOpen, count: courses.length, color: 'violet' },
     { id: 'gateways', label: 'وب‌سرویس و درگاه‌ها', icon: Cpu, color: 'teal' },
-    { id: 'database', label: 'دیتابیس Cloud', icon: Database, color: 'amber' },
+    { id: 'database', label: 'دیتابیس، بکاپ و تغییرات', icon: Database, color: 'amber' },
     { id: 'payment', label: 'روش‌های پرداخت', icon: CreditCard, color: 'emerald' },
     { id: 'users', label: 'کاربران و دسترسی‌ها', icon: Users, color: 'rose' },
   ];
@@ -760,13 +761,11 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
             <div className="space-y-5 fade-in">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Database className="w-4 h-4 text-amber-600" />پایگاه‌داده واقعی چابکان
+                  <Database className="w-4 h-4 text-amber-600" />دیتابیس، بکاپ و گزارش تغییرات
                 </h3>
               </div>
               <p className="text-xs text-slate-500 leading-6 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
-                CRM به MySQL چابکان <span className="font-mono">nodejs430_carla</span> وصل است
-                (<span className="font-mono">services.irn5.chabokan.net:52691</span> از طریق SOCKS ایران).
-                رمز در Secrets به نام <span className="font-mono">NODEJS_DB_PASS</span> است؛ اینجا ذخیره نمی‌شود. Liara/Postgres در کار نیست.
+                CRM به MySQL محلی سرور (<span className="font-mono">nodejs430_carla</span>) وصل است؛ Directus هم همین دیتابیس را می‌خواند.
               </p>
 
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 text-xs">
@@ -791,6 +790,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   بررسی دوباره اتصال
                 </button>
               </div>
+              <AuditBackupPanel />
             </div>
           )}
 

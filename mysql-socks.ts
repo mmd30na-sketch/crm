@@ -83,6 +83,7 @@ export async function initMysql(): Promise<boolean> {
     mysqlEnabled = true;
     await ensureStudentExtendedColumns();
     await ensureEnrollmentPdfColumns();
+    await ensureAuditTable();
     const via = useSocks
       ? `via socks5://${SOCKS_HOST}:${SOCKS_PORT}`
       : `direct ${DB_HOST}:${DB_PORT}`;
@@ -1159,4 +1160,66 @@ export async function findPersonByPhone(phone: unknown): Promise<PhonePerson | n
   const list = (await phoneDirectory()).get(k) || [];
   const rank = { student: 0, registration: 1, legacy: 2, lead: 3 } as const;
   return list.slice().sort((a, b) => rank[a.kind] - rank[b.kind] || Number(b.id) - Number(a.id))[0] || null;
+}
+
+
+/* ---------------- Audit log (additive table; Directus also reads this DB) ---------------- */
+
+let auditReady = false;
+
+async function ensureAuditTable() {
+  try {
+    await sqlExec(`CREATE TABLE IF NOT EXISTS crm_audit_log (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      username VARCHAR(80) NULL,
+      role VARCHAR(20) NULL,
+      method VARCHAR(8) NOT NULL,
+      path VARCHAR(255) NOT NULL,
+      entity VARCHAR(40) NULL,
+      entity_id VARCHAR(64) NULL,
+      status SMALLINT NULL,
+      ip VARCHAR(64) NULL,
+      KEY idx_audit_created (created_at),
+      KEY idx_audit_entity (entity, entity_id),
+      KEY idx_audit_user (username)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    auditReady = true;
+  } catch (err: any) {
+    console.warn('Could not create crm_audit_log:', err.message);
+  }
+}
+
+export type AuditEntry = {
+  username?: string | null; role?: string | null; method: string; path: string;
+  entity?: string | null; entity_id?: string | null; status?: number | null; ip?: string | null;
+};
+
+/** Fire-and-forget; never throws. Stores no request bodies. */
+export async function insertAudit(e: AuditEntry): Promise<void> {
+  if (!mysqlEnabled || !auditReady) return;
+  try {
+    await sqlExec(
+      'INSERT INTO crm_audit_log (username, role, method, path, entity, entity_id, status, ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [e.username ?? null, e.role ?? null, e.method.slice(0, 8), e.path.slice(0, 255), e.entity ?? null, e.entity_id ?? null, e.status ?? null, e.ip ?? null],
+    );
+  } catch (err: any) {
+    console.warn('audit insert failed:', err.message);
+  }
+}
+
+export async function listAudit(opts: { limit?: number; offset?: number; username?: string; entity?: string }) {
+  if (!mysqlEnabled || !auditReady) return { rows: [], total: 0 };
+  const where: string[] = [];
+  const params: any[] = [];
+  if (opts.username) { where.push('username = ?'); params.push(opts.username); }
+  if (opts.entity) { where.push('entity = ?'); params.push(opts.entity); }
+  const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const limit = Math.min(Math.max(Number(opts.limit) || 100, 1), 500);
+  const offset = Math.max(Number(opts.offset) || 0, 0);
+  const rows = await sql(
+    `SELECT id, DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, username, role, method, path, entity, entity_id, status
+     FROM crm_audit_log ${w} ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`, params);
+  const [cnt] = await sql<{ n: number }>(`SELECT COUNT(*) AS n FROM crm_audit_log ${w}`, params);
+  return { rows, total: Number(cnt?.n || 0) };
 }

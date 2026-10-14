@@ -824,6 +824,24 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+/** Audit trail of every write (who, what endpoint, result). No bodies, so no personal data or secrets. */
+app.use('/api', (req, res, next) => {
+  const write = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS';
+  if (!write || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/auth/file-token') return next();
+  res.on('finish', () => {
+    const session = sessionFromRequest(req);
+    const segs = req.path.split('/').filter(Boolean);
+    const username = session?.username
+      || (req.path === '/auth/login' ? sanitizeString(req.body?.username, 80) || null : null);
+    void chabokan.insertAudit({
+      username, role: session?.role || null, method: req.method, path: req.path,
+      entity: segs[0] ? segs[0].slice(0, 40) : null, entity_id: segs[1] ? segs[1].slice(0, 64) : null,
+      status: res.statusCode, ip: String(req.ip || '').slice(0, 64) || null,
+    });
+  });
+  next();
+});
+
 /** The instructor's students tab needs names, phone, photo and classes; nothing personal or financial. */
 function redactForInstructor(req: express.Request, kind: 'students' | 'enrollments', rows: any[]): any[] {
   if (currentRole(req) !== 'instructor') return rows;
@@ -2619,6 +2637,29 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
 });
 
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
+app.get('/api/settings/audit-log', requireAdmin, asyncHandler(async (req, res) => {
+  const q = req.query as Record<string, string>;
+  res.json(await chabokan.listAudit({
+    limit: Number(q.limit), offset: Number(q.offset),
+    username: q.username ? sanitizeString(q.username, 80) : undefined,
+    entity: q.entity ? sanitizeString(q.entity, 40) : undefined,
+  }));
+}));
+
+/** Nightly mysqldump files written by scripts/backup-db.sh (cron). Lists names/sizes only. */
+app.get('/api/settings/backups', requireAdmin, (_req, res) => {
+  const dir = process.env.CRM_BACKUP_DIR || '/project/_archive/db-backups';
+  try {
+    const files = fs.readdirSync(dir)
+      .filter((f) => /^carla-\d{8}-\d{4}\.sql\.gz$/.test(f))
+      .map((f) => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; })
+      .sort((a, b) => b.mtime.localeCompare(a.mtime));
+    res.json({ dir_configured: true, files });
+  } catch {
+    res.json({ dir_configured: false, files: [] });
+  }
+});
+
 app.get('/api/dashboard-notes', (req, res) => {
   const d: any = (readDb() as any).dashboard || {};
   res.json({ tasks: Array.isArray(d.tasks) ? d.tasks : [], events: Array.isArray(d.events) ? d.events : [] });

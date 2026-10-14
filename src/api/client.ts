@@ -977,3 +977,22 @@ export async function sendSms(payload: any) {
   if (!res.ok) throw new Error('خطا در ارسال پیامک');
   return res.json();
 }
+
+// ---------------- Audit log & DB backups (admin) ----------------
+export interface AuditRow {
+  id: number; created_at: string; username: string | null; role: string | null;
+  method: string; path: string; entity: string | null; entity_id: string | null; status: number | null;
+}
+export async function getAuditLog(params: { limit?: number; offset?: number; username?: string; entity?: string } = {}): Promise<{ rows: AuditRow[]; total: number }> {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') q.set(k, String(v)); });
+  const res = await apiFetch(`/settings/audit-log?${q.toString()}`);
+  if (!res.ok) throw new Error('دریافت گزارش تغییرات ناموفق بود');
+  return res.json();
+}
+export interface BackupFile { name: string; size: number; mtime: string }
+export async function getBackups(): Promise<{ dir_configured: boolean; files: BackupFile[] }> {
+  const res = await apiFetch('/settings/backups');
+  if (!res.ok) throw new Error('دریافت فهرست بکاپ‌ها ناموفق بود');
+  return res.json();
+}
