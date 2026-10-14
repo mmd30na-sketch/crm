@@ -21,6 +21,7 @@ import {
   Plus,
   BarChart2,
   PieChart as PieIcon,
+  Download,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense } from '../types';
 import * as api from '../api/client';
@@ -39,6 +40,8 @@ import {
   Cell,
 } from 'recharts';
 import ModalPortal from './ModalPortal';
+import { downloadCsv } from '../utils/exportCsv';
+import DebtorsReport from './DebtorsReport';
 import { jalaliTodayParts } from '../utils/normalize';
 import { monthlySeries } from '../utils/charts';
 
@@ -212,6 +215,27 @@ export default function AccountingDashboard({
 
         {/* Filter Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => {
+              const stu = new Map(students.map((st) => [st.id, st]));
+              downloadCsv<Payment>(`payments-${new Date().toISOString().slice(0, 10)}`, filteredPayments, [
+                { header: 'تاریخ', value: (p) => p.pay_date_jalali },
+                { header: 'هنرجو', value: (p) => { const st = stu.get(p.student_id); return st ? `${st.first_name} ${st.last_name}` : p.student_id; } },
+                { header: 'کد ملی', value: (p) => stu.get(p.student_id)?.national_code },
+                { header: 'مبلغ', value: (p) => p.amount }, { header: 'روش', value: (p) => p.pay_method },
+                { header: 'نوع', value: (p) => p.payment_kind }, { header: 'توضیحات', value: (p) => p.description },
+              ]);
+            }}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition cursor-pointer">
+            <Download className="w-3.5 h-3.5" />اکسل پرداخت‌ها
+          </button>
+          <button onClick={() => downloadCsv<Expense>(`expenses-${new Date().toISOString().slice(0, 10)}`, filteredExpenses, [
+              { header: 'تاریخ', value: (e) => e.pay_date_jalali || e.expense_date }, { header: 'عنوان', value: (e) => e.title },
+              { header: 'مبلغ', value: (e) => e.amount }, { header: 'دسته', value: (e) => e.category || e.pay_method },
+              { header: 'توضیحات', value: (e) => e.description },
+            ])}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 transition cursor-pointer">
+            <Download className="w-3.5 h-3.5" />اکسل هزینه‌ها
+          </button>
           <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold border border-slate-200">
             <button onClick={() => setDateFilterMode('all')}
               className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${dateFilterMode === 'all' ? 'bg-white text-sky-700 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}>
@@ -463,6 +487,11 @@ export default function AccountingDashboard({
           </div>
         </div></ModalPortal>
       )}
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4" id="debtors-report">
+        <h3 className="text-sm font-black text-slate-900 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-rose-600" />گزارش بدهکاران</h3>
+        <DebtorsReport students={students} courses={courses} enrollments={enrollments} payments={payments} />
+      </div>
     </div>
   );
 }
