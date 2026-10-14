@@ -427,13 +427,14 @@ app.use(express.json({ limit: '2mb' }));
 app.use('/api', (req, res, next) => {
   const write = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS';
   if (!write || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/auth/file-token') return next();
+  const apiPath = req.path; // relative to /api; Express restores req.path to the full URL after routing
   res.on('finish', () => {
     const session = sessionFromRequest(req);
-    const segs = req.path.split('/').filter(Boolean);
+    const segs = apiPath.split('/').filter(Boolean);
     const username = session?.username
-      || (req.path === '/auth/login' ? sanitizeString(req.body?.username, 80) || null : null);
+      || (apiPath === '/auth/login' ? sanitizeString(req.body?.username, 80) || null : null);
     void chabokan.insertAudit({
-      username, role: session?.role || null, method: req.method, path: req.path,
+      username, role: session?.role || null, method: req.method, path: apiPath,
       entity: segs[0] ? segs[0].slice(0, 40) : null, entity_id: segs[1] ? segs[1].slice(0, 64) : null,
       status: res.statusCode, ip: String(req.ip || '').slice(0, 64) || null,
     });
