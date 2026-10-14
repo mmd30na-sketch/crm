@@ -32,6 +32,7 @@ import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, f
 import ModalPortal from './ModalPortal';
 import { downloadCsv } from '../utils/exportCsv';
 import StudentDocsSection from './print/StudentDocsSection';
+import ActivityTimeline from './ActivityTimeline';
 
 interface StudentsListProps {
   students?: Student[];
@@ -464,6 +465,14 @@ export default function StudentsList({
                   preferredEnrollmentId={selectedFinance?.primaryCourse?.enrollmentId || null}
                   onRefresh={onRefresh}
                 />
+              </div>
+            )}
+
+            {/* ─── Calls, notes and linked Rubika messages ─── */}
+            {canManage && selectedStudent && (
+              <div className="mb-5 border border-slate-200 rounded-2xl p-4">
+                <h4 className="text-xs font-bold text-slate-800 mb-3">تاریخچه تماس‌ها، یادداشت‌ها و پیام‌ها</h4>
+                <ActivityTimeline entityType="student" entityId={selectedStudent.id} compact />
               </div>
             )}
 

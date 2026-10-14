@@ -10,6 +10,9 @@ import {
   MessageSquare,
   RefreshCw,
   LogOut,
+  Contact,
+  ClipboardList,
+  Megaphone,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -23,6 +26,10 @@ import SupervisorDashboard from './components/SupervisorDashboard';
 import PendingRegistrationsPanel from './components/PendingRegistrationsPanel';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
+import LeadsPanel from './components/LeadsPanel';
+import TasksPanel from './components/TasksPanel';
+import BulkMessaging from './components/BulkMessaging';
+import { taskSummary } from './api/phase4';
 
 const NAV_ITEMS = [
   {
@@ -67,6 +74,30 @@ const NAV_ITEMS = [
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
+    id: 'leads',
+    label: 'سرنخ‌ها',
+    sublabel: 'تماس‌گیرندگان و پیگیری',
+    icon: Contact,
+    color: 'teal',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'tasks',
+    label: 'کارها',
+    sublabel: 'ارجاع و مهلت',
+    icon: ClipboardList,
+    color: 'brand',
+    roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
+  },
+  {
+    id: 'campaigns',
+    label: 'پیام انبوه',
+    sublabel: 'کمپین روبیکا',
+    icon: Megaphone,
+    color: 'rose',
+    roles: ['admin'] as StaffRole[],
+  },
+  {
     id: 'settings',
     label: 'تنظیمات آموزشگاه',
     sublabel: 'پیکربندی سیستم',
@@ -105,6 +136,15 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>('supervisor');
+  const [taskCounts, setTaskCounts] = useState<{ open: number; overdue: number }>({ open: 0, overdue: 0 });
+  const refreshTaskCounts = () => { taskSummary().then(setTaskCounts).catch(() => undefined); };
+  useEffect(() => {
+    if (!currentUser) return;
+    refreshTaskCounts();
+    const t = setInterval(refreshTaskCounts, 120000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
   const [loading, setLoading] = useState<boolean>(true);
   // On phones the sidebar overlays the content, so start collapsed there.
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => window.innerWidth >= 768);
@@ -301,6 +341,12 @@ export default function App() {
                     {item.sublabel}
                   </div>
                 </div>
+                {item.id === 'tasks' && taskCounts.open > 0 && (
+                  <span title={taskCounts.overdue ? `${taskCounts.overdue} کار عقب‌افتاده` : 'کارهای باز'}
+                    className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${taskCounts.overdue ? 'bg-rose-500 text-white animate-pulse' : 'bg-white/15 text-white'}`}>
+                    {(taskCounts.overdue || taskCounts.open).toLocaleString('fa-IR')}
+                  </span>
+                )}
                 {isActive && (
                   <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)] shrink-0" />
                 )}
@@ -459,6 +505,15 @@ export default function App() {
                   payments={payments}
                   onRefresh={refreshAllData}
                 />
+              )}
+              {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
+                <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />
+              )}
+              {activeTab === 'tasks' && currentUser && (
+                <TasksPanel username={currentUser.username} isAdmin={role === 'admin'} onCountsChange={refreshTaskCounts} />
+              )}
+              {activeTab === 'campaigns' && role === 'admin' && (
+                <BulkMessaging courses={courses} />
               )}
               {activeTab === 'settings' && role === 'admin' && (
                 <Settings
