@@ -2285,7 +2285,8 @@ function resolveSiteFile(stored: unknown): string | null {
   try { rel = decodeURIComponent(rel); } catch { return null; }
   if (rel.includes('\0') || rel.split(/[\\/]/).includes('..')) return null;
   const marker = rel.match(/(?:^|\/)uploads\/registrations\/(.+)$/i);
-  rel = marker ? marker[1] : rel.replace(/^[\\/]+/, '');
+  // New site rows store paths relative to uploads/ ("registrations/<code>/<file>"), legacy rows "/uploads/registrations/...".
+  rel = marker ? marker[1] : rel.replace(/^[\\/]+/, '').replace(/^registrations\//i, '');
   if (!rel || !IMAGE_EXTENSIONS.has(path.extname(rel).toLowerCase())) return null;
   try {
     const base = fs.realpathSync(siteUploadsDir());
