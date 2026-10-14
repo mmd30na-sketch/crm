@@ -23,12 +23,14 @@ import {
   SlidersHorizontal,
   ChevronRight,
   ChevronLeft,
+  Download,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
 import { studentBalance } from '../utils/finance';
 import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus } from '../utils/studentFilters';
 import ModalPortal from './ModalPortal';
+import { downloadCsv } from '../utils/exportCsv';
 import StudentDocsSection from './print/StudentDocsSection';
 
 interface StudentsListProps {
@@ -574,6 +576,17 @@ export default function StudentsList({
                   <X className="w-3 h-3" />پاک‌سازی
                 </button>
               )}
+              <button onClick={() => downloadCsv<Student>(`students-${new Date().toISOString().slice(0, 10)}`, filteredStudents, [
+                  { header: 'نام', value: (st) => st.first_name }, { header: 'نام خانوادگی', value: (st) => st.last_name },
+                  { header: 'نام پدر', value: (st) => st.father_name }, { header: 'کد ملی', value: (st) => st.national_code },
+                  { header: 'موبایل', value: (st) => st.phone_number }, { header: 'شهریه', value: (st) => st.course_fee },
+                  { header: 'پرداختی', value: (st) => st.total_paid }, { header: 'مانده بدهی', value: (st) => st.remaining_debt },
+                  { header: 'تاریخ ایجاد', value: (st) => st.created_at },
+                ])}
+                title="خروجی اکسل از لیست فیلترشده"
+                className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition cursor-pointer">
+                <Download className="w-3 h-3" />خروجی اکسل ({filteredStudents.length.toLocaleString('fa-IR')})
+              </button>
             </div>
           </div>
         </div>
