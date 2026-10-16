@@ -1352,7 +1352,28 @@ app.post('/api/messenger/send', async (req, res) => {
     const stored = ((db as any).messages || []).find((m: any) => m.ext_id === `${accountChat}:${r.message_id || `local-${now}`}`);
     return res.json({ success: !!r.ok, status: r.ok ? 'sent' : 'failed', message_id: stored?.id, message: r.ok ? 'پیام از اکانت اصلی ارسال شد.' : (r.error || 'ارسال ناموفق بود.') });
   }
-  const botChat = channel === 'rubika' && req.body?.source === 'bot' ? sanitizeString(String(req.body?.chat_id || ''), 100) : '';
+  // One-to-one reply without a chat id (student profile, phone-based thread, or a Bale/Eita/SMS thread): if this person already
+  // has a Rubika conversation, reply there (account first, then bot). Only existing conversations, never a new chat or bulk.
+  if (!req.body?.chat_id && message && req.body?.prefer_sms !== true) {
+    const k = chabokan.mobileKey(phone);
+    const sid = req.body?.student_id != null && req.body?.student_id !== '' ? String(req.body.student_id) : '';
+    const ths = (((readDb() as any).threads) || []) as any[];
+    const match = (src: string) => ths
+      .filter(t => t.source === src && t.external_id && ((k && chabokan.mobileKey(t.phone) === k) || (sid && String(t.student_id || '') === sid)))
+      .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))[0];
+    const acc = rubikaAccountActive() ? match('account') : undefined;
+    const bot = acc ? undefined : (getGateways().rubika_bot_token ? match('bot') : undefined);
+    if (acc || bot) { req.body = { ...req.body, channel: 'rubika', source: acc ? 'account' : 'bot', chat_id: (acc || bot).external_id }; }
+  }
+  if (req.body?.channel === 'rubika' && req.body?.source === 'account' && req.body?.chat_id && message && rubikaAccountActive()) {
+    const chat = sanitizeString(String(req.body.chat_id), 100);
+    const r = await runRubikaAccount('send', { guid: chat, text: message });
+    const now = Date.now(); const extId = `${chat}:${r.message_id || `local-${now}`}`;
+    if (r.ok) await storeAccountMessages([{ ext_id: extId, chat_id: chat, text: message, time: now, direction: 'out' }]);
+    const stored = (((readDb() as any).messages) || []).find((m: any) => m.ext_id === extId);
+    return res.json({ success: !!r.ok, status: r.ok ? 'sent' : 'failed', via: 'rubika', message_id: stored?.id, message: r.ok ? 'پیام در گفتگوی روبیکای همین شخص (اکانت اصلی) ارسال شد.' : (r.error || 'ارسال ناموفق بود.') });
+  }
+  const botChat = (channel === 'rubika' || req.body?.channel === 'rubika') && req.body?.source === 'bot' ? sanitizeString(String(req.body?.chat_id || ''), 100) : '';
   if (botChat && message) {
     // Reply on a bot thread: Rubika bot API sendMessage only (ker.py stays the only consumer of updates).
     let ok = false; let err = '';
@@ -1364,6 +1385,9 @@ app.post('/api/messenger/send', async (req, res) => {
     return res.json({ success: ok, status: ok ? 'sent' : 'failed', message_id: stored?.id, message: ok ? 'پیام از ربات روبیکا ارسال شد.' : `ارسال با ربات ناموفق بود: ${err}` });
   }
   if (accountChat && !/^09\d{9}$/.test(phone)) return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است و برای این گفتگو شماره‌ای جهت ارسال با ربات وجود ندارد.' });
+  if (channel === 'bale' || channel === 'eitaa') {
+    return res.json({ success: false, status: 'not_configured', message: 'ارسال از بله/ایتا هنوز راه‌اندازی نشده است؛ برای این شخص گفتگوی روبیکا هم پیدا نشد.' });
+  }
   if (!phone || !message) return res.status(400).json({ error: 'گیرنده و متن پیام الزامی است.' });
   if (!/^09\d{9}$/.test(phone)) return res.status(400).json({ error: 'شماره موبایل گیرنده معتبر نیست.' });
   try {

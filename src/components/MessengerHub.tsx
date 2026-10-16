@@ -371,7 +371,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
     setIsSendingSms(true); setSmsError('');
     let status: SmsLog['status'] = 'sent'; let error: string | undefined;
     try {
-      const r = await api.sendMessengerMessage({ channel: 'sms', recipient: rPhone, messageText: smsBody.trim(), student_id: rStudentId });
+      const r = await api.sendMessengerMessage({ channel: 'sms', recipient: rPhone, messageText: smsBody.trim(), student_id: rStudentId, prefer_sms: true });
       if (r.success) setSmsSuccessToast(`پیامک برای ${rPhone} ارسال شد.`);
       else { status = 'failed'; error = r.message; setSmsError(r.message); }
     } catch (err: any) {
