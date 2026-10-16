@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ClipboardCheck, RefreshCw, Eye, CheckCircle, XCircle, ExternalLink, ImageOff, X } from 'lucide-react';
+import { ClipboardCheck, RefreshCw, Eye, CheckCircle, XCircle, ExternalLink, ImageOff, X, ChevronDown } from 'lucide-react';
+import { useIsDesktop } from './FilterSheet';
 import * as api from '../api/client';
 import { WebsiteRegistration } from '../types';
 
@@ -61,6 +62,11 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
   const list = useMemo(() => (rows || []).filter(r => showReviewed || !reviews[r.tracking_code]), [rows, reviews, showReviewed]);
   const unreviewed = (rows || []).filter(r => !reviews[r.tracking_code]).length;
 
+  // Mobile (<1024px): accordion, collapsed by default. Desktop always open.
+  const isDesktop = useIsDesktop();
+  const [expanded, setExpanded] = useState(false);
+  const open = isDesktop || expanded;
+
   const openRecord = (r: WebsiteRegistration) => {
     try { sessionStorage.setItem(OPEN_REGISTRATION_KEY, String(r.id)); } catch { /* storage blocked */ }
     onActiveTabChange('register');
@@ -83,11 +89,22 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
 
   return (
     <div dir="rtl" className="mb-5 bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
-      <div className="flex items-center justify-between gap-2 flex-wrap border-b border-slate-100 pb-3 mb-3">
-        <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+      {!isDesktop && (
+        <button type="button" onClick={() => setExpanded(v => !v)} aria-expanded={expanded} aria-controls="pending-registrations-body"
+          className={`w-full min-h-11 flex items-center justify-between gap-2 text-right cursor-pointer ${expanded ? 'border-b border-slate-100 pb-3 mb-3' : ''}`}>
+          <span className="text-sm font-bold text-slate-900 flex items-center gap-2 min-w-0">
+            <ClipboardCheck className="w-4 h-4 text-violet-600 shrink-0" /><span className="truncate">ثبت‌نام‌های در انتظار بررسی</span>
+            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-600 text-white shrink-0">{unreviewed.toLocaleString('fa-IR')}</span>
+          </span>
+          <ChevronDown className={`w-5 h-5 text-slate-500 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+      )}
+      {open && <div id="pending-registrations-body">
+      <div className={`flex items-center justify-between gap-2 flex-wrap ${isDesktop ? 'border-b border-slate-100 pb-3 mb-3' : 'mb-3'}`}>
+        {isDesktop && <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
           <ClipboardCheck className="w-4 h-4 text-violet-600" />ثبت‌نام‌های سایت در انتظار بررسی
           <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 border border-violet-200">{unreviewed} بررسی‌نشده</span>
-        </h3>
+        </h3>}
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
             <input type="checkbox" checked={showReviewed} onChange={e => setShowReviewed(e.target.checked)} />نمایش بررسی‌شده‌ها
@@ -135,6 +152,7 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
             </table>
           </div>
         )}
+      </div>}
       {preview && (
         <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-center justify-center p-4" onClick={() => setPreview(null)} role="dialog" aria-label={preview.title}>
           <div className="relative max-w-3xl w-full" onClick={e => e.stopPropagation()}>
