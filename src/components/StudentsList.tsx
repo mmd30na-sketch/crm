@@ -500,7 +500,7 @@ export default function StudentsList({
               </button>
               <button onClick={() => handleOpenMessaging(selectedStudent)}
                 className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
-                <MessageSquare className="w-3.5 h-3.5" />ارسال پیام
+                <MessageSquare className="w-3.5 h-3.5" />ارسال پیام (روبیکا/پیامک)
               </button>
               {canDelete && (
                 <button onClick={() => { setDeleteError(null); setDeleteConfirmStudent(selectedStudent); }}
@@ -876,7 +876,7 @@ export default function StudentsList({
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center"><MessageSquare className="w-4 h-4 text-violet-600" /></div>
-                <div><h3 className="text-sm font-bold text-slate-900">ارسال پیام</h3><p className="text-xs text-slate-400">{messagingStudent.first_name} {messagingStudent.last_name} — {messagingStudent.phone_number}</p></div>
+                <div><h3 className="text-sm font-bold text-slate-900">ارسال پیام (روبیکا/پیامک)</h3><p className="text-xs text-slate-400">{messagingStudent.first_name} {messagingStudent.last_name} — {messagingStudent.phone_number}</p></div>
               </div>
               <button onClick={() => setMessagingStudent(null)} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 transition"><X className="w-4 h-4" /></button>
             </div>

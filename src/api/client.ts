@@ -998,3 +998,22 @@ export async function getBackups(): Promise<{ dir_configured: boolean; files: Ba
   if (!res.ok) throw new Error('دریافت فهرست بکاپ‌ها ناموفق بود');
   return res.json();
 }
+
+
+export type MessageTemplate = { id: string; title: string; body: string; color: string; updated_at?: string };
+export async function fetchMessageTemplates(): Promise<MessageTemplate[]> {
+  const res = await apiFetch('/message-templates');
+  if (!res.ok) throw await serverError(res, 'دریافت الگوها ناموفق بود.');
+  return res.json();
+}
+export async function saveMessageTemplate(t: { id?: string; title: string; body: string; color: string }): Promise<void> {
+  const res = await apiFetch(t.id ? `/message-templates/${encodeURIComponent(t.id)}` : '/message-templates', {
+    method: t.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: t.title, body: t.body, color: t.color }),
+  });
+  if (!res.ok) throw await serverError(res, 'ذخیره الگو ناموفق بود.');
+}
+export async function deleteMessageTemplate(id: string): Promise<void> {
+  const res = await apiFetch(`/message-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) throw await serverError(res, 'حذف الگو ناموفق بود.');
+}

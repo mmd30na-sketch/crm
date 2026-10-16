@@ -17,7 +17,6 @@ import {
   Zap,
   User,
   Phone,
-  Paperclip,
   CheckCheck,
   RefreshCw,
   Plus,
@@ -60,7 +59,7 @@ interface ChatThread {
   chatId?: string;
   source?: 'account' | 'bot';
   person?: { kind: string; id: number | string; name: string };
-  channel: 'rubika' | 'bale' | 'eitaa' | 'sms';
+  channel: 'rubika' | 'sms';
   lastMessage: string;
   time: string;
   unreadCount: number;
@@ -85,7 +84,7 @@ interface SmsLog {
   error?: string;
 }
 
-const QUICK_TEMPLATES = [
+const DEFAULT_TEMPLATES = [
   {
     id: 'welcome',
     title: 'خوش‌آمدگویی و ثبت‌نام',
@@ -116,6 +115,24 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
   const studentsRef = useRef(students);
   studentsRef.current = students;
   const [activeTab, setActiveTab] = useState<'chat' | 'sms' | 'templates'>('chat');
+  // Templates live on the server (editable); the built-in list is only shown until the first load answers.
+  const [QUICK_TEMPLATES, setTemplates] = useState<{ id: string; title: string; body: string; color: string }[]>(DEFAULT_TEMPLATES);
+  const [tplDraft, setTplDraft] = useState<{ id?: string; title: string; body: string; color: string } | null>(null);
+  const [tplBusy, setTplBusy] = useState(false);
+  const [tplError, setTplError] = useState('');
+  const loadTemplates = () => api.fetchMessageTemplates().then(setTemplates).catch(() => {});
+  useEffect(() => { loadTemplates(); }, []);
+  const saveTpl = async () => {
+    if (!tplDraft) return;
+    setTplBusy(true); setTplError('');
+    try { await api.saveMessageTemplate(tplDraft); setTplDraft(null); await loadTemplates(); }
+    catch (e: any) { setTplError(e?.message || 'ذخیره نشد'); } finally { setTplBusy(false); }
+  };
+  const deleteTpl = async (id: string, title: string) => {
+    if (!window.confirm(`الگوی «${title}» حذف شود؟`)) return;
+    setTplError('');
+    try { await api.deleteMessageTemplate(id); await loadTemplates(); } catch (e: any) { setTplError(e?.message || 'حذف نشد'); }
+  };
 
   const [threads, setThreads] = useState<ChatThread[]>([]);
 
@@ -393,11 +410,9 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
   const ChannelBadge = ({ channel }: { channel: ChatThread['channel'] }) => {
     const map = {
       rubika: { label: 'روبیکا', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
-      bale:   { label: 'بله',   cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-      eitaa:  { label: 'ایتا',  cls: 'bg-amber-50 text-amber-700 border-amber-200' },
       sms:    { label: 'پیامک', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
     };
-    return <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${map[channel].cls}`}>{map[channel].label}</span>;
+    return <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${(map[channel] || map.rubika).cls}`}>{(map[channel] || map.rubika).label}</span>;
   };
 
   return (
@@ -416,7 +431,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black text-slate-900">مرکز ارتباطی و پیام‌رسان کارلا</h2>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">مدیریت گفتگوهای روبیکا، بله، ایتا و پنل پیامک انبوه کشوری</p>
+            <p className="text-xs text-slate-400 mt-0.5">گفتگوهای روبیکا و ارسال پیامک تکی</p>
           </div>
         </div>
 
@@ -444,7 +459,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
             }`}
           >
             <Smartphone className="w-4 h-4 text-emerald-500" />
-            ارسال پیامک (SMS)
+            ارسال پیامک
           </button>
 
           <button
@@ -485,8 +500,6 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                 {[
                   { id: 'all', label: 'همه' },
                   { id: 'rubika', label: 'روبیکا' },
-                  { id: 'bale', label: 'بله' },
-                  { id: 'eitaa', label: 'ایتا' },
                 ].map(item => (
                   <button
                     key={item.id}
@@ -872,9 +885,30 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">مدیریت الگوهای آماده ارسال</h3>
-              <p className="text-xs text-slate-400">قالب‌های استاندارد اطلاع‌رسانی به کارآموزان جهت استفاده در درگاه</p>
+              <p className="text-xs text-slate-400">جای‌گذاری‌ها: [نام] [خانوادگی] [دوره] [بدهی] [تاریخ] [ساعت]</p>
             </div>
+            <button type="button" onClick={() => { setTplError(''); setTplDraft({ title: '', body: '', color: 'sky' }); }}
+              className="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shrink-0">+ الگوی جدید</button>
           </div>
+          {tplError && <p className="text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{tplError}</p>}
+          {tplDraft && (
+            <div className="bg-sky-50/50 border border-sky-200 rounded-xl p-4 space-y-3">
+              <input value={tplDraft.title} onChange={e => setTplDraft({ ...tplDraft, title: e.target.value })} placeholder="عنوان الگو" maxLength={80}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white" />
+              <textarea value={tplDraft.body} onChange={e => setTplDraft({ ...tplDraft, body: e.target.value })} placeholder="متن الگو" rows={4} maxLength={1000}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white leading-relaxed" />
+              <div className="flex items-center gap-2 flex-wrap">
+                <select value={tplDraft.color} onChange={e => setTplDraft({ ...tplDraft, color: e.target.value })} className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+                  {['sky', 'rose', 'teal', 'amber', 'violet', 'emerald', 'slate'].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <span className="flex-1" />
+                <button type="button" onClick={() => setTplDraft(null)} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg">انصراف</button>
+                <button type="button" onClick={saveTpl} disabled={tplBusy || !tplDraft.title.trim() || !tplDraft.body.trim()}
+                  className="px-4 py-1.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg">{tplBusy ? 'در حال ذخیره…' : 'ذخیره الگو'}</button>
+              </div>
+            </div>
+          )}
+          {QUICK_TEMPLATES.length === 0 && !tplDraft && <p className="text-xs text-slate-400 text-center py-6">هنوز الگویی ثبت نشده است.</p>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {QUICK_TEMPLATES.map(tmpl => (
@@ -883,7 +917,10 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                   <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <Tag className="w-3.5 h-3.5 text-sky-500" />{tmpl.title}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">ID: {tmpl.id}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    <button type="button" onClick={() => { setTplError(''); setTplDraft({ id: tmpl.id, title: tmpl.title, body: tmpl.body, color: tmpl.color }); }} className="px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md">ویرایش</button>
+                    <button type="button" onClick={() => deleteTpl(tmpl.id, tmpl.title)} className="px-2 py-1 text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-md">حذف</button>
+                  </span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100">
                   {tmpl.body}

@@ -42,8 +42,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   /* ── 1. Rubika & SMS gateways: stored on the server, secrets are never sent back ── */
   const [rubikaBotToken, setRubikaBotToken]   = useState('');
   const [rubikaTokenSet, setRubikaTokenSet]   = useState(false);
-  const [rubikaChannelId, setRubikaChannelId] = useState('');
-  const [rubikaIsActive, setRubikaIsActive]   = useState(true);
 
   const [smsProvider, setSmsProvider]                 = useState('ippanel');
   const [smsApiKey, setSmsApiKey]                     = useState('');
@@ -53,15 +51,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
 
   const RUBIKA_WEBHOOK_URL = `${typeof window !== 'undefined' && /^https?:/.test(window.location.origin) ? window.location.origin : 'https://management.kermanshahcart.ir'}/api/messenger/webhook`;
   const [webhookCopied, setWebhookCopied] = useState(false);
-  /* Read-only: channels & groups owned by the main account (@Kermanshahcart) */
-  const RUBIKA_ACCOUNT_CHATS: { title: string; guid: string; type: 'channel' | 'group' }[] = [
-    { title: 'آموزشگاه کرمانشاه (دوره تیر)', guid: 'c0DpoJd08a9a9c44d0acc2fb90659d52', type: 'channel' },
-    { title: 'آموزشگاه کرمانشاه (دوره مهر)', guid: 'c0D59vX00cf41f209ab4a34faee18473', type: 'channel' },
-    { title: 'فایل های کارآموزان', guid: 'c0D6pWN0149ca457b5f9bdebff4a32df', type: 'channel' },
-    { title: 'نمونه سئوالات کارت هوشمند', guid: 'c0DJaY10a60405e14a73553430cf50f5', type: 'channel' },
-    { title: 'فایل کارآموزان', guid: 'g0II4iG0658364ec6441a07a576faf80', type: 'group' },
-    { title: 'فمیلی بیزنس', guid: 'g0GuMx307525bdf3b888c352f30551ec', type: 'group' },
-  ];
   const [rubikaTesting, setRubikaTesting] = useState(false);
   const [rubikaTestResult, setRubikaTestResult] = useState<{ ok: boolean; text: string } | null>(null);
   const copyWebhook = async () => {
@@ -116,8 +105,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   useEffect(() => {
     api.fetchGatewaySettings().then(g => {
       setRubikaTokenSet(!!g.rubika_bot_token_set);
-      setRubikaChannelId(g.rubika_channel_id || '');
-      setRubikaIsActive(g.rubika_active !== false);
       setSmsProvider(g.sms_provider === 'smsir' ? 'smsir' : 'ippanel');
       setSmsKeySet(!!g.sms_api_key_set);
       setSmsSenderLine(g.sms_sender_line || '');
@@ -136,8 +123,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
         sms_sender_line: smsSenderLine,
         sms_auto_register: smsAutoSendRegister,
         rubika_bot_token: rubikaBotToken,
-        rubika_channel_id: rubikaChannelId,
-        rubika_active: rubikaIsActive,
       });
       if (smsApiKey) setSmsKeySet(true);
       if (rubikaBotToken) setRubikaTokenSet(true);
@@ -605,10 +590,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4 min-w-0">
                   <div className="flex items-center justify-between gap-3 font-bold text-xs text-slate-800 border-b border-slate-200/60 pb-2">
                     <span className="flex items-center gap-2 min-w-0"><MessageSquare className="w-4 h-4 shrink-0 text-violet-600" /><span className="truncate">ربات روبیکا</span></span>
-                    <label className={`shrink-0 flex items-center gap-1.5 text-[11px] font-bold px-2 py-0.5 rounded-md border cursor-pointer ${rubikaIsActive ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
-                      <input type="checkbox" className="accent-emerald-600" checked={rubikaIsActive} onChange={e => setRubikaIsActive(e.target.checked)} />
-                      {rubikaIsActive ? 'فعال' : 'غیرفعال'}
-                    </label>
                   </div>
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
@@ -617,10 +598,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                     </div>
                     <input type="password" autoComplete="off" dir="ltr" placeholder={rubikaTokenSet ? '••••••••' : 'Bot token'} value={rubikaBotToken} onChange={e => setRubikaBotToken(e.target.value)} className="w-full px-3 py-2 text-xs text-left border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400" />
                     {rubikaTokenSet && <p className="mt-1 text-[10px] text-slate-400">برای تغییر توکن، مقدار جدید را وارد و ذخیره کنید.</p>}
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">شناسه کانال روبیکا</label>
-                    <input type="text" dir="ltr" placeholder="c0..." value={rubikaChannelId} onChange={e => setRubikaChannelId(e.target.value)} className="w-full px-3 py-2 text-xs text-left border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-violet-200 focus:border-violet-400" />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">آدرس Webhook <span className="text-slate-400 font-normal">(در تنظیمات ربات وارد کنید)</span></label>
@@ -664,17 +641,6 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                   </div>
                   {rbAcc?.logged_in ? (
                     <>
-                      <div className="space-y-2">
-                        <div className="text-[11px] font-semibold text-slate-600">کانال‌ها و گروه‌های این اکانت</div>
-                        <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-[11px]">
-                          {RUBIKA_ACCOUNT_CHATS.map(c => (
-                            <li key={c.guid} className="flex items-center justify-between gap-2 px-3 py-1.5 min-w-0">
-                              <span className="truncate text-slate-700">{c.title}</span>
-                              <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${c.type === 'channel' ? 'text-sky-700 bg-sky-50' : 'text-amber-700 bg-amber-50'}`}>{c.type === 'channel' ? 'کانال' : 'گروه'}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
                       <button type="button" onClick={rbLogout} disabled={rbBusy} className="px-3 py-2 text-[11px] font-bold rounded-lg border border-rose-200 text-rose-700 bg-white hover:bg-rose-50 disabled:opacity-50 cursor-pointer">خروج از اکانت</button>
                     </>
                   ) : (

@@ -824,6 +824,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
     return true;
   }
   if (path.startsWith('/messenger')) return role === 'cashier';
+  if (path.startsWith('/message-templates')) return role === 'cashier'; // staff can manage reply templates
   if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
   if (path.startsWith('/campaigns')) return false; // admin only
@@ -1339,6 +1340,73 @@ async function deliverMessage(opts: { channel: string; recipient: string; messag
 }
 
 // ── POST: ارسال پیام از طریق روبیکا یا پیامک ──
+// Message templates (messenger «الگوهای آماده»): JSON store, seeded once; writes are audit-logged by the /api middleware.
+const DEFAULT_MESSAGE_TEMPLATES = [
+  {
+    id: 'welcome',
+    title: 'خوش‌آمدگویی و ثبت‌نام',
+    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. کلاس‌های آیین‌نامه از شنبه شروع می‌شود. کارلا CRM',
+    color: 'sky',
+  },
+  {
+    id: 'debt_warning',
+    title: 'یادآوری بدهی مالی',
+    body: 'کارآموز گرامی [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید. آموزشگاه کارلا',
+    color: 'rose',
+  },
+  {
+    id: 'exam_schedule',
+    title: 'زمان‌بندی آزمون',
+    body: 'هنرجو [نام] [خانوادگی]؛ آزمون عملی رانندگی شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
+    color: 'teal',
+  },
+  {
+    id: 'class_change',
+    title: 'تغییر زمان کلاس عملی',
+    body: 'هنرجوی گرامی [نام]؛ جلسه کلاس عملی رانندگی شما تغییر یافت. جهت هماهنگی زمان جدید با مربی تماس بگیرید.',
+    color: 'amber',
+  },
+];
+const TEMPLATE_COLORS = ['sky', 'rose', 'teal', 'amber', 'violet', 'emerald', 'slate'];
+function loadTemplates(): any[] {
+  const db = readDb() as any;
+  if (!Array.isArray(db.message_templates)) {
+    db.message_templates = DEFAULT_MESSAGE_TEMPLATES.map(t => ({ ...t, updated_at: new Date().toISOString() }));
+    writeDb(db);
+  }
+  return db.message_templates;
+}
+const templateInput = (b: any) => {
+  const title = sanitizeString(b?.title, 80); const body = sanitizeString(b?.body, 1000);
+  const color = TEMPLATE_COLORS.includes(b?.color) ? b.color : 'sky';
+  if (!title || !body) throw Object.assign(new Error('عنوان و متن الگو الزامی است.'), { status: 400 });
+  return { title, body, color };
+};
+app.get('/api/message-templates', (req, res) => { res.json(loadTemplates()); });
+app.post('/api/message-templates', (req, res) => {
+  try {
+    const v = templateInput(req.body); loadTemplates();
+    const db = readDb() as any; const id = `t${Date.now().toString(36)}`;
+    db.message_templates.push({ id, ...v, updated_at: new Date().toISOString() }); writeDb(db);
+    res.json({ ok: true, id });
+  } catch (e: any) { res.status(e.status || 500).json({ error: e.message }); }
+});
+app.put('/api/message-templates/:id', (req, res) => {
+  try {
+    const v = templateInput(req.body); loadTemplates();
+    const db = readDb() as any; const t = db.message_templates.find((x: any) => x.id === req.params.id);
+    if (!t) return res.status(404).json({ error: 'الگو یافت نشد.' });
+    Object.assign(t, v, { updated_at: new Date().toISOString() }); writeDb(db);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(e.status || 500).json({ error: e.message }); }
+});
+app.delete('/api/message-templates/:id', (req, res) => {
+  loadTemplates(); const db = readDb() as any; const n = db.message_templates.length;
+  db.message_templates = db.message_templates.filter((x: any) => x.id !== req.params.id);
+  if (db.message_templates.length === n) return res.status(404).json({ error: 'الگو یافت نشد.' });
+  writeDb(db); res.json({ ok: true });
+});
+
 app.post('/api/messenger/send', async (req, res) => {
   const channel = sanitizeString(req.body?.channel, 20) || 'sms';
   const message = sanitizeString(req.body?.message ?? req.body?.messageText, 1000);
@@ -1400,16 +1468,6 @@ app.post('/api/messenger/send', async (req, res) => {
     };
     res.json({ success: r.status === 'sent', status: r.status, tracking_id: r.trackingId, message_id: r.messageId, message: labels[r.status] || r.status });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
-});
-
-// Access Database Trigger Endpoint
-app.post('/api/imports/access', (req, res) => {
-  try {
-    const db = readDb();
-    res.json({ success: true, count: db.students.length, message: `داده‌های دیتابیس با موفقیت همگام‌سازی شدند.` });
-  } catch (err: any) {
-    res.status(500).json({ error: 'خطا در همگام‌سازی دیتابیس', details: err.message });
-  }
 });
 
 // ------------------- API ROUTES -------------------
