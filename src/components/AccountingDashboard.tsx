@@ -91,6 +91,9 @@ export default function AccountingDashboard({
   const [dateFilterMode, setDateFilterMode]   = useState<'all' | 'this_month' | 'custom'>('all');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate]     = useState('');
+  // Course + course-number (term) scope for payments, tuition and outstanding totals.
+  const [accCourse, setAccCourse] = useState('all');
+  const [accTerm, setAccTerm]     = useState('all');
 
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [expenseTitle, setExpenseTitle]             = useState('');
@@ -112,16 +115,34 @@ export default function AccountingDashboard({
   };
 
   // Only payments of an existing enrollment count (the server lists only those; this guards stale state).
-  const enrollmentIds = new Set(enrollments.map(e => e.id));
+  const termNumbers = Array.from(new Set(enrollments
+    .filter(e => accCourse === 'all' || String(e.course_id) === accCourse)
+    .map(e => e.course_number).filter((n): n is number => n != null && Number(n) > 0))).sort((a, b) => b - a);
+  const matchScope = (e: Enrollment) => (accCourse === 'all' || String(e.course_id) === accCourse) && (accTerm === 'all' || String(e.course_number ?? '') === accTerm);
+  const scopedEnrollments = enrollments.filter(matchScope);
+  const enrollmentIds = new Set(scopedEnrollments.map(e => e.id));
   const filteredPayments = payments.filter(p => p.enrollment_id != null && enrollmentIds.has(p.enrollment_id) && inPeriod(p.pay_date_jalali));
   const filteredExpenses = expenses.filter(ex => inPeriod(ex.pay_date_jalali || ex.expense_date));
 
   /* Totals */
-  const totalTuition     = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
+  const totalTuition     = scopedEnrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
   const totalPayments    = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalExpenses    = filteredExpenses.reduce((sum, ex) => sum + ex.amount, 0);
-  const totalOutstanding = outstandingOf(enrollments, payments); // per-enrollment balances, each clamped at 0
+  const totalOutstanding = outstandingOf(scopedEnrollments, payments); // per-enrollment balances, each clamped at 0
   const netProfit        = totalPayments - totalExpenses;
+
+  /* Per-term summary (course + course_number): due, paid (all time), remaining (per enrollment, clamped at 0) */
+  const paidByEnrollment = new Map<number, number>();
+  payments.forEach(p => { if (p.enrollment_id != null) paidByEnrollment.set(p.enrollment_id, (paidByEnrollment.get(p.enrollment_id) || 0) + p.amount); });
+  const termSummary = Array.from(scopedEnrollments.reduce((m, e) => {
+    const key = `${e.course_id}|${e.course_number ?? ''}`;
+    const row = m.get(key) || { course_id: e.course_id, course_number: e.course_number ?? null, count: 0, due: 0, paid: 0, remaining: 0 };
+    const paid = paidByEnrollment.get(e.id) || 0;
+    row.count += 1; row.due += e.final_price || 0; row.paid += paid; row.remaining += Math.max(0, (e.final_price || 0) - paid);
+    m.set(key, row); return m;
+  }, new Map<string, { course_id: number; course_number: number | null; count: number; due: number; paid: number; remaining: number }>()).values())
+    .sort((a, b) => (b.course_number ?? -1) - (a.course_number ?? -1) || a.course_id - b.course_id);
+  const courseTitle = (id: number) => courses.find(c => Number(c.id) === Number(id))?.title || `دوره ${id}`;
 
   /* ── 1. Area Chart Data from real ledger (no dummy padding) ── */
   // Grouped by year + month in calendar order (not by month name, which merged years and sorted
@@ -237,7 +258,17 @@ export default function AccountingDashboard({
             className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 transition cursor-pointer">
             <Download className="w-3.5 h-3.5" />اکسل هزینه‌ها
           </button>
-          <FilterSheet title="فیلتر تاریخ" count={dateFilterMode !== 'all' ? 1 : 0} onClear={() => { setDateFilterMode('all'); setCustomStartDate(''); setCustomEndDate(''); }}>
+          <FilterSheet title="فیلتر حسابداری" count={(dateFilterMode !== 'all' ? 1 : 0) + (accCourse !== 'all' ? 1 : 0) + (accTerm !== 'all' ? 1 : 0)} onClear={() => { setDateFilterMode('all'); setCustomStartDate(''); setCustomEndDate(''); setAccCourse('all'); setAccTerm('all'); }}>
+          <select value={accCourse} onChange={e => { setAccCourse(e.target.value); setAccTerm('all'); }} aria-label="دوره"
+            className="px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:border-sky-400 cursor-pointer">
+            <option value="all">همه دوره‌ها</option>
+            {courses.map(c => <option key={c.id} value={String(c.id)}>{c.title}</option>)}
+          </select>
+          <select value={accTerm} onChange={e => setAccTerm(e.target.value)} aria-label="شماره دوره"
+            className="px-3 py-2 text-xs border border-amber-200 bg-amber-50/50 font-bold text-amber-900 rounded-xl focus:outline-none cursor-pointer">
+            <option value="all">همه شماره‌ها</option>
+            {termNumbers.map(n => <option key={n} value={String(n)}>دوره شماره {n}</option>)}
+          </select>
           <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold border border-slate-200">
             <button onClick={() => setDateFilterMode('all')}
               className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${dateFilterMode === 'all' ? 'bg-white text-sky-700 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}>
@@ -443,6 +474,37 @@ export default function AccountingDashboard({
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ── Per-term summary ── */}
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-black text-slate-800">خلاصه مالی به تفکیک شماره دوره</h3>
+          <span className="text-[11px] text-slate-400">مبالغ به تومان</span>
+        </div>
+        {termSummary.length === 0 ? <div className="text-xs text-slate-400 py-6 text-center">ثبت‌نامی در این محدوده نیست.</div> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-slate-50 text-slate-500"><tr>
+                <th className="px-3 py-2.5">دوره</th><th className="px-3 py-2.5">شماره</th><th className="px-3 py-2.5">ثبت‌نام</th>
+                <th className="px-3 py-2.5">کل شهریه</th><th className="px-3 py-2.5">پرداخت‌شده</th><th className="px-3 py-2.5">مانده</th>
+              </tr></thead>
+              <tbody>
+                {termSummary.map(t => (
+                  <tr key={`${t.course_id}|${t.course_number}`} className="border-t border-slate-100 hover:bg-sky-50/40 cursor-pointer"
+                    onClick={() => { setAccCourse(String(t.course_id)); setAccTerm(t.course_number != null ? String(t.course_number) : 'all'); }}>
+                    <td className="px-3 py-2.5 font-bold text-slate-800">{courseTitle(t.course_id)}</td>
+                    <td className="px-3 py-2.5">{t.course_number != null ? t.course_number.toLocaleString('fa-IR') : 'بدون شماره'}</td>
+                    <td className="px-3 py-2.5">{t.count.toLocaleString('fa-IR')}</td>
+                    <td className="px-3 py-2.5">{t.due.toLocaleString('fa-IR')}</td>
+                    <td className="px-3 py-2.5 text-emerald-700">{t.paid.toLocaleString('fa-IR')}</td>
+                    <td className={`px-3 py-2.5 ${t.remaining > 0 ? 'text-rose-600 font-bold' : ''}`}>{t.remaining.toLocaleString('fa-IR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* ── EXPENSE MODAL ── */}

@@ -13,6 +13,7 @@ import {
   Contact,
   ClipboardList,
   Megaphone,
+  CalendarRange,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -29,6 +30,7 @@ import LoginScreen from './components/LoginScreen';
 import LeadsPanel from './components/LeadsPanel';
 import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
+import CourseTermsPanel from './components/CourseTermsPanel';
 import { taskSummary } from './api/phase4';
 
 const NAV_ITEMS = [
@@ -47,6 +49,14 @@ const NAV_ITEMS = [
     icon: Users,
     color: 'teal',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
+  },
+  {
+    id: 'terms',
+    label: 'مدیریت دوره‌ها',
+    sublabel: 'شماره دوره، ظرفیت و وضعیت',
+    icon: CalendarRange,
+    color: 'teal',
+    roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
     id: 'register',
@@ -507,6 +517,9 @@ export default function App() {
                   payments={payments}
                   onRefresh={refreshAllData}
                 />
+              )}
+              {activeTab === 'terms' && (role === 'admin' || role === 'cashier') && (
+                <CourseTermsPanel courses={courses} isAdmin={role === 'admin'} />
               )}
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />

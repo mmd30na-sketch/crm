@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
+import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -826,6 +827,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
   if (path.startsWith('/campaigns')) return false; // admin only
+  if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
   if (!write) return role === 'cashier';
   return false;
@@ -2643,6 +2645,7 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
 });
 
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
+registerCourseTerms(app, { isAdmin: (req) => currentRole(req) === 'admin' });
 registerPhase4(app, {
   session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -2746,6 +2749,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function startServer() {
   await chabokan.initMysql();
   await ensurePhase4Schema();
+  await ensureCourseTermsSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
