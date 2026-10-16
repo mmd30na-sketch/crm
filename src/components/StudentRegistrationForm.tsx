@@ -336,7 +336,6 @@ export default function StudentRegistrationForm({
   const [activeCameraTarget, setActiveCameraTarget] = useState<'idCard' | 'personal' | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const [isPortrait, setIsPortrait] = useState(false);
 
   /* Course & Payment */
@@ -448,9 +447,9 @@ export default function StudentRegistrationForm({
   }, [nationalCode]);
 
   /* Camera Capture Logic */
-  const startCamera = async (target: 'idCard' | 'personal', facing: 'environment' | 'user' = 'environment') => {
+  const startCamera = async (target: 'idCard' | 'personal') => {
+    const facing = 'environment';
     setActiveCameraTarget(target);
-    setCameraFacing(facing);
     cameraStream?.getTracks().forEach(track => track.stop());
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1344,15 +1343,6 @@ export default function StudentRegistrationForm({
                 className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition"
               >
                 انصراف
-              </button>
-              <button
-                type="button"
-                onClick={() => activeCameraTarget && startCamera(activeCameraTarget, cameraFacing === 'environment' ? 'user' : 'environment')}
-                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition flex items-center gap-1"
-                aria-label="تعویض دوربین"
-              >
-                <RotateCw className="w-4 h-4" />
-                {cameraFacing === 'environment' ? 'دوربین جلو' : 'دوربین پشت'}
               </button>
               <button
                 type="button"
