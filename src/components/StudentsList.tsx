@@ -31,6 +31,7 @@ import * as api from '../api/client';
 import { studentBalance } from '../utils/finance';
 import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus } from '../utils/studentFilters';
 import ModalPortal from './ModalPortal';
+import { useIsDesktop } from './FilterSheet';
 import { downloadCsv } from '../utils/exportCsv';
 import StudentDocsSection from './print/StudentDocsSection';
 import ActivityTimeline from './ActivityTimeline';
@@ -114,11 +115,31 @@ export default function StudentsList({
 
     const [selectedStudentId, setSelectedStudentId] = useState<number>(() => studentsList[0]?.id ?? 1);
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
+  const isDesktop = useIsDesktop();
+  const [mobileProfileOpen, setMobileProfileOpen] = useState(false);
   const profileCardRef = useRef<HTMLDivElement | null>(null);
+  // Mobile (<1024px): the profile opens in a full-screen popup. The phone back button closes it.
+  const openMobileProfile = () => {
+    setMobileProfileOpen(true);
+    try { window.history.pushState({ carlaProfile: true }, ''); } catch {}
+  };
+  const closeMobileProfile = () => {
+    if (window.history.state && window.history.state.carlaProfile) window.history.back();
+    else setMobileProfileOpen(false);
+  };
+  useEffect(() => {
+    if (!mobileProfileOpen) return;
+    const onPop = () => setMobileProfileOpen(false);
+    window.addEventListener('popstate', onPop);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('popstate', onPop); document.body.style.overflow = prev; };
+  }, [mobileProfileOpen]);
 
   // The profile card sits below the list, so bring it into view when a row is picked.
   const selectStudent = (id: number) => {
     setSelectedStudentId(id);
+    if (!isDesktop) { openMobileProfile(); return; }
     requestAnimationFrame(() => profileCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
@@ -300,13 +321,7 @@ export default function StudentsList({
   /* ════════════════════════════════════════════
      RENDER
   ════════════════════════════════════════════ */
-  return (
-    <div className="flex flex-col gap-5 fade-in" id="students-list-view">
-
-      {/* ══════════════════════════════════════════════
-          SECTION 1 — PROFILE MASTER CARD
-      ══════════════════════════════════════════════ */}
-      {selectedStudent && selectedFinance && (
+  const profileCardEl = selectedStudent && selectedFinance ? (
         <div
           key={selectedStudent?.id}
           ref={profileCardRef}
@@ -496,6 +511,28 @@ export default function StudentsList({
             </div>}
           </div>
         </div>
+  ) : null;
+
+  return (
+    <div className="flex flex-col gap-5 fade-in" id="students-list-view">
+
+      {/* ══════════════════════════════════════════════
+          SECTION 1 — PROFILE MASTER CARD
+      ══════════════════════════════════════════════ */}
+      {isDesktop && profileCardEl}
+
+      {!isDesktop && mobileProfileOpen && profileCardEl && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-slate-100 flex flex-col" dir="rtl" role="dialog" aria-modal="true" aria-label="پرونده کارآموز">
+            <div className="flex items-center justify-between gap-2 px-3 h-14 bg-white border-b border-slate-200 shrink-0">
+              <h3 className="text-sm font-black text-slate-800 truncate">پرونده {selectedStudent ? `${selectedStudent.first_name} ${selectedStudent.last_name}` : ''}</h3>
+              <button type="button" onClick={closeMobileProfile} aria-label="بستن" className="min-w-10 min-h-10 flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto overscroll-contain p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              {profileCardEl}
+            </div>
+          </div>
+        </ModalPortal>
       )}
 
       {/* ══════════════════════════════════════════════
