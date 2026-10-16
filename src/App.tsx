@@ -147,7 +147,7 @@ export default function App() {
   }, [currentUser]);
   const [loading, setLoading] = useState<boolean>(true);
   // On phones the sidebar overlays the content, so start collapsed there.
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => window.innerWidth >= 768);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => window.innerWidth >= 1024);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const [students, setStudents] = useState<Student[]>([]);
@@ -253,7 +253,7 @@ export default function App() {
     if (!visibleNav.some(item => item.id === newTab)) return;
     setActiveTab(newTab);
     // On phones the sidebar covers the content: close it once a tab is picked.
-    if (window.innerWidth < 768) setIsSidebarOpen(false);
+    if (window.innerWidth < 1024) setIsSidebarOpen(false);
   };
 
   useEffect(() => {
@@ -275,7 +275,7 @@ export default function App() {
 
   return (
     <div
-      className="flex h-screen w-screen overflow-hidden text-slate-900"
+      className="flex h-screen h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
       style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #f8fafc 50%, #f0fdf4 100%)' }}
       dir="rtl"
       id="app-root"
@@ -285,10 +285,10 @@ export default function App() {
       ═══════════════════════════════════════════════ */}
       {/* Phones: the sidebar is an overlay above the content; tapping the backdrop closes it. */}
       {isSidebarOpen && (
-        <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden="true" />
+        <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden="true" />
       )}
       <aside
-        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 md:static md:z-auto ${
+        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 lg:static lg:z-auto ${
           isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden'
         }`}
         id="app-sidebar"
@@ -377,18 +377,20 @@ export default function App() {
       {/* ═══════════════════════════════════════════════
           MAIN CONTENT
       ═══════════════════════════════════════════════ */}
-      <main className="flex-1 flex flex-col overflow-hidden" id="main-view-wrapper">
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden" id="main-view-wrapper">
 
         {/* ── HEADER ── */}
         <header
-          className="carla-header h-16 px-6 flex items-center justify-between shrink-0"
+          className="carla-header h-16 px-3 sm:px-6 gap-2 flex items-center justify-between shrink-0"
           id="main-header"
         >
           {/* Left: Sidebar Toggle + Breadcrumb */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 rounded-xl text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all"
+              aria-label="منو"
+              aria-expanded={isSidebarOpen}
+              className="p-2 min-w-10 min-h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all"
               title={isSidebarOpen ? 'بستن منو' : 'باز کردن منو'}
             >
               <Menu className="h-5 w-5" />
@@ -440,7 +442,7 @@ export default function App() {
 
         {/* ── CONTENT AREA ── */}
         <div
-          className="flex-1 overflow-y-auto p-6 space-y-5"
+          className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 space-y-5"
           id="main-content-scroll"
         >
           {new URLSearchParams(window.location.search).get('print') === 'contract' ? (

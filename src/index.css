@@ -432,3 +432,26 @@ input[type="number"]::-webkit-outer-spin-button {
   box-shadow: 0 4px 16px rgba(14, 165, 233, 0.2);
   transform: scale(1.03);
 }
+
+/* === MOBILE / TABLET RESPONSIVE (desktop >=1024px unchanged) === */
+html, body { max-width: 100%; overflow-x: hidden; }
+@media (max-width: 1023px) {
+  /* Drawer nav items: comfortable touch targets */
+  .carla-sidebar nav button, .carla-sidebar nav a { min-height: 44px; }
+}
+@media (max-width: 767px) {
+  /* iOS zooms into inputs under 16px */
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px !important; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select { min-height: 42px; }
+  main button, [role="dialog"] button { min-height: 36px; }
+  /* Tables scroll sideways instead of crushing columns */
+  .overflow-x-auto > table, .overflow-auto > table { min-width: 600px; }
+  .overflow-x-auto, .overflow-auto { -webkit-overflow-scrolling: touch; }
+  /* Modals: full width, never taller than the screen */
+  .fixed.inset-0 > div { max-height: calc(100dvh - 1.5rem); overflow-y: auto; }
+  .fixed.inset-0.p-4, .fixed.inset-0.p-3 { padding: 0.75rem; }
+  /* Long words / numbers never push the page wider */
+  main { overflow-wrap: break-word; }
+  /* Header breadcrumb: hide the sublabel on narrow phones */
+  #main-header .text-sm { min-width: 0; }
+}
