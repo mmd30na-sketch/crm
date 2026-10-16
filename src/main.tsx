@@ -13,3 +13,12 @@ createRoot(document.getElementById('root')!).render(
     {sampleOnly ? <Suspense fallback={null}><SamplePreview /></Suspense> : <App />}
   </StrictMode>,
 );
+
+// Phones/tablets: keep the focused field visible above the on-screen keyboard (popups and long forms).
+if (typeof window !== 'undefined') {
+  document.addEventListener('focusin', (e) => {
+    const el = e.target as HTMLElement | null;
+    if (!el || window.innerWidth >= 1024 || !el.matches('input:not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select')) return;
+    window.setTimeout(() => { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { /* old browsers */ } }, 350);
+  });
+}

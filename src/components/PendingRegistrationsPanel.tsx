@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import ModalPortal from './ModalPortal';
 import { ClipboardCheck, RefreshCw, Eye, CheckCircle, XCircle, ExternalLink, ImageOff, X, ChevronDown } from 'lucide-react';
 import { useIsDesktop } from './FilterSheet';
 import * as api from '../api/client';
@@ -154,6 +155,7 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
         )}
       </div>}
       {preview && (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-slate-900/80 flex items-center justify-center p-4" onClick={() => setPreview(null)} role="dialog" aria-label={preview.title}>
           <div className="relative max-w-3xl w-full" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between gap-2 mb-2 text-white text-xs font-bold">
@@ -166,6 +168,7 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
             <img src={preview.url} alt={preview.title} className="w-full max-h-[80vh] object-contain rounded-xl bg-white" />
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   );

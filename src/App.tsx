@@ -299,7 +299,7 @@ export default function App() {
       )}
       <aside
         className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 lg:static lg:z-auto ${
-          isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden'
+          isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden invisible'
         }`}
         id="app-sidebar"
       >

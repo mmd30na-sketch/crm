@@ -455,3 +455,15 @@ html, body { max-width: 100%; overflow-x: hidden; }
   /* Header breadcrumb: hide the sublabel on narrow phones */
   #main-header .text-sm { min-width: 0; }
 }
+
+/* === MOBILE REVIEW: touch targets + keyboard (desktop >=1024px unchanged) === */
+@media (max-width: 1023px) {
+  main button, header button, aside button, .fixed.inset-0 button, .fixed.inset-0 a, [role="dialog"] button, .carla-modal button, #main-header button { min-height: 40px; min-width: 40px; }
+  .carla-modal { max-height: calc(100dvh - 1.5rem); scroll-padding-bottom: 6rem; }
+  .carla-modal-overlay { padding: 0.75rem; }
+  /* Inline text links styled as buttons inside table cells stay compact but get a taller hit area */
+  main td button { min-height: 36px; }
+  /* Leave room so the on-screen keyboard never hides the last field of a scrolling popup */
+  .fixed.inset-0 > div { scroll-padding-bottom: 6rem; }
+  main .overflow-y-auto { scroll-padding-bottom: 6rem; }
+}
