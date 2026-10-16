@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import FilterSheet from './FilterSheet';
 import { ClipboardList, Plus, AlertTriangle, CheckCircle2, X, RefreshCw } from 'lucide-react';
 import * as p4 from '../api/phase4';
 import ModalPortal from './ModalPortal';
@@ -60,6 +61,7 @@ export default function TasksPanel({ username, isAdmin, onCountsChange }: Props)
           {overdue > 0 && <span className="flex items-center gap-1 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1"><AlertTriangle className="w-3.5 h-3.5" />{overdue.toLocaleString('fa-IR')} کار عقب‌افتاده</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <FilterSheet title="فیلتر کارها" count={(view !== 'mine' ? 1 : 0) + (showDone ? 1 : 0)} onClear={() => { setView('mine'); setShowDone(false); }}>
           {isAdmin && (
             <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold border border-slate-200">
               {(['mine', 'all'] as const).map((v) => (
@@ -68,6 +70,7 @@ export default function TasksPanel({ username, isAdmin, onCountsChange }: Props)
             </div>
           )}
           <label className="text-xs text-slate-600 flex items-center gap-1"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />نمایش انجام‌شده‌ها</label>
+          </FilterSheet>
           <button onClick={load} className="p-2 border border-slate-200 rounded-xl hover:bg-slate-50"><RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /></button>
           <button onClick={() => setDraft({ title: '', priority: 'normal', status: 'open', assignee_username: username, due_local: '' })}
             className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl"><Plus className="w-3.5 h-3.5" />کار جدید</button>

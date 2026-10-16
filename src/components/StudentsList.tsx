@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import FilterSheet from './FilterSheet';
 import {
   Search,
   Edit3,
@@ -532,10 +533,12 @@ export default function StudentsList({
                   placeholder="جستجوی کارآموز (نام، کدملی، موبایل)..."
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
-                  className="w-52 pr-9 pl-3 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 transition"
+                  className="w-44 sm:w-52 pr-9 pl-3 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 transition"
                 />
               </div>
 
+              <FilterSheet count={(courseFilter !== 'all' ? 1 : 0) + (courseNumberFilter !== 'all' ? 1 : 0) + (financialFilter !== 'all' ? 1 : 0)}
+                onClear={() => { setCourseFilter('all'); setCourseNumberFilter('all'); setFinancialFilter('all'); }}>
               {/* Course Filter */}
               <div className="relative">
                 <Filter className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -577,6 +580,8 @@ export default function StudentsList({
                 </select>
                 <ChevronDown className="w-3 h-3 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
+
+              </FilterSheet>
 
               {/* Clear Filters */}
               {hasActiveFilters && (

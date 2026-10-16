@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import FilterSheet from './FilterSheet';
 import { Contact, Plus, Search, X, Loader2, UserCheck, ClipboardList, Edit3 } from 'lucide-react';
 import {
   listLeads, listLeadSources, createLead, updateLead, convertLead, createTask, LEAD_STATUS_LABEL, utc,
@@ -210,6 +211,8 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
       </div>
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+        <FilterSheet title="فیلتر سرنخ‌ها" count={(tab !== 'all' ? 1 : 0) + (followupOnly ? 1 : 0)} onClear={() => { setTab('all'); setFollowupOnly(false); }}
+          mobileExtra={<label className="flex items-center gap-2 text-sm font-semibold text-slate-600 cursor-pointer"><input type="checkbox" checked={followupOnly} onChange={e => setFollowupOnly(e.target.checked)} />فقط پیگیری‌های امروز و گذشته</label>}>
         <div className="flex items-center gap-1.5 flex-wrap mb-3">
           {(['all', ...ALL_STATUSES] as Array<'all' | LeadStatus>).map(t => (
             <button key={t} type="button" onClick={() => setTab(t)}
@@ -219,6 +222,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
             </button>
           ))}
         </div>
+        </FilterSheet>
 
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <div className="relative flex-1 min-w-[180px]">
@@ -226,7 +230,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
             <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="نام یا موبایل..."
               className="w-full text-xs border border-slate-200 rounded-lg pr-8 pl-2 py-1.5 bg-white text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           </div>
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
+          <label className="hidden lg:flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 cursor-pointer">
             <input type="checkbox" checked={followupOnly} onChange={e => setFollowupOnly(e.target.checked)} />فقط پیگیری‌های امروز و گذشته
           </label>
         </div>

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import FilterSheet from './FilterSheet';
 import {
   Users,
   AlertCircle,
@@ -273,6 +274,8 @@ export default function DebtorsReport({
             />
           </div>
 
+          <div className="flex items-center gap-2 sm:contents">
+          <FilterSheet title="فیلتر بدهکاران" count={(selectedCourseId !== 'all' ? 1 : 0) + (sortOption !== 'debt_desc' ? 1 : 0)} onClear={() => { setSelectedCourseId('all'); setSortOption('debt_desc'); }}>
           {/* Course Filter */}
           <div className="relative sm:w-56">
             <Filter className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -304,6 +307,8 @@ export default function DebtorsReport({
               <option value="oldest_payment">قدیمیترین پرداخت</option>
               <option value="name_asc">نام</option>
             </select>
+          </div>
+          </FilterSheet>
           </div>
         </div>
 
