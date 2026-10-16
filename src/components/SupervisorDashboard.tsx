@@ -25,6 +25,7 @@ import { totalOutstanding } from '../utils/finance';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import ModalPortal from './ModalPortal';
 import { jalaliTodayParts } from '../utils/normalize';
+import { listTerms, CourseTerm, TERMS_CHANGED_EVENT } from '../api/courseTerms';
 
 interface SupervisorDashboardProps {
   students: Student[];
@@ -159,9 +160,38 @@ export default function SupervisorDashboard({
     setNewEventTitle('');
   };
 
+  /* Active terms (crm_course_terms.status = 'active'): reloaded on mount, on any term write, on tab focus and every 60s. */
+  const [activeTerms, setActiveTerms] = useState<CourseTerm[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => listTerms({ status: 'active' }).then(r => { if (alive) setActiveTerms(r); }).catch(() => { if (alive) setActiveTerms(prev => prev ?? []); });
+    load();
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    window.addEventListener(TERMS_CHANGED_EVENT, load);
+    document.addEventListener('visibilitychange', onVis);
+    const timer = setInterval(load, 60000);
+    return () => { alive = false; window.removeEventListener(TERMS_CHANGED_EVENT, load); document.removeEventListener('visibilitychange', onVis); clearInterval(timer); };
+  }, []);
+
+  // Active trainees = enrollments whose (course_id, course_number) is an active term.
+  const paidByEnrollment = new Map<number, number>();
+  payments.forEach(p => { if (p.enrollment_id) paidByEnrollment.set(Number(p.enrollment_id), (paidByEnrollment.get(Number(p.enrollment_id)) || 0) + (Number(p.amount) || 0)); });
+  const termRows = (activeTerms || []).map(term => {
+    const ens = enrollments.filter(e => Number(e.course_id) === Number(term.course_id) && Number(e.course_number) === Number(term.course_number));
+    let settled = 0, partial = 0, unpaid = 0, due = 0, paid = 0;
+    ens.forEach(e => {
+      const price = Number(e.final_price) || 0, got = paidByEnrollment.get(Number(e.id)) || 0;
+      due += price; paid += Math.min(got, price || got);
+      if (price > 0 && got >= price) settled++; else if (got > 0) partial++; else if (price > 0) unpaid++; else settled++;
+    });
+    return { term, count: ens.length, students: new Set(ens.map(e => Number(e.student_id))), settled, partial, unpaid, due, paid };
+  });
+  const activeTraineeIds = new Set<number>();
+  termRows.forEach(r => r.students.forEach(id => activeTraineeIds.add(id)));
+
   /* Analytics calculations */
   const totalStudentsCount   = students.length;
-  const activeStudentsCount  = students.filter(s => s.status === 'active').length;
+  const activeStudentsCount  = activeTraineeIds.size;
   const totalTuitionRevenue  = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
   const totalReceivedCash    = payments.reduce((sum, p) => sum + p.amount, 0);
   const totalOutstandingDebt = totalOutstanding(enrollments, payments); // per-enrollment balances, each clamped at 0
@@ -264,6 +294,45 @@ export default function SupervisorDashboard({
           </div>
         </div>
 
+      </div>
+
+      {/* ── Active trainees monitoring (live from crm_course_terms) ── */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3" id="active-trainees-monitor">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+          <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-500" />نظارت کارآموزان فعال
+          </h3>
+          <span className="text-[10px] text-slate-400">{faNum(termRows.length)} دوره در حال برگزاری · {faNum(activeStudentsCount)} کارآموز</span>
+        </div>
+        {activeTerms === null ? (
+          <p className="text-xs text-slate-400 py-4 text-center">در حال بارگذاری…</p>
+        ) : termRows.length === 0 ? (
+          <p className="text-xs text-slate-400 py-4 text-center">هیچ دوره‌ای در وضعیت «در حال برگزاری» نیست.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {termRows.map(r => (
+              <button type="button" key={r.term.id} onClick={() => onActiveTabChange('terms')}
+                className="text-right p-3 rounded-xl border border-slate-200 hover:border-emerald-300 bg-slate-50/60 transition space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-xs font-extrabold text-slate-800 block break-words">{r.term.course_title}</span>
+                    <span className="text-[10px] text-slate-400">دوره {faNum(r.term.course_number)}{r.term.title ? ` · ${r.term.title}` : ''}</span>
+                  </div>
+                  <span className="shrink-0 text-sm font-black text-emerald-600 font-mono">{faNum(r.count)}{r.term.capacity ? `/${faNum(r.term.capacity)}` : ''} نفر</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">تسویه {faNum(r.settled)}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">قسطی {faNum(r.partial)}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100">بدون پرداخت {faNum(r.unpaid)}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                  <div className="h-full bg-emerald-500" style={{ width: `${r.due > 0 ? Math.min(100, Math.round(r.paid / r.due * 100)) : 0}%` }} />
+                </div>
+                <span className="text-[10px] text-slate-500 block">وصول {formatCurrency(r.paid)} از {formatCurrency(r.due)}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Visual Analytics Section ── */}

@@ -28,5 +28,8 @@ export const listTerms = (q: { course_id?: string; status?: string } = {}) => {
   return call<CourseTerm[]>(`/course-terms?${p}`);
 };
 export const termStudents = (id: number) => call<TermStudent[]>(`/course-terms/${id}/students`);
-export const createTerm = (b: TermInput) => call<{ id: number }>('/course-terms', { method: 'POST', body: JSON.stringify(b) });
-export const updateTerm = (id: number, b: TermInput) => call<{ ok: true }>(`/course-terms/${id}`, { method: 'PUT', body: JSON.stringify(b) });
+// Fired after any term write so the supervisor dashboard refreshes its active-trainee counts at once.
+export const TERMS_CHANGED_EVENT = 'crm:terms-changed';
+const notify = <T,>(r: T) => { window.dispatchEvent(new Event(TERMS_CHANGED_EVENT)); return r; };
+export const createTerm = (b: TermInput) => call<{ id: number }>('/course-terms', { method: 'POST', body: JSON.stringify(b) }).then(notify);
+export const updateTerm = (id: number, b: TermInput) => call<{ ok: true }>(`/course-terms/${id}`, { method: 'PUT', body: JSON.stringify(b) }).then(notify);
