@@ -33,6 +33,14 @@ def post(messages, phones=None, relink=False):
         return json.loads(r.read().decode() or '{}')
 
 
+def post_events(events):
+    body = json.dumps({'messages': [], 'events': events}).encode()
+    req = urllib.request.Request(INGEST_URL, data=body, method='POST', headers={
+        'Content-Type': 'application/json', 'X-Ingest-Secret': secret()})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode() or '{}')
+
+
 _contacts = {}
 
 
@@ -75,8 +83,14 @@ def msg_record(guid, title, phone, m, my_guid):
     ts = m.get('time')
     try: ts = int(ts) * 1000
     except Exception: ts = int(time.time() * 1000)
-    return {'ext_id': f"{guid}:{m.get('message_id')}", 'chat_id': guid, 'title': title, 'phone': phone,
-            'text': str(text)[:2000], 'time': ts, 'direction': 'out' if mine else 'in'}
+    rec = {'ext_id': f"{guid}:{m.get('message_id')}", 'chat_id': guid, 'title': title, 'phone': phone,
+           'text': str(text)[:2000], 'time': ts, 'direction': 'out' if mine else 'in', 'message_id': str(m.get('message_id') or '')}
+    fi = m.get('file_inline') or {}
+    if fi:
+        rec['media'] = {'type': str(fi.get('type') or m.get('type') or 'File')[:20], 'mime': str(fi.get('mime') or '')[:40],
+                        'file_name': str(fi.get('file_name') or '')[:120], 'size': int(fi.get('size') or 0)}
+        if m.get('text'): rec['caption'] = True
+    return rec
 
 
 async def connect():
@@ -164,7 +178,17 @@ async def listen():
     async def on_msg(update):
         try:
             d = update.original_update if hasattr(update, 'original_update') else {}
-            if d.get('type') != 'User' or d.get('action') not in (None, 'New'): return
+            if d.get('type') != 'User': return
+            act = d.get('action')
+            if act in ('Edit', 'Delete'):
+                mm = d.get('message') or {}
+                mid = str(d.get('message_id') or mm.get('message_id') or '')
+                g = d.get('object_guid')
+                if g and mid:
+                    ev = {'ext_id': f"{g}:{mid}", 'chat_id': g, 'message_id': mid, 'action': act.lower(), 'text': str(mm.get('text') or '')[:2000], 'time': int(time.time() * 1000)}
+                    await asyncio.get_running_loop().run_in_executor(None, post_events, [ev])
+                return
+            if act not in (None, 'New'): return
             m = d.get('message') or {}
             guid = d.get('object_guid')
             if not guid or not m: return

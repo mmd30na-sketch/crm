@@ -263,7 +263,110 @@ async def cmd_send(args):
         await safe_disconnect(c)
 
 
-CMDS = {'send': cmd_send, 'status': cmd_status, 'send_code': cmd_send_code, 'sign_in': cmd_sign_in, 'logout': cmd_logout}
+def _mid(v):
+    v = str(v or '').strip()
+    return v if v.isdigit() else None
+
+
+async def _with_client(fn):
+    r = await logged_in_client()
+    if not r or r[1] is None:
+        if r: await safe_disconnect(r[0])
+        return {'ok': False, 'error': 'اکانت اصلی روبیکا وارد نشده است.'}
+    c = r[0]
+    try:
+        return await fn(c)
+    except Exception as e:
+        return {'ok': False, 'error': str(e)[:300]}
+    finally:
+        await safe_disconnect(c)
+
+
+async def cmd_delete(args):
+    guid = str(args.get('guid') or '').strip(); ids = [m for m in (_mid(x) for x in (args.get('message_ids') or [])) if m]
+    typ = 'Local' if args.get('type') == 'Local' else 'Global'
+    if not guid or not ids: return {'ok': False, 'error': 'شناسه پیام نامعتبر است.'}
+    async def run(c):
+        d = to_dict(await c.delete_messages(guid, ids, typ))
+        st = d.get('status') or (d.get('message_updates') and 'OK')
+        return {'ok': True, 'type': typ, 'raw_status': str(st)[:40] if st else None}
+    return await _with_client(run)
+
+
+async def cmd_edit(args):
+    guid = str(args.get('guid') or '').strip(); mid = _mid(args.get('message_id')); text = str(args.get('text') or '')
+    if not guid or not mid or not text.strip(): return {'ok': False, 'error': 'ورودی نامعتبر است.'}
+    async def run(c):
+        await c.edit_message(guid, mid, text[:4000])
+        return {'ok': True}
+    return await _with_client(run)
+
+
+async def cmd_send_file(args):
+    import pathlib
+    guid = str(args.get('guid') or '').strip(); path = str(args.get('path') or ''); kind = args.get('kind')
+    caption = (str(args.get('caption') or '').strip() or None)
+    if not guid or not os.path.isfile(path): return {'ok': False, 'error': 'فایل یا گیرنده نامعتبر است.'}
+    async def run(c):
+        p = pathlib.Path(path)
+        if kind == 'photo': res = await c.send_photo(guid, p, caption=caption)
+        else: res = await c.send_document(guid, p, caption=caption)
+        d = to_dict(res)
+        mu = d.get('message_update') or {}
+        mid = mu.get('message_id') or (mu.get('message') or {}).get('message_id')
+        return {'ok': True, 'message_id': str(mid) if mid else None}
+    return await _with_client(run)
+
+
+async def cmd_seen(args):
+    guid = str(args.get('guid') or '').strip(); mid = _mid(args.get('message_id'))
+    if not guid or not mid: return {'ok': False, 'error': 'ورودی نامعتبر است.'}
+    async def run(c):
+        await c.seen_chats({guid: mid})
+        return {'ok': True}
+    return await _with_client(run)
+
+
+async def cmd_transcribe(args):
+    guid = str(args.get('guid') or '').strip(); mid = _mid(args.get('message_id'))
+    if not guid or not mid: return {'ok': False, 'error': 'ورودی نامعتبر است.'}
+    async def run(c):
+        d = to_dict(await c.transcribe_voice(guid, mid))
+        text = d.get('text'); tid = d.get('transcription_id'); st = d.get('status')
+        for _ in range(8):
+            if text or not tid: break
+            await asyncio.sleep(2)
+            g = to_dict(await c.get_transcription(mid, tid))
+            text = g.get('text'); st = g.get('status') or st
+        if text: return {'ok': True, 'text': str(text)[:4000]}
+        return {'ok': False, 'error': f'متن صوت آماده نشد ({st or "نامشخص"}).'}
+    return await _with_client(run)
+
+
+async def cmd_download(args):
+    guid = str(args.get('guid') or '').strip(); mid = _mid(args.get('message_id')); dest = str(args.get('dest') or '')
+    max_bytes = int(args.get('max_bytes') or 25 * 1024 * 1024)
+    if not guid or not mid or not dest: return {'ok': False, 'error': 'ورودی نامعتبر است.'}
+    async def run(c):
+        d = to_dict(await c.get_messages_by_id(guid, [mid]))
+        msgs = d.get('messages') or []
+        if not msgs: return {'ok': False, 'error': 'پیام پیدا نشد.'}
+        fi = msgs[0].get('file_inline')
+        if not fi: return {'ok': False, 'error': 'این پیام فایل ندارد.'}
+        if int(fi.get('size') or 0) > max_bytes: return {'ok': False, 'error': 'فایل بزرگ‌تر از حد مجاز است.'}
+        data = await c.download(fi)
+        os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
+        tmp = dest + '.tmp'
+        with open(tmp, 'wb') as f: f.write(data)
+        os.replace(tmp, dest)
+        return {'ok': True, 'mime': fi.get('mime'), 'file_name': fi.get('file_name'), 'type': fi.get('type'), 'size': len(data)}
+    return await _with_client(run)
+
+
+CMDS = {'send': cmd_send, 'status': cmd_status, 'send_code': cmd_send_code, 'sign_in': cmd_sign_in, 'logout': cmd_logout,
+        'delete': cmd_delete, 'edit': cmd_edit, 'send_file': cmd_send_file, 'seen': cmd_seen, 'transcribe': cmd_transcribe,
+        'download': cmd_download}
+
 
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''

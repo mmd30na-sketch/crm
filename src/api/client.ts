@@ -1017,3 +1017,31 @@ export async function deleteMessageTemplate(id: string): Promise<void> {
   const res = await apiFetch(`/message-templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) throw await serverError(res, 'حذف الگو ناموفق بود.');
 }
+
+/* ── Rubika main-account message actions ── */
+async function postJson<T>(path: string, body: unknown, fallback: string): Promise<T> {
+  const res = await apiFetch(path, { method: 'POST', body: JSON.stringify(body ?? {}) });
+  if (!res.ok) throw await serverError(res, fallback);
+  return res.json();
+}
+export const deleteMessengerMessage = (id: number, scope: 'crm' | 'global') =>
+  postJson<{ ok: true; scope: string; type?: 'Global' | 'Local'; note?: string }>(`/messenger/messages/${id}/delete`, { scope }, 'حذف پیام ناموفق بود.');
+export const editMessengerMessage = (id: number, text: string) =>
+  postJson<{ ok: true }>(`/messenger/messages/${id}/edit`, { text }, 'ویرایش پیام ناموفق بود.');
+export const transcribeMessengerMessage = (id: number) =>
+  postJson<{ ok: true; text: string }>(`/messenger/messages/${id}/transcribe`, {}, 'تبدیل صوت به متن ناموفق بود.');
+export const markMessengerThreadSeen = (chatId: string) =>
+  postJson<{ ok: true; rubika: boolean }>(`/messenger/threads/${encodeURIComponent(chatId)}/seen`, {}, 'علامت خوانده‌شده ثبت نشد.');
+export async function sendMessengerAttachment(chatId: string, file: File, caption: string): Promise<{ ok: true; message_id?: number }> {
+  const fd = new FormData(); fd.append('file', file); if (caption) fd.append('caption', caption);
+  const res = await apiFetch(`/messenger/threads/${encodeURIComponent(chatId)}/attachment`, { method: 'POST', body: fd });
+  if (!res.ok) throw await serverError(res, 'ارسال فایل ناموفق بود.');
+  return res.json();
+}
+/** Downloads an attachment (with the auth header) and returns an object URL for <img>/<audio>/<a>. */
+export async function fetchMessengerMedia(id: number): Promise<{ url: string; type: string }> {
+  const res = await apiFetch(`/messenger/messages/${id}/media`);
+  if (!res.ok) throw await serverError(res, 'دریافت فایل ناموفق بود.');
+  const blob = await res.blob();
+  return { url: URL.createObjectURL(blob), type: blob.type };
+}

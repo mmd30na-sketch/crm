@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
+  Paperclip,
   MessageSquare,
   Send,
   Smartphone,
@@ -23,7 +24,9 @@ import {
   Tag,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
+import { MediaBlock, MessageMenu, MsgMedia } from './MessengerExtras';
 import * as api from '../api/client';
+import ModalPortal from './ModalPortal';
 import { studentBalance } from '../utils/finance';
 
 interface MessengerHubProps {
@@ -43,8 +46,7 @@ const phoneKey = (v: unknown) => digitsOnly(v).replace(/^98/, '0').replace(/^9(?
 function Avatar({ name, className }: { name: string; className: string }) {
   return (
     <div className={`${className} bg-sky-100 text-sky-700 font-black flex items-center justify-center shrink-0`}>
-      {(name || '?').trim().charAt(0)}
-    </div>
+      {(name || '?').trim().charAt(0)}    </div>
   );
 }
 
@@ -70,6 +72,8 @@ interface ChatThread {
     time: string;
     status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
     error?: string;
+    /** Rubika main-account message extras */
+    account?: boolean; rubikaId?: string | null; media?: MsgMedia; edited?: boolean; transcription?: string; deletedRemote?: boolean;
   }>;
 }
 
@@ -120,7 +124,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
   const [tplDraft, setTplDraft] = useState<{ id?: string; title: string; body: string; color: string } | null>(null);
   const [tplBusy, setTplBusy] = useState(false);
   const [tplError, setTplError] = useState('');
-  const loadTemplates = () => api.fetchMessageTemplates().then(setTemplates).catch(() => {});
+  const loadTemplates = () => api.fetchMessageTemplates().then(r => { if (Array.isArray(r)) setTemplates(r); }).catch(() => {});
   useEffect(() => { loadTemplates(); }, []);
   const saveTpl = async () => {
     if (!tplDraft) return;
@@ -199,11 +203,18 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                     lastMessage: '', time: '', unreadCount: 0, messages: [] };
                   updated.push(th);
                 }
-                if (!th.messages.some(m => m.id === msg.id)) {
+                const extra = {
+                  account: msg.source === 'account', rubikaId: msg.rubika_message_id || (/:(\d{6,})$/.exec(String(msg.ext_id || '')) || [])[1] || null,
+                  media: msg.media, edited: !!msg.edited, transcription: msg.transcription, deletedRemote: !!msg.deleted_remote,
+                };
+                const existing = th.messages.find(m => m.id === msg.id);
+                if (existing) { Object.assign(existing, extra, { text: msg.message }); continue; }
+                {
                   const out = msg.direction === 'out';
                   const pending = out ? th.messages.find(m => m.sender === 'admin' && m.status === 'sending' && m.text === msg.message) : undefined;
-                  if (pending) { pending.id = msg.id; pending.status = 'sent'; }
+                  if (pending) { Object.assign(pending, extra, { id: msg.id, status: 'sent' }); }
                   else th.messages.push({
+                    ...extra,
                     id: msg.id, sender: out ? 'admin' : 'student', text: msg.message,
                     time: msg.received_at ? new Date(msg.received_at).toLocaleString('fa-IR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
                     status: out ? 'sent' : 'read',
@@ -336,6 +347,52 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
       patchMessage({ status: 'failed', error: e?.message || 'ارسال نشد' });
     }
   };
+
+  /* ── Rubika account message actions ── */
+  type ThreadMsg = ChatThread['messages'][number];
+  const [msgDialog, setMsgDialog] = useState<null | { kind: 'delete-crm' | 'delete-global' | 'edit'; msg: ThreadMsg; text?: string }>(null);
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgNotice, setMsgNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const patchThreadMsg = (msgId: number, fn: (m: ThreadMsg) => ThreadMsg | null) =>
+    setThreads(prev => prev.map(t => ({ ...t, messages: t.messages.map(m => (m.id === msgId ? fn(m) : m)).filter(Boolean) as ThreadMsg[] })));
+  const runMsgDialog = async () => {
+    if (!msgDialog) return;
+    setMsgBusy(true); setMsgNotice(null);
+    try {
+      if (msgDialog.kind === 'edit') {
+        const text = (msgDialog.text || '').trim(); if (!text) return;
+        await api.editMessengerMessage(msgDialog.msg.id, text);
+        patchThreadMsg(msgDialog.msg.id, m => ({ ...m, text, edited: true }));
+        setMsgNotice({ ok: true, text: 'پیام در روبیکا ویرایش شد.' });
+      } else {
+        const r = await api.deleteMessengerMessage(msgDialog.msg.id, msgDialog.kind === 'delete-global' ? 'global' : 'crm');
+        patchThreadMsg(msgDialog.msg.id, () => null);
+        setMsgNotice({ ok: true, text: r.note || (r.scope === 'global' ? 'پیام برای هر دو طرف حذف شد.' : 'پیام فقط از CRM حذف شد.') });
+      }
+      setMsgDialog(null);
+    } catch (e: any) { setMsgNotice({ ok: false, text: e?.message || 'انجام نشد' }); setMsgDialog(null); }
+    finally { setMsgBusy(false); }
+  };
+  const attachRef = useRef<HTMLInputElement>(null);
+  const [attachBusy, setAttachBusy] = useState(false);
+  const handleAttach = async (file: File | undefined) => {
+    if (!file || !activeThread?.chatId || activeThread.source !== 'account') return;
+    if (file.size > 20 * 1024 * 1024) { setMsgNotice({ ok: false, text: 'حداکثر حجم فایل ۲۰ مگابایت است.' }); return; }
+    setAttachBusy(true); setMsgNotice(null);
+    try { await api.sendMessengerAttachment(activeThread.chatId, file, messageInput.trim()); setMessageInput(''); setMsgNotice({ ok: true, text: 'فایل ارسال شد.' }); }
+    catch (e: any) { setMsgNotice({ ok: false, text: e?.message || 'ارسال فایل ناموفق بود.' }); }
+    finally { setAttachBusy(false); }
+  };
+  // Mark the chat as read in Rubika when it is opened here (once per open).
+  const seenFor = useRef<string>('');
+  useEffect(() => {
+    const t = activeThread;
+    if (!t?.chatId || t.source !== 'account' || seenFor.current === t.chatId) return;
+    seenFor.current = t.chatId;
+    api.markMessengerThreadSeen(t.chatId).catch(() => {});
+    setThreads(prev => prev.map(x => (x.id === t.id ? { ...x, unreadCount: 0 } : x)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThread?.chatId]);
 
   /** Values for the template placeholders, computed from the student's real records. */
   const studentTemplateValues = (st: Student) => {
@@ -640,6 +697,15 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                               {isStudent ? activeThread.senderName : 'اپراتور پذیرش'}
                             </span>
                             <span className="text-[9px] text-slate-400 font-mono">{msg.time}</span>
+                            {msg.account && msg.status !== 'sending' && (
+                              <MessageMenu align={isStudent ? 'left' : 'right'}
+                                actions={[
+                                  ...(!isStudent && msg.rubikaId && !msg.media ? [{ key: 'edit', label: 'ویرایش پیام' }] : []),
+                                  { key: 'delete-crm', label: 'حذف فقط از CRM' },
+                                  ...(msg.rubikaId ? [{ key: 'delete-global', label: 'حذف برای هر دو طرف', danger: true }] : []),
+                                ]}
+                                onPick={(k) => setMsgDialog({ kind: k as any, msg, text: k === 'edit' ? msg.text : undefined })} />
+                            )}
                           </div>
 
                           <div
@@ -649,7 +715,20 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                                 : 'bg-gradient-to-l from-sky-600 to-sky-500 text-white rounded-tl-none font-medium'
                             }`}
                           >
-                            {msg.text}
+                            {msg.media && (msg.text || '').startsWith('[') ? null : <span className="whitespace-pre-wrap break-words">{msg.text}</span>}
+                            {msg.media && msg.account && (
+                              <MediaBlock id={msg.id} media={msg.media} transcription={msg.transcription}
+                                onTranscribed={(t) => patchThreadMsg(msg.id, m => ({ ...m, transcription: t }))} />
+                            )}
+                            {!msg.media && msg.account && /^\[(Voice|Image|File|Music|Video|Gif)\]/.test(msg.text || '') && (
+                              <MediaBlock id={msg.id} media={{ type: (/^\[(\w+)\]/.exec(msg.text) || [])[1] || 'File' }} transcription={msg.transcription}
+                                onTranscribed={(t) => patchThreadMsg(msg.id, m => ({ ...m, transcription: t }))} />
+                            )}
+                            {(msg.edited || msg.deletedRemote) && (
+                              <span className={`block mt-1 text-[9px] font-bold ${isStudent ? 'text-slate-400' : 'text-white/75'}`}>
+                                {msg.deletedRemote ? 'در روبیکا حذف شده' : 'ویرایش شده'}
+                              </span>
+                            )}
                           </div>
 
                           {!isStudent && (
@@ -689,8 +768,20 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                     ))}
                   </div>
 
+                  {msgNotice && (
+                    <p className={`mb-2 text-[11px] font-bold px-3 py-1.5 rounded-lg ${msgNotice.ok ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>{msgNotice.text}</p>
+                  )}
                   {/* Input Form */}
                   <div className="flex items-center gap-2">
+                    {activeThread.source === 'account' && activeThread.chatId && (
+                      <>
+                        <input ref={attachRef} type="file" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; void handleAttach(f); }} />
+                        <button type="button" onClick={() => attachRef.current?.click()} disabled={attachBusy} aria-label="ارسال عکس یا فایل" title="ارسال عکس یا فایل (متن کادر به‌عنوان توضیح)"
+                          className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 shrink-0">
+                          {attachBusy ? <Clock className="w-4 h-4 animate-pulse" /> : <Paperclip className="w-4 h-4" />}
+                        </button>
+                      </>
+                    )}
                     <input
                       type="text"
                       placeholder={canReply ? `پاسخ به ${activeThread.senderName}...` : 'این گفتگو شماره یا شناسه روبیکا ندارد؛ پاسخ ممکن نیست.'}
@@ -941,6 +1032,38 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
             ))}
           </div>
         </div>
+      )}
+
+      {msgDialog && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" dir="rtl" role="dialog" aria-modal="true" onClick={() => !msgBusy && setMsgDialog(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
+              <h3 className="text-sm font-black text-slate-900">
+                {msgDialog.kind === 'edit' ? 'ویرایش پیام' : msgDialog.kind === 'delete-global' ? 'حذف برای هر دو طرف' : 'حذف فقط از CRM'}
+              </h3>
+              {msgDialog.kind === 'edit' ? (
+                <textarea value={msgDialog.text || ''} onChange={e => setMsgDialog({ ...msgDialog, text: e.target.value })} rows={4} maxLength={2000}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg leading-relaxed focus:outline-none focus:border-sky-400" />
+              ) : (
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {msgDialog.kind === 'delete-global'
+                    ? (msgDialog.msg.sender === 'student'
+                      ? 'این پیام از روبیکا حذف می‌شود. اگر روبیکا حذف برای طرف مقابل را نپذیرد، فقط از سمت ما حذف می‌شود و به شما اطلاع داده می‌شود.'
+                      : 'این پیام در روبیکا برای شما و گیرنده حذف می‌شود و از CRM هم پاک می‌شود. قابل بازگشت نیست.')
+                    : 'پیام فقط از فهرست CRM پاک می‌شود و در روبیکا باقی می‌ماند.'}
+                </p>
+              )}
+              <p className="text-[11px] text-slate-400 bg-slate-50 rounded-lg px-2.5 py-1.5 line-clamp-3">{msgDialog.msg.text}</p>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setMsgDialog(null)} disabled={msgBusy} className="px-3 py-2 text-xs font-bold rounded-lg bg-slate-100 text-slate-700">انصراف</button>
+                <button type="button" onClick={runMsgDialog} disabled={msgBusy || (msgDialog.kind === 'edit' && !(msgDialog.text || '').trim())}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg text-white disabled:opacity-50 ${msgDialog.kind === 'edit' ? 'bg-sky-600' : 'bg-rose-600'}`}>
+                  {msgBusy ? 'در حال انجام…' : msgDialog.kind === 'edit' ? 'ذخیره ویرایش' : 'حذف'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
       )}
 
     </div>

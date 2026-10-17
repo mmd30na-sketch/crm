@@ -1154,6 +1154,12 @@ async function relinkAccountThreads(): Promise<{ total: number; withPhone: numbe
 }
 
 /** Stores account messages (deduped by ext_id) and upserts their threads; links chats to students by phone. */
+/** Rubika message id = the numeric tail of ext_id "<guid>:<message_id>" (bot/local ids have none). */
+function rubikaMsgIdOf(extId: unknown): string | null {
+  const m = /^[a-zA-Z0-9_]+:(\d{6,})$/.exec(String(extId || ''));
+  return m ? m[1] : null;
+}
+
 async function storeAccountMessages(items: any[]): Promise<number> {
   const clean = items.filter(m => m && m.chat_id && m.text && m.ext_id).slice(0, 500);
   const persons: Record<string, chabokan.PhonePerson | null> = {};
@@ -1189,6 +1195,10 @@ async function storeAccountMessages(items: any[]): Promise<number> {
       id: Date.now() * 1000 + Math.floor(Math.random() * 1000), ext_id: extId, source: src, channel: 'rubika',
       chat_id: chatId, chat_title: th.title, student_id: th.student_id, sender: out ? 'admin' : th.title, direction: out ? 'out' : 'in',
       sender_phone: th.phone || '', message: sanitizeString(String(m.text), 2000), received_at: when, ...(out ? { status: 'sent' } : {}),
+      ...(rubikaMsgIdOf(extId) ? { rubika_message_id: rubikaMsgIdOf(extId) } : {}),
+      ...(m.media && typeof m.media === 'object' ? { media: {
+        type: sanitizeString(String(m.media.type || 'File'), 20), mime: sanitizeString(String(m.media.mime || ''), 40),
+        file_name: sanitizeString(String(m.media.file_name || ''), 120), size: Number(m.media.size) || 0 } } : {}),
     });
     if (when >= (th.updated_at || '')) { th.updated_at = when; th.last_message_text = sanitizeString(String(m.text), 200); }
     if (!out && Date.now() - Date.parse(when) < 10 * 60 * 1000) th.unread_count = (th.unread_count || 0) + 1;
@@ -1210,6 +1220,18 @@ app.post('/api/messenger/account-ingest', asyncHandler(async (req, res) => {
   // Bot messages (ker.py) are always stored; account messages only while the account is switched on.
   const items = (Array.isArray(req.body?.messages) ? req.body.messages : []).filter((m: any) => m?.source === 'bot' || rubikaAccountActive());
   const added = items.length ? await storeAccountMessages(items) : 0;
+  // Edits/deletes made in the Rubika app itself (from the listener): update the CRM copy, never remove it.
+  const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 200) : [];
+  if (events.length) {
+    const db = readDb() as any; let changed = false;
+    for (const ev of events) {
+      const m = ((db.messages || []) as any[]).find(x => x.ext_id === String(ev?.ext_id || ''));
+      if (!m) continue;
+      if (ev.action === 'edit' && ev.text) { m.message = sanitizeString(String(ev.text), 2000); m.edited = true; changed = true; }
+      if (ev.action === 'delete') { m.deleted_remote = true; changed = true; }
+    }
+    if (changed) writeDb(db);
+  }
   const phones = Array.isArray(req.body?.phones) ? req.body.phones.slice(0, 500) : [];
   if (phones.length) {
     const db = readDb() as any;
@@ -1230,6 +1252,139 @@ app.get('/api/messenger/messages', (req, res) => {
   const db = readDb();
   res.json({ success: true, messages: (db as any).messages || [] });
 });
+
+// ── Rubika main-account message actions (one-to-one chats only; bulk stays in campaigns, locked) ──
+const RUBIKA_MEDIA_DIR = path.join(process.env.RUBIKA_STATE_DIR || '/project/kermanshahcart/crm-data/rubika', 'media');
+const RUBIKA_OUTBOX_DIR = path.join(process.env.RUBIKA_STATE_DIR || '/project/kermanshahcart/crm-data/rubika', 'outbox');
+for (const d of [RUBIKA_MEDIA_DIR, RUBIKA_OUTBOX_DIR]) { try { fs.mkdirSync(d, { recursive: true, mode: 0o700 }); } catch { /* created on first use */ } }
+const uploadRubikaAttachment = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, RUBIKA_OUTBOX_DIR),
+    filename: (_req, file, cb) => cb(null, `${Date.now()}_${crypto.randomBytes(6).toString('hex')}${(path.extname(file.originalname) || '.bin').slice(0, 10).replace(/[^.\w]/g, '')}`),
+  }),
+  limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+});
+/** The stored account message for :id, with its chat and Rubika message id, or an error answer. */
+function accountMessage(req: express.Request, res: express.Response): { db: any; m: any; mid: string | null } | null {
+  const db = readDb() as any;
+  const m = ((db.messages || []) as any[]).find(x => String(x.id) === String(req.params.id));
+  if (!m) { res.status(404).json({ error: 'پیام یافت نشد.' }); return null; }
+  if (m.source !== 'account' || !m.chat_id) { res.status(400).json({ error: 'این عملیات فقط برای گفتگوهای اکانت اصلی روبیکا ممکن است.' }); return null; }
+  return { db, m, mid: m.rubika_message_id || rubikaMsgIdOf(m.ext_id) };
+}
+const findMsg = (id: unknown) => ((((readDb() as any).messages) || []) as any[]).find(x => String(x.id) === String(id));
+const patchMsg = (id: unknown, changes: Record<string, unknown>) => {
+  const db = readDb() as any; const m = ((db.messages || []) as any[]).find(x => String(x.id) === String(id));
+  if (m) { Object.assign(m, changes); writeDb(db); }
+  return m;
+};
+
+app.post('/api/messenger/messages/:id/delete', asyncHandler(async (req, res) => {
+  const scope = req.body?.scope === 'global' ? 'global' : 'crm';
+  if (scope === 'crm') {
+    const db = readDb() as any; const n = (db.messages || []).length;
+    db.messages = ((db.messages || []) as any[]).filter(x => String(x.id) !== String(req.params.id));
+    if (db.messages.length === n) return res.status(404).json({ error: 'پیام یافت نشد.' });
+    writeDb(db); return res.json({ ok: true, scope });
+  }
+  const a = accountMessage(req, res); if (!a) return;
+  if (!a.mid) return res.status(400).json({ error: 'شناسه روبیکای این پیام ثبت نشده؛ فقط حذف از CRM ممکن است.' });
+  if (!rubikaAccountActive()) return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است.' });
+  let r = await runRubikaAccount('delete', { guid: a.m.chat_id, message_ids: [a.mid], type: 'Global' });
+  let type = 'Global'; let note = '';
+  if (!r.ok && a.m.direction !== 'out') {
+    const r2 = await runRubikaAccount('delete', { guid: a.m.chat_id, message_ids: [a.mid], type: 'Local' });
+    if (r2.ok) { r = r2; type = 'Local'; note = 'روبیکا حذف برای طرف مقابل را نپذیرفت؛ پیام فقط از سمت ما حذف شد.'; }
+  }
+  if (!r.ok) return res.status(502).json({ error: `روبیکا حذف را نپذیرفت: ${r.error || 'نامشخص'}` });
+  const db = readDb() as any;
+  db.messages = ((db.messages || []) as any[]).filter(x => String(x.id) !== String(req.params.id));
+  writeDb(db);
+  res.json({ ok: true, scope, type, note });
+}));
+
+app.post('/api/messenger/messages/:id/edit', asyncHandler(async (req, res) => {
+  const text = sanitizeString(req.body?.text, 2000);
+  if (!text) return res.status(400).json({ error: 'متن جدید را وارد کنید.' });
+  const a = accountMessage(req, res); if (!a) return;
+  if (a.m.direction !== 'out') return res.status(400).json({ error: 'فقط پیام‌های ارسالی خودمان قابل ویرایش است.' });
+  if (!a.mid) return res.status(400).json({ error: 'شناسه روبیکای این پیام ثبت نشده است.' });
+  if (!rubikaAccountActive()) return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است.' });
+  const r = await runRubikaAccount('edit', { guid: a.m.chat_id, message_id: a.mid, text });
+  if (!r.ok) return res.status(502).json({ error: `روبیکا ویرایش را نپذیرفت: ${r.error || 'نامشخص'}` });
+  patchMsg(req.params.id, { message: text, edited: true, edited_at: new Date().toISOString() });
+  res.json({ ok: true });
+}));
+
+app.post('/api/messenger/threads/:chatId/attachment', uploadRubikaAttachment.single('file'), asyncHandler(async (req, res) => {
+  const chat = sanitizeString(String(req.params.chatId || ''), 100);
+  const file = (req as any).file as Express.Multer.File | undefined;
+  const cleanup = () => { if (file) fs.promises.unlink(file.path).catch(() => {}); };
+  if (!file) return res.status(400).json({ error: 'فایلی انتخاب نشده است.' });
+  const th = ((((readDb() as any).threads) || []) as any[]).find(t => t.source === 'account' && t.external_id === chat);
+  if (!th) { cleanup(); return res.status(404).json({ error: 'این گفتگو در اکانت اصلی روبیکا پیدا نشد (فقط پاسخ به گفتگوهای موجود).' }); }
+  if (!rubikaAccountActive()) { cleanup(); return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است.' }); }
+  const isPhoto = /^image\/(jpeg|png|webp)$/.test(file.mimetype);
+  const caption = sanitizeString(req.body?.caption, 1000);
+  const r = await runRubikaAccount('send_file', { guid: chat, path: file.path, kind: isPhoto ? 'photo' : 'document', caption });
+  cleanup();
+  if (!r.ok) return res.status(502).json({ error: `ارسال فایل ناموفق بود: ${r.error || 'نامشخص'}` });
+  const now = Date.now(); const extId = `${chat}:${r.message_id || `local-${now}`}`;
+  const name = sanitizeString(file.originalname, 120);
+  await storeAccountMessages([{ ext_id: extId, chat_id: chat, text: caption || (isPhoto ? '[Image]' : `[File] ${name}`), time: now, direction: 'out',
+    media: { type: isPhoto ? 'Image' : 'File', mime: file.mimetype, file_name: name, size: file.size } }]);
+  const stored = (((readDb() as any).messages) || []).find((m: any) => m.ext_id === extId);
+  res.json({ ok: true, message_id: stored?.id });
+}));
+
+const lastSeen = new Map<string, string>();
+app.post('/api/messenger/threads/:chatId/seen', asyncHandler(async (req, res) => {
+  const chat = sanitizeString(String(req.params.chatId || ''), 100);
+  const db = readDb() as any;
+  const th = ((db.threads || []) as any[]).find(t => t.source === 'account' && t.external_id === chat);
+  if (!th) return res.status(404).json({ error: 'گفتگو یافت نشد.' });
+  th.unread_count = 0; writeDb(db);
+  const ids = ((db.messages || []) as any[]).filter(m => m.source === 'account' && m.chat_id === chat && m.direction === 'in')
+    .map(m => m.rubika_message_id || rubikaMsgIdOf(m.ext_id)).filter(Boolean) as string[];
+  const last = ids.sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1)).pop();
+  if (!last || !rubikaAccountActive()) return res.json({ ok: true, rubika: false });
+  if (lastSeen.get(chat) === last) return res.json({ ok: true, rubika: true, cached: true });
+  const r = await runRubikaAccount('seen', { guid: chat, message_id: last });
+  if (r.ok) lastSeen.set(chat, last);
+  res.json({ ok: true, rubika: !!r.ok, error: r.ok ? undefined : r.error });
+}));
+
+app.get('/api/messenger/messages/:id/media', asyncHandler(async (req, res) => {
+  const a = accountMessage(req, res); if (!a) return;
+  if (!a.mid) return res.status(404).json({ error: 'فایل در دسترس نیست.' });
+  const file = path.join(RUBIKA_MEDIA_DIR, `${a.m.chat_id.replace(/\W/g, '')}_${a.mid}`);
+  const metaFile = `${file}.json`;
+  if (!fs.existsSync(file)) {
+    const r = await runRubikaAccount('download', { guid: a.m.chat_id, message_id: a.mid, dest: file, max_bytes: 25 * 1024 * 1024 });
+    if (!r.ok) return res.status(502).json({ error: r.error || 'دریافت فایل ناموفق بود.' });
+    fs.writeFileSync(metaFile, JSON.stringify({ mime: r.mime, file_name: r.file_name, type: r.type }), { mode: 0o600 });
+  }
+  let meta: any = {}; try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8')); } catch { /* none */ }
+  const ext = String(meta.mime || a.m.media?.mime || '').toLowerCase();
+  const mimeMap: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', ogg: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', pdf: 'application/pdf' };
+  const ctype = ext.includes('/') ? ext : (mimeMap[ext] || 'application/octet-stream');
+  res.setHeader('Content-Type', ctype);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  const name = String(meta.file_name || a.m.media?.file_name || 'file').replace(/["\r\n]/g, '');
+  res.setHeader('Content-Disposition', `${/^(image|audio|video)\//.test(ctype) ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`);
+  fs.createReadStream(file).pipe(res);
+}));
+
+app.post('/api/messenger/messages/:id/transcribe', asyncHandler(async (req, res) => {
+  const a = accountMessage(req, res); if (!a) return;
+  if (a.m.transcription) return res.json({ ok: true, text: a.m.transcription });
+  if (!a.mid) return res.status(400).json({ error: 'شناسه روبیکای این پیام ثبت نشده است.' });
+  const r = await runRubikaAccount('transcribe', { guid: a.m.chat_id, message_id: a.mid });
+  if (!r.ok) return res.status(502).json({ error: r.error || 'تبدیل صوت به متن ناموفق بود.' });
+  patchMsg(req.params.id, { transcription: sanitizeString(String(r.text), 4000) });
+  res.json({ ok: true, text: r.text });
+}));
 
 // ── Gateway settings (stored on the server; secrets are never sent back to the browser) ──
 type Gateways = {
