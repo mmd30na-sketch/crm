@@ -18,6 +18,9 @@ export type Phase4Deps = {
   sendAccount: (guid: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   sendBot: (chatId: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   staffDirectory: () => Array<{ username: string; full_name: string; role: string; is_active: boolean }>;
+  /** SMS via the CRM gateway (settings). Only used by real (unlocked) campaigns. */
+  sendSms?: (phone: string, text: string) => Promise<{ ok: boolean; error?: string }>;
+  smsConfigured?: () => boolean;
 };
 
 const LEAD_STATUSES = ['new', 'contacted', 'in_negotiation', 'converted', 'lost'] as const;
@@ -90,9 +93,48 @@ export async function ensurePhase4Schema(): Promise<void> {
 /* ---------------- recipients & templates ---------------- */
 type Recipient = { student_id: number | null; lead_id: number | null; name: string; first_name: string; last_name: string; phone: string; course: string; debt: number };
 
+type Channel = 'rubika' | 'sms' | 'rubika_sms';
+const channelOf = (f: any): Channel => (f?.channel === 'sms' || f?.channel === 'rubika_sms' ? f.channel : 'rubika');
+const phoneKey = (v: unknown) => { const d = String(v ?? '').replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06F0)).replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : ''; };
+export const maskPhone = (v: unknown) => { const k = phoneKey(v); return k ? `0${k.slice(0, 3)}***${k.slice(-2)}` : ''; };
+const idList = (v: unknown) => new Set((Array.isArray(v) ? v : []).map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 5000));
+
 async function selectRecipients(f: any): Promise<Recipient[]> {
+  const raw = await selectRecipientsRaw(f);
+  // Same phone once (a person enrolled in two courses of the term, or duplicate records); removed individuals left out.
+  const exS = idList(f?.exclude_students); const exL = idList(f?.exclude_leads);
+  const seen = new Set<string>(); const out: Recipient[] = [];
+  for (const r of raw) {
+    if ((r.student_id && exS.has(r.student_id)) || (r.lead_id && exL.has(r.lead_id))) continue;
+    const k = phoneKey(r.phone);
+    if (k) { if (seen.has(k)) continue; seen.add(k); }
+    out.push(r);
+  }
+  return out;
+}
+
+async function selectRecipientsRaw(f: any): Promise<Recipient[]> {
   const out: Recipient[] = [];
-  const target = f?.target === 'leads' ? 'leads' : 'students';
+  const target = f?.target === 'leads' ? 'leads' : f?.target === 'term' ? 'term' : 'students';
+  if (target === 'term') {
+    // «همه افراد یک دوره»: one term (crm_course_terms row) or every course with the same course number.
+    let cond = ''; let params: any[] = [];
+    if (intOrNull(f?.term_id)) {
+      const [t] = await db.sql<any>('SELECT course_id, course_number FROM crm_course_terms WHERE id = ?', [intOrNull(f.term_id)]);
+      if (!t) return out;
+      cond = 'e.course_id = ? AND e.course_number = ?'; params = [t.course_id, t.course_number];
+    } else if (intOrNull(f?.term_number)) { cond = 'e.course_number = ?'; params = [intOrNull(f.term_number)]; }
+    else return out;
+    const rows = await db.sql<any>(
+      `SELECT s.student_id, s.first_name, s.last_name, s.phone_number, COALESCE(b.debt, 0) AS debt,
+              (SELECT GROUP_CONCAT(DISTINCT c.title SEPARATOR '، ') FROM enrollments e JOIN courses c ON c.course_id = e.course_id WHERE e.student_id = s.student_id AND ${cond}) AS course
+       FROM students s
+       LEFT JOIN (SELECT student_id, SUM(GREATEST(balance_due, 0)) AS debt FROM v_enrollment_balances GROUP BY student_id) b ON b.student_id = s.student_id
+       WHERE EXISTS (SELECT 1 FROM enrollments e WHERE e.student_id = s.student_id AND ${cond}) ${f?.debtors ? 'AND COALESCE(b.debt, 0) > 0' : ''}
+       ORDER BY s.last_name, s.first_name LIMIT 2000`, [...params, ...params]);
+    for (const r of rows) out.push({ student_id: r.student_id, lead_id: null, first_name: r.first_name || '', last_name: r.last_name || '', name: `${r.first_name || ''} ${r.last_name || ''}`.trim(), phone: r.phone_number || '', course: r.course || '', debt: Number(r.debt) || 0 });
+    return out;
+  }
   if (target === 'students') {
     const where: string[] = []; const params: any[] = [];
     if (intOrNull(f?.course_id)) { where.push('EXISTS (SELECT 1 FROM enrollments e WHERE e.student_id = s.student_id AND e.course_id = ?)'); params.push(intOrNull(f.course_id)); }
@@ -123,8 +165,15 @@ export function renderTemplate(tpl: string, r: Recipient): string {
   return tpl.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k) => (k in vars ? vars[k] : m)).slice(0, 2000);
 }
 
-/** Which channel a recipient can be reached on, without sending: account chat > bot chat > none. */
-function resolveRoute(json: any, r: Recipient, normalizeMobile: (v: unknown) => string): { route: 'account' | 'bot' | 'none'; chat?: string } {
+/** Which channel a recipient can be reached on, without sending: Rubika (account chat > bot chat), SMS, or none. */
+function resolveRoute(json: any, r: Recipient, normalizeMobile: (v: unknown) => string, channel: Channel = 'rubika'): { route: 'account' | 'bot' | 'sms' | 'none'; chat?: string } {
+  const smsOk = /^09\d{9}$/.test(normalizeMobile(r.phone));
+  if (channel === 'sms') return smsOk ? { route: 'sms' } : { route: 'none' };
+  const rb = resolveRubika(json, r, normalizeMobile);
+  if (rb.route === 'none' && channel === 'rubika_sms' && smsOk) return { route: 'sms' };
+  return rb;
+}
+function resolveRubika(json: any, r: Recipient, normalizeMobile: (v: unknown) => string): { route: 'account' | 'bot' | 'none'; chat?: string } {
   const sid = r.student_id ? String(r.student_id) : '';
   const acc = sid && json?.rubika_account_links?.[sid];
   if (acc) return { route: 'account', chat: acc };
@@ -148,6 +197,8 @@ async function runCampaign(id: number, deps: Phase4Deps) {
     const dry = Number(c.dry_run) === 1 || process.env.CRM_BULK_SEND_ENABLED !== '1';
     await db.sqlExec("UPDATE crm_campaigns SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = ?", [id]);
     const json = deps.readJsonDb();
+    let channel: Channel = 'rubika';
+    try { channel = channelOf(typeof c.filters === 'string' ? JSON.parse(c.filters) : c.filters); } catch { /* old campaigns: Rubika */ }
     for (;;) {
       const [cur] = await db.sql<any>('SELECT status FROM crm_campaigns WHERE id = ?', [id]);
       if (!cur || cur.status === 'cancelled') break;
@@ -155,11 +206,13 @@ async function runCampaign(id: number, deps: Phase4Deps) {
       if (!batch.length) break;
       for (const r of batch) {
         const rec: Recipient = { student_id: r.student_id, lead_id: r.lead_id, name: r.name || '', first_name: '', last_name: '', phone: r.phone || '', course: '', debt: 0 };
-        const route = resolveRoute(json, rec, deps.normalizeMobile);
+        const route = resolveRoute(json, rec, deps.normalizeMobile, channel);
         let status = 'dry_run'; let error: string | null = null;
-        if (route.route === 'none') { status = 'skipped'; error = 'گفتگوی روبیکا برای این شماره پیدا نشد'; }
+        if (route.route === 'none') { status = 'skipped'; error = channel === 'sms' ? 'شماره موبایل معتبر نیست' : 'گفتگوی روبیکا برای این شماره پیدا نشد'; }
         else if (!dry) {
-          const res = route.route === 'account' ? await deps.sendAccount(route.chat!, r.rendered) : await deps.sendBot(route.chat!, r.rendered);
+          const res = route.route === 'sms'
+            ? (deps.sendSms ? await deps.sendSms(r.phone, r.rendered) : { ok: false, error: 'درگاه پیامک تنظیم نشده است' })
+            : route.route === 'account' ? await deps.sendAccount(route.chat!, r.rendered) : await deps.sendBot(route.chat!, r.rendered);
           status = res.ok ? 'sent' : 'failed'; error = res.ok ? null : String(res.error || 'خطا').slice(0, 250);
         }
         await db.sqlExec('UPDATE crm_campaign_recipients SET status = ?, route = ?, error = ?, processed_at = NOW() WHERE id = ?', [status, route.route, error, r.id]);
@@ -345,22 +398,27 @@ export function registerPhase4(app: express.Express, deps: Phase4Deps) {
   /* ---- bulk campaigns (admin only via canAccessApi) ---- */
   app.post('/api/campaigns/preview', wrap(async (req, res) => {
     const template = deps.sanitize(req.body?.template, 2000);
-    const list = await selectRecipients(req.body?.filters || {});
+    const filters = req.body?.filters || {};
+    const channel = channelOf(filters);
+    const list = await selectRecipients(filters);
     const json = deps.readJsonDb();
-    const routes = { account: 0, bot: 0, none: 0 };
-    const sample = list.slice(0, 2000).map((r) => {
-      const route = resolveRoute(json, r, deps.normalizeMobile).route; routes[route]++;
-      return { student_id: r.student_id, lead_id: r.lead_id, name: r.name, phone: r.phone, route, text: template ? renderTemplate(template, r) : '' };
+    const routes = { account: 0, bot: 0, sms: 0, none: 0 };
+    // Full list (max 2000) so staff can remove individuals; phones masked; sample text for the first 30 only.
+    const all = list.slice(0, 2000).map((r, i) => {
+      const route = resolveRoute(json, r, deps.normalizeMobile, channel).route; routes[route]++;
+      return { student_id: r.student_id, lead_id: r.lead_id, name: r.name, phone: maskPhone(r.phone), course: r.course, route, text: template && i < 30 ? renderTemplate(template, r) : '' };
     });
-    res.json({ total: list.length, routes, recipients: sample.slice(0, 50), send_enabled: process.env.CRM_BULK_SEND_ENABLED === '1' });
+    res.json({ total: list.length, routes, channel, recipients: all, send_enabled: process.env.CRM_BULK_SEND_ENABLED === '1',
+      sms_configured: deps.smsConfigured ? deps.smsConfigured() : false });
   }));
   app.get('/api/campaigns', wrap(async (_req, res) => {
     res.json(await db.sql(`SELECT id, name, template, filters, dry_run, throttle_ms, status, created_by, total, sent, failed, skipped,
       DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s') AS created_at, DATE_FORMAT(finished_at, '%Y-%m-%dT%H:%i:%s') AS finished_at FROM crm_campaigns ORDER BY id DESC LIMIT 100`));
   }));
   app.get('/api/campaigns/:id/recipients', wrap(async (req, res) => {
-    res.json(await db.sql(`SELECT id, student_id, lead_id, name, phone, route, status, error, rendered, DATE_FORMAT(processed_at, '%Y-%m-%dT%H:%i:%s') AS processed_at
-      FROM crm_campaign_recipients WHERE campaign_id = ? ORDER BY id LIMIT 2000`, [intOrNull(req.params.id)]));
+    const rows = await db.sql<any>(`SELECT id, student_id, lead_id, name, phone, route, status, error, rendered, DATE_FORMAT(processed_at, '%Y-%m-%dT%H:%i:%s') AS processed_at
+      FROM crm_campaign_recipients WHERE campaign_id = ? ORDER BY id LIMIT 2000`, [intOrNull(req.params.id)]);
+    res.json(rows.map((r) => ({ ...r, phone: maskPhone(r.phone) })));
   }));
   /** Creates the campaign and its queue. A real send needs dry_run=false, server flag, and confirm === 'ارسال'. */
   app.post('/api/campaigns', wrap(async (req, res) => {
@@ -371,6 +429,7 @@ export function registerPhase4(app: express.Express, deps: Phase4Deps) {
     if (wantsReal) {
       if (process.env.CRM_BULK_SEND_ENABLED !== '1') return res.status(403).json({ error: 'ارسال واقعی روی سرور غیرفعال است (فقط اجرای آزمایشی مجاز است).' });
       if (req.body?.confirm !== 'ارسال') return res.status(400).json({ error: 'برای ارسال واقعی باید کلمه «ارسال» را تایپ کنید.' });
+      if (channelOf(req.body?.filters) !== 'rubika' && !(deps.smsConfigured && deps.smsConfigured())) return res.status(400).json({ error: 'درگاه پیامک در CRM تنظیم نشده است؛ ارسال واقعی پیامک ممکن نیست.' });
     }
     const filters = req.body?.filters || {};
     const list = await selectRecipients(filters);

@@ -61,10 +61,17 @@ export const listAssignees = () => call<Array<{ username: string; full_name: str
 export const createTask = (b: TaskInput) => post<{ id: number }>('/tasks', b);
 export const updateTask = (id: number, b: TaskInput) => put<{ ok: true }>(`/tasks/${id}`, b);
 
-export interface CampaignFilters { target: 'students' | 'leads'; course_id?: number; course_number?: number; debtors?: boolean; lead_status?: LeadStatus }
+export type CampaignChannel = 'rubika' | 'sms' | 'rubika_sms';
+export interface CampaignFilters {
+  target: 'students' | 'leads' | 'term'; course_id?: number; course_number?: number; debtors?: boolean; lead_status?: LeadStatus;
+  /** target 'term': one crm_course_terms row, or every course with this course number. */
+  term_id?: number; term_number?: number; channel?: CampaignChannel;
+  exclude_students?: number[]; exclude_leads?: number[];
+}
 export interface CampaignPreview {
-  total: number; routes: { account: number; bot: number; none: number }; send_enabled: boolean;
-  recipients: Array<{ student_id: number | null; lead_id: number | null; name: string; phone: string; route: 'account' | 'bot' | 'none'; text: string }>;
+  total: number; routes: { account: number; bot: number; sms: number; none: number }; send_enabled: boolean; sms_configured: boolean; channel: CampaignChannel;
+  /** Full list (max 2000); phone is masked; text is filled for the first 30 only. */
+  recipients: Array<{ student_id: number | null; lead_id: number | null; name: string; phone: string; course?: string; route: 'account' | 'bot' | 'sms' | 'none'; text: string }>;
 }
 export interface Campaign { id: number; name: string; template: string; dry_run: 0 | 1; throttle_ms: number; status: string; created_by: string | null; total: number; sent: number; failed: number; skipped: number; created_at: string; finished_at: string | null }
 export interface CampaignRecipient { id: number; name: string; phone: string; route: string | null; status: string; error: string | null; rendered: string; processed_at: string | null }

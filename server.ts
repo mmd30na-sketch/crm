@@ -3070,6 +3070,11 @@ registerPhase4(app, {
       return { ok, error: ok ? undefined : String(r?.status || 'خطا') };
     } catch (e: any) { return { ok: false, error: e?.message }; }
   },
+  sendSms: async (phone, text) => {
+    const r = await sendSmsMessage(normalizeMobile(phone), text);
+    return { ok: r.ok, error: r.ok ? undefined : (r.detail || r.status) };
+  },
+  smsConfigured: () => { const g = getGateways(); return !!(g.sms_api_key && g.sms_sender_line); },
   staffDirectory: () => {
     const d = readDb();
     return [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin', is_active: true },
