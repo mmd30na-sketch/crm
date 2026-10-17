@@ -10,6 +10,13 @@ import ModalPortal from './ModalPortal';
 
 const fa = (n: number) => (Number(n) || 0).toLocaleString('fa-IR');
 const toman = (n: number) => fa(n) + ' تومان';
+// Same shape as the server maskPhone (0XXX***XX); idempotent so already-masked server values pass through.
+const maskPhone = (v: unknown) => {
+  const s = String(v ?? '');
+  if (!s || s.includes('*')) return s;
+  const d = s.replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06F0)).replace(/\D/g, '');
+  return d.length >= 10 ? `0${d.slice(-10, -7)}***${d.slice(-2)}` : s;
+};
 const inputCls = 'w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sky-200';
 
 type Tab = 'instructors' | 'rates' | 'sessions' | 'report';
@@ -121,7 +128,7 @@ export default function InstructorPayPanel() {
     if (!report) return;
     downloadCsv<t.ReportRow>(` حق‌التدریس-${report.month}`.trim(), report.rows, [
       { header: 'مربی', value: (r) => r.name },
-      { header: 'موبایل', value: (r) => r.phone || '' },
+      { header: 'موبایل', value: (r) => maskPhone(r.phone) },
       { header: 'تعداد جلسات', value: (r) => fa(r.sessions_count) },
       { header: 'مجموع ساعت', value: (r) => fa(r.sessions_hours) },
       { header: 'جمع جلسات (تومان)', value: (r) => fa(r.per_session_total) },
@@ -137,7 +144,7 @@ export default function InstructorPayPanel() {
     if (!w) { setErr('پنجره چاپ باز نشد؛ اجازه باز شدن pop-up را بدهید.'); return; }
     const esc = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const rows = report.rows.map((r) => `<tr>
-      <td>${esc(r.name)}</td><td>${esc(r.phone || '')}</td><td>${fa(r.sessions_count)}</td><td>${fa(r.sessions_hours)}</td>
+      <td>${esc(r.name)}</td><td>${esc(maskPhone(r.phone) || '')}</td><td>${fa(r.sessions_count)}</td><td>${fa(r.sessions_hours)}</td>
       <td>${fa(r.per_session_total)}</td><td>${esc(r.per_term_items.map((i) => i.term_label || '').filter(Boolean).join('، '))}</td>
       <td>${fa(r.per_term_total)}</td><td><b>${fa(r.total)}</b></td><td>${r.settled ? 'تسویه‌شده' : 'پرداخت‌نشده'}</td></tr>`).join('');
     w.document.write(`<!doctype html><html dir="rtl" lang="fa"><head><meta charset="utf-8"><title>حق‌التدریس ${esc(monthLabel(report.month))}</title>
@@ -193,7 +200,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid 
                       {instructors.map((r) => (
                         <tr key={r.id} className="border-t border-slate-100 hover:bg-sky-50/40">
                           <td className="px-3 py-2.5 font-bold text-slate-800">{r.name}</td>
-                          <td className="px-3 py-2.5 font-mono" dir="ltr">{r.phone || '—'}</td>
+                          <td className="px-3 py-2.5 font-mono" dir="ltr">{maskPhone(r.phone) || '—'}</td>
                           <td className="px-3 py-2.5"><span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${r.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>{r.active ? 'فعال' : 'غیرفعال'}</span></td>
                           <td className="px-3 py-2.5 text-slate-600 max-w-[240px] truncate">{r.notes || '—'}</td>
                           <td className="px-3 py-2.5"><div className="flex items-center gap-1">
@@ -211,7 +218,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid 
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="font-black text-slate-800 text-sm truncate">{r.name}</div>
-                          <div className="text-xs text-slate-500 font-mono mt-0.5" dir="ltr">{r.phone || '—'}</div>
+                          <div className="text-xs text-slate-500 font-mono mt-0.5" dir="ltr">{maskPhone(r.phone) || '—'}</div>
                         </div>
                         <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${r.active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>{r.active ? 'فعال' : 'غیرفعال'}</span>
                       </div>
@@ -345,7 +352,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid 
                       {report.rows.map((r) => (
                         <tr key={r.instructor_id} className="border-t border-slate-100 hover:bg-sky-50/40">
                           <td className="px-3 py-2.5 font-bold text-slate-800">{r.name}</td>
-                          <td className="px-3 py-2.5 font-mono" dir="ltr">{r.phone || '—'}</td>
+                          <td className="px-3 py-2.5 font-mono" dir="ltr">{maskPhone(r.phone) || '—'}</td>
                           <td className="px-3 py-2.5">{fa(r.sessions_count)}</td>
                           <td className="px-3 py-2.5">{fa(r.sessions_hours)}</td>
                           <td className="px-3 py-2.5">{fa(r.per_session_total)}</td>
@@ -369,7 +376,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid 
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="font-black text-slate-800 text-sm truncate">{r.name}</div>
-                          <div className="text-xs text-slate-500 font-mono mt-0.5" dir="ltr">{r.phone || '—'}</div>
+                          <div className="text-xs text-slate-500 font-mono mt-0.5" dir="ltr">{maskPhone(r.phone) || '—'}</div>
                         </div>
                         {r.settled
                           ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200 shrink-0">تسویه‌شده</span>

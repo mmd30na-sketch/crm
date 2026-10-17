@@ -21,7 +21,7 @@ const jalali = (v: unknown): string | null => {
   const s = String(v ?? '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/-/g, '/');
   return /^1[34]\d\d\/\d{1,2}\/\d{1,2}$/.test(s) ? s : null;
 };
-/** "1405/07", "1405-7" -> "1405-07" (the dash form stored in crm_instructor_settlements.year_month). */
+/** "1405/07", "1405-7" -> "1405-07" (the dash form stored in crm_instructor_settlements.month_key; the JSON API field stays year_month). */
 const yearMonth = (v: unknown): string | null => {
   const s = String(v ?? '').trim().replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/\//g, '-');
   const m = s.match(/^(\d{4})-(\d{1,2})$/);
@@ -74,11 +74,11 @@ export async function ensureInstructorPaySchema(): Promise<void> {
     `CREATE TABLE IF NOT EXISTS crm_instructor_settlements (
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       instructor_id INT UNSIGNED NOT NULL,
-      year_month CHAR(7) NOT NULL COMMENT 'Jalali yyyy-mm',
+      month_key CHAR(7) NOT NULL COMMENT 'Jalali yyyy-mm',
       total INT NOT NULL DEFAULT 0 COMMENT 'Toman',
       paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       notes TEXT NULL,
-      UNIQUE KEY uq_settlement (instructor_id, year_month),
+      UNIQUE KEY uq_settlement (instructor_id, month_key),
       CONSTRAINT fk_inst_settlements_instructor FOREIGN KEY (instructor_id) REFERENCES crm_instructors (id) ON DELETE CASCADE ON UPDATE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='CRM: monthly instructor settlements / تسویه ماهانه'`,
   ];
@@ -420,7 +420,7 @@ export function registerInstructorPay(app: express.Express, deps: {
     const rates = await db.sql<any>('SELECT id, instructor_id, course_term_id, rate_type, amount FROM crm_instructor_rates');
     const sessions = await db.sql<any>('SELECT id, instructor_id, course_term_id, session_date, hours FROM crm_instructor_sessions WHERE session_date >= ? AND session_date <= ?',
       [monthStart, monthEnd]);
-    const settlements = await db.sql<any>('SELECT id, instructor_id, year_month, total, paid_at, notes FROM crm_instructor_settlements WHERE year_month = ?', [ym]);
+    const settlements = await db.sql<any>('SELECT id, instructor_id, month_key AS year_month, total, paid_at, notes FROM crm_instructor_settlements WHERE month_key = ?', [ym]);
     const termIds = [...new Set(rates.filter((r) => r.rate_type === 'per_term' && r.course_term_id).map((r) => Number(r.course_term_id)))];
     const terms = termIds.length
       ? await db.sql<any>(`SELECT t.id, t.course_id, c.title AS course_title, t.course_number, t.start_date, t.end_date
@@ -450,7 +450,7 @@ export function registerInstructorPay(app: express.Express, deps: {
       else store.settlements.push({ id: nextId(store.settlements), instructor_id, year_month: ym, total: row.total, paid_at: new Date().toISOString(), notes });
       writeStore(store); res.json({ ok: true, total: row.total }); return;
     }
-    await db.sqlExec(`INSERT INTO crm_instructor_settlements (instructor_id, year_month, total, notes) VALUES (?, ?, ?, ?)
+    await db.sqlExec(`INSERT INTO crm_instructor_settlements (instructor_id, month_key, total, notes) VALUES (?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE total = VALUES(total), paid_at = CURRENT_TIMESTAMP, notes = VALUES(notes)`,
       [instructor_id, ym, row.total, notes]);
     res.json({ ok: true, total: row.total });

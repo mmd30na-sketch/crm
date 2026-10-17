@@ -43,10 +43,10 @@ CREATE TABLE IF NOT EXISTS crm_instructor_sessions (
 CREATE TABLE IF NOT EXISTS crm_instructor_settlements (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   instructor_id INT UNSIGNED NOT NULL,
-  year_month CHAR(7) NOT NULL COMMENT 'Jalali yyyy-mm',
+  month_key CHAR(7) NOT NULL COMMENT 'Jalali yyyy-mm',
   total INT NOT NULL DEFAULT 0 COMMENT 'Toman',
   paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   notes TEXT NULL,
-  UNIQUE KEY uq_settlement (instructor_id, year_month),
+  UNIQUE KEY uq_settlement (instructor_id, month_key),
   CONSTRAINT fk_inst_settlements_instructor FOREIGN KEY (instructor_id) REFERENCES crm_instructors (id) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='CRM: monthly instructor settlements / تسویه ماهانه';
