@@ -420,7 +420,7 @@ export function registerInstructorPay(app: express.Express, deps: {
     const rates = await db.sql<any>('SELECT id, instructor_id, course_term_id, rate_type, amount FROM crm_instructor_rates');
     const sessions = await db.sql<any>('SELECT id, instructor_id, course_term_id, session_date, hours FROM crm_instructor_sessions WHERE session_date >= ? AND session_date <= ?',
       [monthStart, monthEnd]);
-    const settlements = await db.sql<any>('SELECT id, instructor_id, month_key AS year_month, total, paid_at, notes FROM crm_instructor_settlements WHERE month_key = ?', [ym]);
+    const settlements = await db.sql<any>('SELECT id, instructor_id, month_key AS \`year_month\`, total, paid_at, notes FROM crm_instructor_settlements WHERE month_key = ?', [ym]);
     const termIds = [...new Set(rates.filter((r) => r.rate_type === 'per_term' && r.course_term_id).map((r) => Number(r.course_term_id)))];
     const terms = termIds.length
       ? await db.sql<any>(`SELECT t.id, t.course_id, c.title AS course_title, t.course_number, t.start_date, t.end_date
