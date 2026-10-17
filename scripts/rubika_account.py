@@ -20,7 +20,7 @@ os.umask(0o077)
 
 
 def out(obj):
-    print(json.dumps(obj, ensure_ascii=False))
+    print(json.dumps(obj, ensure_ascii=False), flush=True)
 
 
 def mask_phone(p):
@@ -363,9 +363,81 @@ async def cmd_download(args):
     return await _with_client(run)
 
 
+def _rubika_phone(v):
+    d = ''.join(ch for ch in str(v or '') if ch.isdigit())
+    if d.startswith('0098'): d = d[4:]
+    elif d.startswith('98'): d = d[2:]
+    elif d.startswith('0'): d = d[1:]
+    return '98' + d if len(d) == 10 and d.startswith('9') else None
+
+
+FLOOD_MARKS = ('TOO_REQUEST', 'FLOOD', 'TOO_MANY', 'RATE_LIMIT')
+
+
+async def _add_one(c, phone, first, last):
+    """addAddressBook only (no message is ever sent). Returns status added / not_on_rubika with the user guid if any."""
+    d = to_dict(await c.add_address_book(phone, (first or '').strip()[:60] or 'هنرجو', (last or '').strip()[:60]))
+    user = d.get('user') or {}
+    guid = user.get('user_guid') or (d.get('chat') or {}).get('object_guid')
+    if d.get('user_exist') is False or not guid:
+        return {'status': 'not_on_rubika'}
+    return {'status': 'added', 'guid': str(guid)}
+
+
+async def cmd_add_contact(args):
+    phone = _rubika_phone(args.get('phone'))
+    if not phone: return {'ok': False, 'error': 'شماره موبایل معتبر نیست.'}
+    async def run(c):
+        r = await _add_one(c, phone, args.get('first_name'), args.get('last_name'))
+        return {'ok': True, **r}
+    return await _with_client(run)
+
+
+async def cmd_delete_contact(args):
+    guid = str(args.get('guid') or '').strip()
+    if not guid or not guid.replace('_', '').isalnum(): return {'ok': False, 'error': 'شناسه کاربر نامعتبر است.'}
+    async def run(c):
+        await c.delete_contact(guid)
+        return {'ok': True}
+    return await _with_client(run)
+
+
+async def cmd_add_contacts(args):
+    """Bulk add with one client: one line of JSON per item on stdout, random 3-5 s gap, stops on flood or 3 errors in a row."""
+    import random
+    items = (args.get('items') or [])[:2000]
+    lo = max(3.0, float(args.get('min_delay') or 3)); hi = max(lo, float(args.get('max_delay') or 5))
+    r = await logged_in_client()
+    if not r or r[1] is None:
+        if r: await safe_disconnect(r[0])
+        return {'type': 'done', 'ok': False, 'stopped': 'not_logged_in', 'error': 'اکانت اصلی روبیکا وارد نشده است.'}
+    c = r[0]; errors_in_row = 0; stopped = None
+    try:
+        for i, it in enumerate(items):
+            if i: await asyncio.sleep(random.uniform(lo, hi))
+            key = str(it.get('key') or '')
+            phone = _rubika_phone(it.get('phone'))
+            if not phone:
+                out({'type': 'item', 'key': key, 'status': 'failed', 'error': 'شماره نامعتبر'}); continue
+            try:
+                res = await _add_one(c, phone, it.get('first_name'), it.get('last_name'))
+                errors_in_row = 0
+                out({'type': 'item', 'key': key, **res})
+            except Exception as e:
+                msg = str(e)[:200]
+                out({'type': 'item', 'key': key, 'status': 'failed', 'error': msg})
+                if any(m in msg.upper() for m in FLOOD_MARKS): stopped = 'flood'; break
+                errors_in_row += 1
+                if errors_in_row >= 3: stopped = 'errors'; break
+    finally:
+        await safe_disconnect(c)
+    return {'type': 'done', 'ok': True, 'stopped': stopped}
+
+
 CMDS = {'send': cmd_send, 'status': cmd_status, 'send_code': cmd_send_code, 'sign_in': cmd_sign_in, 'logout': cmd_logout,
         'delete': cmd_delete, 'edit': cmd_edit, 'send_file': cmd_send_file, 'seen': cmd_seen, 'transcribe': cmd_transcribe,
-        'download': cmd_download}
+        'download': cmd_download, 'add_contact': cmd_add_contact, 'delete_contact': cmd_delete_contact,
+        'add_contacts': cmd_add_contacts}
 
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import https from 'https';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -1191,6 +1191,7 @@ async function storeAccountMessages(items: any[]): Promise<number> {
     applyPersonLink(db, th, k ? persons[k] : null);
     if (seen.has(extId)) continue;
     seen.add(extId); added++;
+    if (th.contact_only) delete th.contact_only;
     messages.push({
       id: Date.now() * 1000 + Math.floor(Math.random() * 1000), ext_id: extId, source: src, channel: 'rubika',
       chat_id: chatId, chat_title: th.title, student_id: th.student_id, sender: out ? 'admin' : th.title, direction: out ? 'out' : 'in',
@@ -1251,6 +1252,173 @@ app.post('/api/messenger/account-ingest', asyncHandler(async (req, res) => {
 app.get('/api/messenger/messages', (req, res) => {
   const db = readDb();
   res.json({ success: true, messages: (db as any).messages || [] });
+});
+
+// ── Rubika address book (main account): add students/leads as contacts so they can be messaged one-to-one.
+// addAddressBook / deleteContact only: never sends a message. Results live in db.rubika_contacts["student:<id>"|"lead:<id>"].
+type ContactKind = 'student' | 'lead';
+type ContactPerson = { kind: ContactKind; id: number; first_name: string; last_name: string; phone: string };
+const contactKey = (kind: ContactKind, id: number | string) => `${kind}:${id}`;
+const asContactKind = (v: unknown): ContactKind | null => (v === 'student' || v === 'lead' ? v : null);
+function contactPublic(r: any) {
+  return r ? { status: r.status, linked: !!r.guid, at: r.at, error: r.error } : null;
+}
+/** Records the result and, with a user guid, upserts a hidden (contact-only) account thread so one-to-one sends find it. */
+function applyContactResult(db: any, p: ContactPerson, res: { status: string; guid?: string; error?: string }, by: string | null) {
+  const map = (db.rubika_contacts ||= {}) as Record<string, any>;
+  const key = contactKey(p.kind, p.id);
+  const prev = map[key];
+  const k = chabokan.mobileKey(p.phone);
+  const guid = res.guid && /^[a-zA-Z0-9_]{10,64}$/.test(res.guid) ? res.guid : undefined;
+  let status = res.status;
+  const threads = (db.threads ||= []) as any[];
+  if (status === 'added' && guid && (prev?.guid === guid || threads.some(t => t.source === 'account' && t.external_id === guid && !t.contact_only))) status = 'already';
+  map[key] = { status, guid: guid || (status === 'failed' ? prev?.guid : undefined), phone: k ? `0${k}` : '', at: new Date().toISOString(), by, ...(res.error ? { error: String(res.error).slice(0, 200) } : {}) };
+  if (!map[key].guid) delete map[key].guid;
+  if (guid) {
+    const name = `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'کاربر روبیکا';
+    let th = threads.find(t => t.source === 'account' && t.external_id === guid);
+    if (!th) {
+      th = { thread_id: stableThreadId(guid), source: 'account', channel: 'rubika', external_id: guid, title: name, phone: k ? `0${k}` : '',
+        unread_count: 0, updated_at: new Date().toISOString(), last_message_text: '', contact_only: true };
+      threads.push(th);
+    }
+    if (k && !th.phone) th.phone = `0${k}`;
+    th.person = { kind: p.kind, id: p.id, name };
+    if (!th.contact_only || th.title === 'کاربر روبیکا') th.title = th.title && th.title !== 'کاربر روبیکا' ? th.title : name;
+    if (p.kind === 'student') { th.student_id = p.id; ((db.rubika_account_links ||= {}) as Record<string, string>)[String(p.id)] = guid; }
+  }
+  return map[key];
+}
+async function loadContactPerson(kind: ContactKind, id: number): Promise<ContactPerson | null> {
+  if (kind === 'student') {
+    if (chabokan.isMysqlEnabled()) {
+      const [s] = await chabokan.sql<any>('SELECT student_id AS id, first_name, last_name, phone_number FROM students WHERE student_id = ?', [id]);
+      return s ? { kind, id, first_name: s.first_name || '', last_name: s.last_name || '', phone: s.phone_number || '' } : null;
+    }
+    const s: any = readDb().students.find((x: any) => Number(x.id) === id);
+    return s ? { kind, id, first_name: s.first_name || '', last_name: s.last_name || '', phone: s.phone_number || '' } : null;
+  }
+  if (!chabokan.isMysqlEnabled()) return null;
+  const [l] = await chabokan.sql<any>('SELECT lead_id AS id, first_name, last_name, phone_number FROM leads WHERE lead_id = ?', [id]);
+  return l ? { kind, id, first_name: l.first_name || '', last_name: l.last_name || '', phone: l.phone_number || '' } : null;
+}
+/** Bulk target list; filters: active_term (students in a term with status active), unlinked (no contact result with a guid yet). */
+async function contactTargets(kind: ContactKind, f: { active_term?: boolean; unlinked?: boolean }): Promise<ContactPerson[]> {
+  let rows: any[] = [];
+  if (kind === 'student') {
+    if (chabokan.isMysqlEnabled()) {
+      rows = await chabokan.sql<any>(`SELECT s.student_id AS id, s.first_name, s.last_name, s.phone_number FROM students s
+        ${f.active_term ? `WHERE EXISTS (SELECT 1 FROM enrollments e JOIN crm_course_terms t ON t.course_id = e.course_id AND t.course_number = e.course_number
+          AND t.status = 'active' WHERE e.student_id = s.student_id)` : ''} ORDER BY s.student_id`);
+    } else if (!f.active_term) rows = readDb().students.map((s: any) => ({ id: s.id, first_name: s.first_name, last_name: s.last_name, phone_number: s.phone_number }));
+  } else if (chabokan.isMysqlEnabled()) {
+    rows = await chabokan.sql<any>("SELECT lead_id AS id, first_name, last_name, phone_number FROM leads WHERE status NOT IN ('converted','lost') ORDER BY lead_id");
+  }
+  const map = ((readDb() as any).rubika_contacts || {}) as Record<string, any>;
+  const seen = new Set<string>();
+  return rows
+    .map((r) => ({ kind, id: Number(r.id), first_name: r.first_name || '', last_name: r.last_name || '', phone: r.phone_number || '' }))
+    .filter((p) => {
+      const k = chabokan.mobileKey(p.phone);
+      if (!k || k.length !== 10 || seen.has(k)) return false;
+      seen.add(k);
+      const rec = map[contactKey(kind, p.id)];
+      return !(f.unlinked && rec && (rec.guid || rec.status === 'not_on_rubika'));
+    });
+}
+
+app.get('/api/messenger/contacts', (req, res) => {
+  const kind = asContactKind(req.query.kind);
+  if (!kind) return res.status(400).json({ error: 'نوع نامعتبر' });
+  const map = ((readDb() as any).rubika_contacts || {}) as Record<string, any>;
+  const outMap: Record<string, any> = {};
+  for (const [k, v] of Object.entries(map)) if (k.startsWith(`${kind}:`)) outMap[k.slice(kind.length + 1)] = contactPublic(v);
+  res.json({ contacts: outMap, bulk: contactJobPublic() });
+});
+
+app.post('/api/messenger/contacts/:kind/:id/add', asyncHandler(async (req, res) => {
+  const kind = asContactKind(req.params.kind); const id = Number(req.params.id);
+  if (!kind || !Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ورودی نامعتبر' });
+  if (!rubikaAccountActive()) return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است.' });
+  if (contactJob?.running) return res.status(409).json({ error: 'افزودن گروهی در حال اجراست؛ کمی بعد دوباره امتحان کنید.' });
+  const p = await loadContactPerson(kind, id);
+  if (!p) return res.status(404).json({ error: 'شخص پیدا نشد.' });
+  if (!/^9\d{9}$/.test(chabokan.mobileKey(p.phone))) return res.status(400).json({ error: 'شماره موبایل این شخص معتبر نیست.' });
+  const r = await runRubikaAccount('add_contact', { phone: p.phone, first_name: p.first_name, last_name: p.last_name });
+  const by = sessionFromRequest(req)?.username || null;
+  const db = readDb() as any;
+  const rec = applyContactResult(db, p, r.ok ? { status: r.status, guid: r.guid } : { status: 'failed', error: r.error }, by);
+  writeDb(db);
+  const labels: Record<string, string> = { added: 'به مخاطبین روبیکا اضافه شد.', already: 'از قبل مخاطب یا در گفتگو بود؛ پیوند به‌روز شد.', not_on_rubika: 'این شماره در روبیکا حساب ندارد.' };
+  res.status(r.ok ? 200 : 502).json({ ok: !!r.ok, ...contactPublic(rec), message: r.ok ? labels[rec.status] : (r.error || 'افزودن ناموفق بود.') });
+}));
+
+app.post('/api/messenger/contacts/:kind/:id/delete', asyncHandler(async (req, res) => {
+  const kind = asContactKind(req.params.kind); const id = Number(req.params.id);
+  if (!kind || !Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ورودی نامعتبر' });
+  const key = contactKey(kind, id);
+  const rec = (((readDb() as any).rubika_contacts) || {})[key];
+  if (!rec?.guid) return res.status(404).json({ error: 'این شخص در مخاطبین روبیکا ثبت نشده است.' });
+  const r = await runRubikaAccount('delete_contact', { guid: rec.guid });
+  if (!r.ok) return res.status(502).json({ ok: false, error: r.error || 'حذف مخاطب ناموفق بود.' });
+  const db = readDb() as any;
+  delete db.rubika_contacts[key];
+  // Hidden contact-only threads go; real conversations (with messages) stay.
+  db.threads = ((db.threads || []) as any[]).filter(t => !(t.source === 'account' && t.external_id === rec.guid && t.contact_only));
+  writeDb(db);
+  res.json({ ok: true, message: 'از مخاطبین روبیکا حذف شد. (گفتگوهای قبلی در CRM می‌مانند.)' });
+}));
+
+// Bulk add: one job at a time, one rubpy client, 3-5 s random gap, stops on flood/repeated errors. Sends nothing.
+let contactJob: null | { running: boolean; kind: ContactKind; total: number; done: number; added: number; already: number; not_on_rubika: number;
+  failed: number; stopped: string | null; started_at: string; finished_at?: string; by: string | null; child?: import('child_process').ChildProcess } = null;
+function contactJobPublic() {
+  if (!contactJob) return null;
+  const { child, ...rest } = contactJob; return rest;
+}
+app.post('/api/messenger/contacts/bulk/preview', asyncHandler(async (req, res) => {
+  const kind = asContactKind(req.body?.kind);
+  if (!kind) return res.status(400).json({ error: 'نوع نامعتبر' });
+  const list = await contactTargets(kind, { active_term: !!req.body?.active_term, unlinked: req.body?.unlinked !== false });
+  res.json({ count: list.length, seconds_estimate: list.length * 4 });
+}));
+app.post('/api/messenger/contacts/bulk/start', asyncHandler(async (req, res) => {
+  const kind = asContactKind(req.body?.kind);
+  if (!kind) return res.status(400).json({ error: 'نوع نامعتبر' });
+  if (!rubikaAccountActive()) return res.status(400).json({ error: 'اکانت اصلی روبیکا غیرفعال است.' });
+  if (contactJob?.running) return res.status(409).json({ error: 'یک افزودن گروهی در حال اجراست.' });
+  const list = (await contactTargets(kind, { active_term: !!req.body?.active_term, unlinked: req.body?.unlinked !== false })).slice(0, 2000);
+  if (!list.length) return res.status(400).json({ error: 'کسی برای افزودن پیدا نشد.' });
+  const by = sessionFromRequest(req)?.username || null;
+  const byKey = new Map(list.map(p => [contactKey(p.kind, p.id), p]));
+  const job: NonNullable<typeof contactJob> = { running: true, kind, total: list.length, done: 0, added: 0, already: 0, not_on_rubika: 0, failed: 0, stopped: null, started_at: new Date().toISOString(), by };
+  contactJob = job;
+  const script = path.join(process.cwd(), 'scripts', 'rubika_account.py');
+  const child = spawn(process.env.RUBIKA_PYTHON || 'python3', [script, 'add_contacts'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  job.child = child;
+  let buf = '';
+  const onLine = (line: string) => {
+    let j: any; try { j = JSON.parse(line); } catch { return; }
+    if (j.type === 'item') {
+      const p = byKey.get(String(j.key)); if (!p) return;
+      const db = readDb() as any;
+      const rec = applyContactResult(db, p, { status: j.status, guid: j.guid, error: j.error }, by);
+      writeDb(db);
+      job.done++; (job as any)[rec.status] = ((job as any)[rec.status] || 0) + 1;
+      void chabokan.insertAudit({ username: by, role: null, method: 'POST', path: `/messenger/contacts/bulk/item/${rec.status}`, entity: 'rubika_contact', entity_id: contactKey(p.kind, p.id), status: rec.status === 'failed' ? 502 : 200, ip: null });
+    } else if (j.type === 'done') { job.stopped = j.stopped || (j.ok === false ? 'error' : null); }
+  };
+  child.stdout!.on('data', (d) => { buf += String(d); let i; while ((i = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, i).trim()); buf = buf.slice(i + 1); } });
+  child.on('close', () => { if (buf.trim()) onLine(buf.trim()); job.running = false; job.finished_at = new Date().toISOString(); if (!job.stopped && job.done < job.total) job.stopped = job.stopped || 'cancelled'; delete job.child; });
+  child.on('error', () => { job.running = false; job.stopped = 'error'; });
+  child.stdin!.end(JSON.stringify({ items: list.map(p => ({ key: contactKey(p.kind, p.id), phone: p.phone, first_name: p.first_name, last_name: p.last_name })), min_delay: 3, max_delay: 5 }));
+  res.json({ ok: true, bulk: contactJobPublic() });
+}));
+app.get('/api/messenger/contacts/bulk', (_req, res) => res.json({ bulk: contactJobPublic() }));
+app.post('/api/messenger/contacts/bulk/stop', (_req, res) => {
+  if (contactJob?.running && contactJob.child) { contactJob.stopped = 'cancelled'; contactJob.child.kill('SIGTERM'); }
+  res.json({ ok: true, bulk: contactJobPublic() });
 });
 
 // ── Rubika main-account message actions (one-to-one chats only; bulk stays in campaigns, locked) ──
@@ -2757,7 +2925,7 @@ app.post('/api/registrations/:code/reject', async (req, res) => {
 
 app.get('/api/messenger/threads', (req, res) => {
   const db = readDb();
-  res.json({ success: true, threads: (db as any).threads || [] });
+  res.json({ success: true, threads: (((db as any).threads || []) as any[]).filter(t => !t.contact_only) });
 });
 
 app.get('/api/settings/academy', (req, res) => {

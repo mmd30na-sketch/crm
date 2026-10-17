@@ -8,6 +8,7 @@ import {
 import { Course } from '../types';
 import ModalPortal from './ModalPortal';
 import ActivityTimeline from './ActivityTimeline';
+import { RubikaContactButton, RubikaBulkContactsButton } from './RubikaContacts';
 import { searchKey, toLatinDigits, normalizeNationalCode, normalizeJalaliDate, jalaliToday, checkNationalCode } from '../utils/normalize';
 
 const ALL_STATUSES: LeadStatus[] = ['new', 'contacted', 'in_negotiation', 'converted', 'lost'];
@@ -203,10 +204,13 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
               <p className="text-[11px] text-slate-500 mt-0.5">افرادی که تماس گرفته‌اند ولی هنوز ثبت‌نام نکرده‌اند</p>
             </div>
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+          <RubikaBulkContactsButton kind="lead" />
           <button type="button" onClick={openCreate}
             className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 inline-flex items-center gap-1 cursor-pointer">
             <Plus className="w-3.5 h-3.5" />سرنخ جدید
           </button>
+          </div>
         </div>
       </div>
 
@@ -373,6 +377,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
                   </div>
                 )}
               </div>
+              <div className="border-t border-slate-100 pt-3"><RubikaContactButton kind="lead" id={selectedLead.id} /></div>
               {convertError && <div role="alert" className="text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-1 rounded-md">{convertError}</div>}
               {convertMsg && <div className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md">{convertMsg}</div>}
 

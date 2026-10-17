@@ -35,6 +35,7 @@ import { useIsDesktop } from './FilterSheet';
 import { downloadCsv } from '../utils/exportCsv';
 import StudentDocsSection from './print/StudentDocsSection';
 import ActivityTimeline from './ActivityTimeline';
+import { RubikaContactButton, RubikaBulkContactsButton } from './RubikaContacts';
 
 interface StudentsListProps {
   students?: Student[];
@@ -498,6 +499,7 @@ export default function StudentsList({
                 className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <Edit3 className="w-3.5 h-3.5" />ویرایش پرونده
               </button>
+              <RubikaContactButton kind="student" id={selectedStudent.id} />
               <button onClick={() => handleOpenMessaging(selectedStudent)}
                 className="flex items-center gap-1.5 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <MessageSquare className="w-3.5 h-3.5" />ارسال پیام (روبیکا/پیامک)
@@ -627,6 +629,7 @@ export default function StudentsList({
                   <X className="w-3 h-3" />پاک‌سازی
                 </button>
               )}
+              {canManage && <RubikaBulkContactsButton kind="student" />}
               <button onClick={() => downloadCsv<Student>(`students-${new Date().toISOString().slice(0, 10)}`, filteredStudents, [
                   { header: 'نام', value: (st) => st.first_name }, { header: 'نام خانوادگی', value: (st) => st.last_name },
                   { header: 'نام پدر', value: (st) => st.father_name }, { header: 'کد ملی', value: (st) => st.national_code },

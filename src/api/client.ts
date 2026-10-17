@@ -1045,3 +1045,27 @@ export async function fetchMessengerMedia(id: number): Promise<{ url: string; ty
   const blob = await res.blob();
   return { url: URL.createObjectURL(blob), type: blob.type };
 }
+
+// ── Rubika address book (main account). Adding a contact never sends a message. ──
+export type RubikaContactStatus = { status: 'added' | 'already' | 'not_on_rubika' | 'failed'; linked: boolean; at: string; error?: string };
+export type RubikaContactJob = { running: boolean; kind: 'student' | 'lead'; total: number; done: number; added: number; already: number;
+  not_on_rubika: number; failed: number; stopped: string | null; started_at: string; finished_at?: string; by: string | null };
+export async function fetchRubikaContacts(kind: 'student' | 'lead'): Promise<{ contacts: Record<string, RubikaContactStatus>; bulk: RubikaContactJob | null }> {
+  const res = await apiFetch(`/messenger/contacts?kind=${kind}`);
+  if (!res.ok) throw await serverError(res, 'وضعیت مخاطبین روبیکا دریافت نشد.');
+  return res.json();
+}
+export const addRubikaContact = (kind: 'student' | 'lead', id: number) =>
+  postJson<RubikaContactStatus & { ok: boolean; message: string }>(`/messenger/contacts/${kind}/${id}/add`, {}, 'افزودن به مخاطبین روبیکا ناموفق بود.');
+export const deleteRubikaContact = (kind: 'student' | 'lead', id: number) =>
+  postJson<{ ok: true; message: string }>(`/messenger/contacts/${kind}/${id}/delete`, {}, 'حذف مخاطب ناموفق بود.');
+export const previewRubikaContactsBulk = (b: { kind: 'student' | 'lead'; active_term?: boolean; unlinked?: boolean }) =>
+  postJson<{ count: number; seconds_estimate: number }>('/messenger/contacts/bulk/preview', b, 'شمارش ناموفق بود.');
+export const startRubikaContactsBulk = (b: { kind: 'student' | 'lead'; active_term?: boolean; unlinked?: boolean }) =>
+  postJson<{ ok: true; bulk: RubikaContactJob }>('/messenger/contacts/bulk/start', b, 'شروع افزودن گروهی ناموفق بود.');
+export const stopRubikaContactsBulk = () => postJson<{ ok: true; bulk: RubikaContactJob | null }>('/messenger/contacts/bulk/stop', {}, 'توقف ناموفق بود.');
+export async function fetchRubikaContactsBulk(): Promise<{ bulk: RubikaContactJob | null }> {
+  const res = await apiFetch('/messenger/contacts/bulk');
+  if (!res.ok) throw await serverError(res, 'وضعیت دریافت نشد.');
+  return res.json();
+}
