@@ -12,6 +12,17 @@ import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
+import {
+  ensureThemeSettingsSchema,
+  readThemeConfig,
+  writeThemeConfig,
+  normalizeTheme,
+  uploadThemeLogo,
+  removeThemeLogos,
+  removeOtherThemeLogos,
+  THEME_LOGO_DIR,
+  type ThemeConfig,
+} from './theme';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -291,6 +302,7 @@ interface DatabaseSchema {
     footer_text?: string;
     contract_text?: string;
     admin_password_hash?: string;
+    theme?: ThemeConfig;
   };
   courses: Course[];
   students: Student[];
@@ -837,6 +849,8 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth')) return next();
   if (req.path === '/health') return next();
+  // The theme (and with it the login logo) is read by the public login screen, so it needs no session.
+  if (req.path === '/settings/theme' && req.method === 'GET') return next();
   if (req.path === '/messenger/webhook') return next();
   if (req.path === '/messenger/account-ingest') return next();
   if (req.method === 'OPTIONS') return next();
@@ -844,7 +858,7 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth') || req.path === '/health' || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
+  if (req.path.startsWith('/auth') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
@@ -986,6 +1000,11 @@ app.put('/api/staff/:id', requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// The theme logo is shown on the public login screen (no session there), so /uploads/theme is
+// served without a login. It MUST be registered before the protected /uploads route below.
+if (!fs.existsSync(THEME_LOGO_DIR)) fs.mkdirSync(THEME_LOGO_DIR, { recursive: true });
+app.use('/uploads/theme', express.static(THEME_LOGO_DIR));
 
 // Serve uploads statically
 // Receipt PDFs and scans in uploads/ are financial/personal documents: admin and cashier only.
@@ -2938,6 +2957,34 @@ app.put('/api/settings/academy', (req, res) => {
   writeDb(db);
   res.json(publicSettings(db.settings));
 });
+
+// ── Theme settings («تم»): public read (the login screen shows the logo), admin write ──
+app.get('/api/settings/theme', asyncHandler(async (req, res) => {
+  res.json(await readThemeConfig(readDb().settings));
+}));
+
+app.put('/api/settings/theme', requireAdmin, asyncHandler(async (req, res) => {
+  const db = readDb();
+  const current = await readThemeConfig(db.settings);
+  const next = normalizeTheme({ ...current, ...(req.body || {}) });
+  // Reset to the default logo: the uploaded image is no longer referenced.
+  if (!next.logo_url && current.logo_url) removeThemeLogos();
+  await writeThemeConfig(db.settings, next);
+  writeDb(db);
+  res.json(next);
+}));
+
+app.post('/api/settings/theme/logo', requireAdmin, uploadThemeLogo.single('logo'), asyncHandler(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'فایل لوگو ارسال نشد.' });
+  const db = readDb();
+  const current = await readThemeConfig(db.settings);
+  const logoUrl = publicPathFromFile(req.file);
+  removeOtherThemeLogos(req.file.path);
+  const next = { ...current, logo_url: logoUrl };
+  await writeThemeConfig(db.settings, next);
+  writeDb(db);
+  res.json(next);
+}));
 app.post('/api/settings/courses', (req, res) => {
   req.url = '/api/courses';
   (app as any)._router.handle(req, res);
@@ -3160,6 +3207,7 @@ async function startServer() {
   await chabokan.initMysql();
   await ensurePhase4Schema();
   await ensureCourseTermsSchema();
+  await ensureThemeSettingsSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

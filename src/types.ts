@@ -124,6 +124,14 @@ export interface ReportTemplate {
   active: boolean;
 }
 
+/** App-wide look: light/dark mode, primary color, font stack and the public login logo. */
+export interface ThemeConfig {
+  mode: 'light' | 'dark' | 'system';
+  primary: string;
+  font: 'vazirmatn' | 'tahoma' | 'system';
+  logo_url: string | null;
+}
+
 export type StaffRole = 'admin' | 'cashier' | 'instructor';
 
 export interface StaffUser {
