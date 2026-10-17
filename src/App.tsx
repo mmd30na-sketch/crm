@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Megaphone,
   CalendarRange,
+  Wallet,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -31,6 +32,8 @@ import LeadsPanel from './components/LeadsPanel';
 import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
+import OnlinePaymentsReview from './components/OnlinePaymentsReview';
+import TraineePaymentsPanel from './components/TraineePaymentsPanel';
 import { taskSummary } from './api/phase4';
 
 const NAV_ITEMS = [
@@ -72,6 +75,14 @@ const NAV_ITEMS = [
     sublabel: 'درآمد و مخارج',
     icon: BarChart3,
     color: 'amber',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'online-payments',
+    label: 'پرداخت‌های آنلاین',
+    sublabel: 'تأیید اقساط و رسید',
+    icon: Wallet,
+    color: 'emerald',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -129,6 +140,7 @@ const ICON_COLOR_MAP: Record<string, string> = {
   purple: 'text-violet-400',
   amber:  'text-amber-400',
   rose:   'text-rose-400',
+  emerald: 'text-emerald-400',
   slate:  'text-slate-400',
 };
 
@@ -138,10 +150,21 @@ const ACTIVE_BADGE_MAP: Record<string, string> = {
   purple: 'bg-violet-500/20 text-violet-300',
   amber:  'bg-amber-500/20 text-amber-300',
   rose:   'bg-rose-500/20 text-rose-300',
+  emerald: 'bg-emerald-500/20 text-emerald-300',
   slate:  'bg-slate-500/20 text-slate-300',
 };
 
+/**
+ * Trainee payment panel is served from the same URL with ?trainee=1&t=<signed token>; it uses a signed
+ * trainee token, not a staff session, so it renders outside the staff shell.
+ */
 export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('trainee') === '1') return <TraineePaymentsPanel token={params.get('t') || ''} />;
+  return <StaffApp />;
+}
+
+function StaffApp() {
   const [authed, setAuthed] = useState<boolean>(!!api.getAuthToken());
   const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
@@ -520,6 +543,9 @@ export default function App() {
               )}
               {activeTab === 'terms' && (role === 'admin' || role === 'cashier') && (
                 <CourseTermsPanel courses={courses} isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'online-payments' && (role === 'admin' || role === 'cashier') && (
+                <OnlinePaymentsReview />
               )}
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />

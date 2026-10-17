@@ -12,6 +12,7 @@ import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
+import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -281,6 +282,23 @@ interface ReportTemplate {
   body?: string;
 }
 
+/** Trainee online installment (Zarinpal or uploaded receipt) awaiting a cashier's approval. */
+interface OnlinePayment {
+  id: number;
+  student_id: number;
+  enrollment_id: number;
+  amount: number;
+  method: 'zarinpal' | 'receipt';
+  authority?: string | null;
+  ref_id?: string | null;
+  receipt_file?: string | null;
+  status: 'pending' | 'paid' | 'approved' | 'rejected';
+  admin_note?: string | null;
+  created_at: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+}
+
 interface DatabaseSchema {
   settings: {
     academy_name: string;
@@ -299,6 +317,7 @@ interface DatabaseSchema {
   expenses: Expense[];
   reportTemplates: ReportTemplate[];
   staff_users: StaffUserRecord[];
+  online_payments: OnlinePayment[];
 }
 
 // Initial Seed Data
@@ -376,12 +395,14 @@ const initialDb: DatabaseSchema = {
     { key: 'standard_contract', title: 'قرارداد رسمی آموزش رانندگی', category: 'contract', active: true, body: '<div class="contract-print">...</div>' },
   ],
   staff_users: [],
+  online_payments: [],
 };
 
 // Helper function to read/write DB
 function parseDbFile(file: string): typeof initialDb {
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!Array.isArray(parsed.staff_users)) parsed.staff_users = [];
+  if (!Array.isArray(parsed.online_payments)) parsed.online_payments = [];
   return parsed;
 }
 
@@ -579,7 +600,8 @@ function tokenFromRequest(req: express.Request): any | null {
   const h = String(req.headers.authorization || '');
   if (h.startsWith('Bearer ')) {
     const data = verifyToken(h.slice(7).trim());
-    return data && data.kind !== 'file' ? data : null;
+    // 'file' and 'trainee' tokens are never staff sessions (the trainee routes check their own token).
+    return data && data.kind !== 'file' && data.kind !== 'trainee' ? data : null;
   }
   if (!isFilePath(req) || (req.method !== 'GET' && req.method !== 'HEAD')) return null;
   const q = String((req.query as any)?.token || '');
@@ -814,6 +836,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/courses') && write) return false;
   if (path.startsWith('/receipt-settings') && write) return false;
   if (path.startsWith('/payments') || path.startsWith('/expenses')) return role === 'cashier';
+  if (path.startsWith('/online-payments')) return role === 'cashier'; // admin handled above
   if (path.startsWith('/ocr')) return role === 'cashier';
   if (path.includes('report-templates') || path.includes('report-context') || path.includes('/receipt')) return role === 'cashier';
   if (path.startsWith('/registrations')) return role === 'cashier';
@@ -836,6 +859,8 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
 
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth')) return next();
+  // Trainee payment routes carry their own signed trainee token (never a staff session).
+  if (req.path.startsWith('/trainee-payments')) return next();
   if (req.path === '/health') return next();
   if (req.path === '/messenger/webhook') return next();
   if (req.path === '/messenger/account-ingest') return next();
@@ -844,7 +869,7 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth') || req.path === '/health' || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
+  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path === '/health' || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
@@ -2249,6 +2274,46 @@ app.get('/api/enrollments', async (req, res) => {
 });
 
 // 7. POST payments (always for one enrollment; at most what is still owed on it and by the student)
+/**
+ * Records a payment (split over the student's enrollments, oldest first) with the overpay check.
+ * Shared by POST /api/payments and by the online-payment approval. Throws `{ status, message }` on a
+ * rejected/overpaid payment so both callers answer with the same Persian error.
+ */
+async function createPaymentCore(input: {
+  studentId: number; linkedEnrollmentId: number; amount: number;
+  payDate: string; payMethod: string; paymentKind: string; description: string;
+}): Promise<any[]> {
+  if (chabokan.isMysqlEnabled()) {
+    // Check + every part + the cached amount_paid in one transaction with the enrollment rows locked.
+    return chabokan.insertPaymentAtomic(input);
+  }
+  const db = readDb();
+  if (!db.students.some(s => s.id === input.studentId)) throw Object.assign(new Error('کارآموز یافت نشد.'), { status: 404 });
+  const enr = db.enrollments.find(e => e.id === input.linkedEnrollmentId);
+  if (!enr || enr.student_id !== input.studentId) throw Object.assign(new Error('ثبت‌نام مربوط به این کارآموز یافت نشد.'), { status: 404 });
+  const { order, owed } = jsonStudentOwed(db, input.studentId);
+  const remaining = payableAmount(owed, input.linkedEnrollmentId);
+  if (input.amount > remaining) {
+    throw Object.assign(new Error(remaining > 0
+      ? `مبلغ پرداختی از مانده شهریه (${remaining.toLocaleString('fa-IR')} تومان) بیشتر است.`
+      : 'برای این کارآموز مانده‌ای برای پرداخت وجود ندارد.'), { status: 400 });
+  }
+  const parts = splitPayment(order, owed, input.amount, input.linkedEnrollmentId);
+  const created = parts.map((part, i) => ({
+    id: (db.payments.length > 0 ? Math.max(...db.payments.map(p => p.id)) : 0) + 1 + i,
+    student_id: input.studentId,
+    enrollment_id: part.enrollmentId,
+    amount: part.amount,
+    pay_date_jalali: input.payDate,
+    pay_method: input.payMethod,
+    payment_kind: input.paymentKind,
+    description: input.description,
+  }));
+  db.payments.push(...created);
+  writeDb(db);
+  return created;
+}
+
 app.post('/api/payments', asyncHandler(async (req, res) => {
   const paymentData = req.body || {};
   const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
@@ -2264,46 +2329,14 @@ app.post('/api/payments', asyncHandler(async (req, res) => {
   const payMethod = sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos';
   const paymentKind = sanitizeString(paymentData.payment_kind, 40) || 'downpayment';
   const description = sanitizeString(paymentData.description ?? paymentData.notes, 400);
-  const overpayError = (remaining: number) => remaining > 0
-    ? `مبلغ پرداختی از مانده شهریه (${remaining.toLocaleString('fa-IR')} تومان) بیشتر است.`
-    : 'برای این کارآموز مانده‌ای برای پرداخت وجود ندارد.';
 
-  if (chabokan.isMysqlEnabled()) {
-    // Check + every part + the cached amount_paid in one transaction with the enrollment rows locked.
-    try {
-      const rows = await chabokan.insertPaymentAtomic({
-        studentId, linkedEnrollmentId, amount, payDate: payDate.value, payMethod, paymentKind, description,
-      });
-      return res.json({ ...rows[0], allocations: rows.length });
-    } catch (err: any) {
-      if (err?.status) return res.status(err.status).json({ error: err.message });
-      throw err;
-    }
+  try {
+    const rows = await createPaymentCore({ studentId, linkedEnrollmentId, amount, payDate: payDate.value, payMethod, paymentKind, description });
+    return res.json({ ...rows[0], allocations: rows.length });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
+    throw err;
   }
-
-  const db = readDb();
-  if (!db.students.some(s => s.id === studentId)) return res.status(404).json({ error: 'کارآموز یافت نشد.' });
-  if (linkedEnrollmentId) {
-    const enr = db.enrollments.find(e => e.id === linkedEnrollmentId);
-    if (!enr || enr.student_id !== studentId) return res.status(404).json({ error: 'ثبت‌نام مربوط به این کارآموز یافت نشد.' });
-  }
-  const { order, owed } = jsonStudentOwed(db, studentId);
-  const remaining = payableAmount(owed, linkedEnrollmentId);
-  if (amount > remaining) return res.status(400).json({ error: overpayError(remaining) });
-  const parts = splitPayment(order, owed, amount, linkedEnrollmentId);
-  const created = parts.map((part, i) => ({
-    id: (db.payments.length > 0 ? Math.max(...db.payments.map(p => p.id)) : 0) + 1 + i,
-    student_id: studentId,
-    enrollment_id: part.enrollmentId,
-    amount: part.amount,
-    pay_date_jalali: payDate.value,
-    pay_method: payMethod,
-    payment_kind: paymentKind,
-    description,
-  }));
-  db.payments.push(...created);
-  writeDb(db);
-  res.json({ ...created[0], allocations: created.length });
 }));
 
 app.get('/api/payments', async (req, res) => {
@@ -3051,6 +3084,22 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
 
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
 registerCourseTerms(app, { isAdmin: (req) => currentRole(req) === 'admin' });
+registerOnlinePayments(app, {
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  normalizeMobile,
+  jalaliToday: () => jalaliNow(),
+  signToken: (payload, ttlMs) => signToken(payload, ttlMs),
+  verifyToken: (token) => verifyToken(token),
+  createPayment: (input) => createPaymentCore(input),
+  zarinpalMerchantId: () => {
+    try { return String((readDb().settings as any)?.gateways?.zarinpal_merchant_id || ''); } catch { return ''; }
+  },
+  publicBaseUrl: (req) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`),
+  log: (msg) => console.warn(`[online-payments] ${msg}`),
+});
 registerPhase4(app, {
   session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -3160,6 +3209,7 @@ async function startServer() {
   await chabokan.initMysql();
   await ensurePhase4Schema();
   await ensureCourseTermsSchema();
+  await ensureOnlinePaymentsSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
