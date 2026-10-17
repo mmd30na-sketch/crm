@@ -9,6 +9,7 @@ interface StudentListProps {
   payments: Payment[];
   onRefresh: () => void;
   onActiveTabChange: (tab: string, enrollmentId?: number) => void;
+  role?: 'admin' | 'cashier' | 'instructor';
 }
 
 export default function StudentList(props: StudentListProps) {

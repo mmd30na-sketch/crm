@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import FilterSheet from './FilterSheet';
 import {
   TrendingUp,
   CreditCard,
@@ -21,9 +22,11 @@ import {
   Plus,
   BarChart2,
   PieChart as PieIcon,
+  Download,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense } from '../types';
 import * as api from '../api/client';
+import { totalOutstanding as outstandingOf } from '../utils/finance';
 import {
   AreaChart,
   Area,
@@ -37,6 +40,11 @@ import {
   Legend,
   Cell,
 } from 'recharts';
+import ModalPortal from './ModalPortal';
+import { downloadCsv } from '../utils/exportCsv';
+import DebtorsReport from './DebtorsReport';
+import { jalaliTodayParts } from '../utils/normalize';
+import { monthlySeries } from '../utils/charts';
 
 interface AccountingDashboardProps {
   students: Student[];
@@ -55,30 +63,18 @@ const toEnglishDigits = (str: string): string => {
   return out;
 };
 
-function gregorianToJalali(date: Date) {
-  const gy = date.getFullYear();
-  const gm = date.getMonth() + 1;
-  const gd = date.getDate();
-  const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-  let jy = gy <= 1600 ? 0 : 979;
-  let gy2 = gy <= 1600 ? gy - 621 : gy - 1600;
-  const gy2m = gm > 2 ? gy2 + 1 : gy2;
-  let days = 365 * gy2 + Math.floor((gy2m + 3) / 4) - Math.floor((gy2m + 99) / 100) + Math.floor((gy2m + 399) / 400) - 80 + gd + g_d_m[gm - 1];
-  jy += 33 * Math.floor(days / 12053);
-  days %= 12053;
-  jy += 4 * Math.floor(days / 1461);
-  days %= 1461;
-  if (days > 365) {
-    jy += Math.floor((days - 1) / 365);
-    days = (days - 1) % 365;
-  }
-  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
-  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
-  return { jy, jm, jd };
-}
+/** "۱۴۰۵/۷/۱۶" → "1405/07/16": comparable text whatever digits/padding the record was saved with. */
+const normJalali = (raw?: string): string => {
+  const m = toEnglishDigits(raw || '').trim().match(/^(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  return m ? `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}` : '';
+};
+
+const PAY_METHOD_LABELS: Record<string, string> = {
+  pos: 'کارتخوان', cash: 'نقدی', card_transfer: 'کارت‌به‌کارت', online: 'آنلاین', cheque: 'چک',
+};
 
 function currentJalaliYearMonth() {
-  const { jy, jm } = gregorianToJalali(new Date());
+  const { jy, jm } = jalaliTodayParts();
   return `${jy}/${String(jm).padStart(2, '0')}`;
 }
 
@@ -93,8 +89,11 @@ export default function AccountingDashboard({
 
   /* Default to 'all' so no data is filtered out on first load! */
   const [dateFilterMode, setDateFilterMode]   = useState<'all' | 'this_month' | 'custom'>('all');
-  const [customStartDate, setCustomStartDate] = useState('1405/01/01');
-  const [customEndDate, setCustomEndDate]     = useState('1405/12/29');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate]     = useState('');
+  // Course + course-number (term) scope for payments, tuition and outstanding totals.
+  const [accCourse, setAccCourse] = useState('all');
+  const [accTerm, setAccTerm]     = useState('all');
 
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [expenseTitle, setExpenseTitle]             = useState('');
@@ -105,69 +104,61 @@ export default function AccountingDashboard({
 
   const formatCurrency = (amount: number) => amount.toLocaleString('fa-IR') + ' تومان';
 
-  const filterPaymentsByDate = (payList: Payment[]) => {
-    if (dateFilterMode === 'all') return payList;
-    return payList.filter(p => {
-      const pdate = toEnglishDigits(p.pay_date_jalali || '');
-      if (!pdate) return true;
-      if (dateFilterMode === 'this_month') {
-        return pdate.startsWith(currentJalaliYearMonth());
-      }
-      if (dateFilterMode === 'custom' && customStartDate && customEndDate) {
-        return pdate >= toEnglishDigits(customStartDate) && pdate <= toEnglishDigits(customEndDate);
-      }
-      return true;
-    });
+  /** Records without a readable date can't belong to a period, so they only show under "all". */
+  const inPeriod = (rawDate?: string) => {
+    if (dateFilterMode === 'all') return true;
+    const d = normJalali(rawDate);
+    if (!d) return false;
+    if (dateFilterMode === 'this_month') return d.startsWith(currentJalaliYearMonth());
+    if (customStartDate && customEndDate) return d >= normJalali(customStartDate) && d <= normJalali(customEndDate);
+    return true;
   };
 
-  const filteredPayments = filterPaymentsByDate(payments);
-  const filteredExpenses = dateFilterMode === 'all' ? expenses : expenses.filter(ex => {
-    const pdate = toEnglishDigits(ex.pay_date_jalali || ex.expense_date || '');
-    if (!pdate) return false;
-    if (dateFilterMode === 'this_month') return pdate.startsWith(currentJalaliYearMonth());
-    if (dateFilterMode === 'custom' && customStartDate && customEndDate) {
-      return pdate >= toEnglishDigits(customStartDate) && pdate <= toEnglishDigits(customEndDate);
-    }
-    return true;
-  });
+  // Only payments of an existing enrollment count (the server lists only those; this guards stale state).
+  const termNumbers = Array.from(new Set(enrollments
+    .filter(e => accCourse === 'all' || String(e.course_id) === accCourse)
+    .map(e => e.course_number).filter((n): n is number => n != null && Number(n) > 0))).sort((a, b) => b - a);
+  const matchScope = (e: Enrollment) => (accCourse === 'all' || String(e.course_id) === accCourse) && (accTerm === 'all' || String(e.course_number ?? '') === accTerm);
+  const scopedEnrollments = enrollments.filter(matchScope);
+  const enrollmentIds = new Set(scopedEnrollments.map(e => e.id));
+  const filteredPayments = payments.filter(p => p.enrollment_id != null && enrollmentIds.has(p.enrollment_id) && inPeriod(p.pay_date_jalali));
+  const filteredExpenses = expenses.filter(ex => inPeriod(ex.pay_date_jalali || ex.expense_date));
 
   /* Totals */
-  const totalTuition     = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
+  const totalTuition     = scopedEnrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
   const totalPayments    = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalExpenses    = filteredExpenses.reduce((sum, ex) => sum + ex.amount, 0);
-  const totalOutstanding = Math.max(0, totalTuition - payments.reduce((sum, p) => sum + p.amount, 0));
+  const totalOutstanding = outstandingOf(scopedEnrollments, payments); // per-enrollment balances, each clamped at 0
   const netProfit        = totalPayments - totalExpenses;
 
+  /* Per-term summary (course + course_number): due, paid (all time), remaining (per enrollment, clamped at 0) */
+  const paidByEnrollment = new Map<number, number>();
+  payments.forEach(p => { if (p.enrollment_id != null) paidByEnrollment.set(p.enrollment_id, (paidByEnrollment.get(p.enrollment_id) || 0) + p.amount); });
+  const termSummary = Array.from(scopedEnrollments.reduce((m, e) => {
+    const key = `${e.course_id}|${e.course_number ?? ''}`;
+    const row = m.get(key) || { course_id: e.course_id, course_number: e.course_number ?? null, count: 0, due: 0, paid: 0, remaining: 0 };
+    const paid = paidByEnrollment.get(e.id) || 0;
+    row.count += 1; row.due += e.final_price || 0; row.paid += paid; row.remaining += Math.max(0, (e.final_price || 0) - paid);
+    m.set(key, row); return m;
+  }, new Map<string, { course_id: number; course_number: number | null; count: number; due: number; paid: number; remaining: number }>()).values())
+    .sort((a, b) => (b.course_number ?? -1) - (a.course_number ?? -1) || a.course_id - b.course_id);
+  const courseTitle = (id: number) => courses.find(c => Number(c.id) === Number(id))?.title || `دوره ${id}`;
+
   /* ── 1. Area Chart Data from real ledger (no dummy padding) ── */
-  const monthNames = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
-  const monthlyMap: Record<string, { income: number; expense: number }> = {};
-  monthNames.forEach(m => { monthlyMap[m] = { income: 0, expense: 0 }; });
-
-  const monthFromJalali = (raw?: string): string | null => {
-    const d = toEnglishDigits(raw || '');
-    const m = d.match(/\d{4}\/(\d{1,2})/);
-    if (!m) return null;
-    const idx = Math.max(1, Math.min(12, parseInt(m[1], 10))) - 1;
-    return monthNames[idx];
-  };
-  filteredPayments.forEach(p => {
-    const key = monthFromJalali(p.pay_date_jalali);
-    if (key) monthlyMap[key].income += p.amount;
-  });
-  filteredExpenses.forEach(ex => {
-    const key = monthFromJalali(ex.pay_date_jalali || ex.expense_date);
-    if (key) monthlyMap[key].expense += ex.amount;
-  });
-
-  const areaChartData = monthNames.filter(m => monthlyMap[m].income || monthlyMap[m].expense).map(m => ({
-    month: m,
-    'درآمد (واریزی)': monthlyMap[m].income,
-    'هزینه (خروجی)': monthlyMap[m].expense,
+  // Grouped by year + month in calendar order (not by month name, which merged years and sorted
+  // مهر/آبان/آذر of last year after this year's months); empty months in between stay on the axis.
+  const areaChartData = monthlySeries(
+    filteredPayments.map(p => ({ date: normJalali(p.pay_date_jalali), amount: p.amount })),
+    filteredExpenses.map(ex => ({ date: normJalali(ex.pay_date_jalali || ex.expense_date), amount: ex.amount })),
+  ).map(p => ({
+    month: p.month,
+    'درآمد (واریزی)': p.income,
+    'هزینه (خروجی)': p.expense,
   }));
 
   /* ── 2. Bar Chart Data (Comparison by Course) ── */
   const courseComparisonData = courses.map(course => {
-    const courseEnrollments = enrollments.filter(e => e.course_id === course.id);
+    const courseEnrollments = enrollments.filter(e => Number(e.course_id) === Number(course.id));
     const courseTuition = courseEnrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
     const coursePayments = payments
       .filter(p => courseEnrollments.some(e => e.id === p.enrollment_id))
@@ -175,6 +166,7 @@ export default function AccountingDashboard({
 
     return {
       name: course.title.length > 15 ? course.title.slice(0, 15) + '...' : course.title,
+      fullTitle: course.title,
       'شهریه کل': courseTuition,
       'وصول شده': coursePayments,
     };
@@ -189,17 +181,17 @@ export default function AccountingDashboard({
         type: 'income' as const,
         title: st ? `شهریه کارآموز: ${st.first_name} ${st.last_name}` : 'دریافتی صندوق',
         amount: p.amount,
-        date: p.pay_date_jalali || '۱۴۰۵/۰۵/۲۸',
-        method: p.pay_method === 'pos' ? 'کارتخوان' : p.pay_method === 'cash' ? 'نقدی' : 'کارت‌به‌کارت',
+        date: normJalali(p.pay_date_jalali) || '—',
+        method: PAY_METHOD_LABELS[p.pay_method || ''] || p.pay_method || 'سایر',
         desc: p.description || 'ثبت قسط شهریه',
       };
     }),
-    ...expenses.map(ex => ({
+    ...filteredExpenses.map(ex => ({
       id: `exp_${ex.id}`,
       type: 'expense' as const,
       title: ex.title,
       amount: ex.amount,
-      date: ex.pay_date_jalali || ex.expense_date || '۱۴۰۵/۰۵/۲۸',
+      date: normJalali(ex.pay_date_jalali || ex.expense_date) || '—',
       method: ex.category || ex.pay_method || 'هزینه جاری',
       desc: ex.description || 'ثبت خروجی صندوق',
     })),
@@ -219,8 +211,8 @@ export default function AccountingDashboard({
       onRefresh();
       setIsExpenseModalOpen(false);
       setExpenseTitle(''); setExpenseAmount(''); setExpenseDesc('');
-    } catch {
-      alert('خطا در ثبت هزینه');
+    } catch (err: any) {
+      alert(err?.message || 'خطا در ثبت هزینه');
     } finally {
       setIsSubmittingExpense(false);
     }
@@ -245,6 +237,38 @@ export default function AccountingDashboard({
 
         {/* Filter Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => {
+              const stu = new Map(students.map((st) => [st.id, st]));
+              downloadCsv<Payment>(`payments-${new Date().toISOString().slice(0, 10)}`, filteredPayments, [
+                { header: 'تاریخ', value: (p) => p.pay_date_jalali },
+                { header: 'هنرجو', value: (p) => { const st = stu.get(p.student_id); return st ? `${st.first_name} ${st.last_name}` : p.student_id; } },
+                { header: 'کد ملی', value: (p) => stu.get(p.student_id)?.national_code },
+                { header: 'مبلغ', value: (p) => p.amount }, { header: 'روش', value: (p) => p.pay_method },
+                { header: 'نوع', value: (p) => p.payment_kind }, { header: 'توضیحات', value: (p) => p.description },
+              ]);
+            }}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition cursor-pointer">
+            <Download className="w-3.5 h-3.5" />اکسل پرداخت‌ها
+          </button>
+          <button onClick={() => downloadCsv<Expense>(`expenses-${new Date().toISOString().slice(0, 10)}`, filteredExpenses, [
+              { header: 'تاریخ', value: (e) => e.pay_date_jalali || e.expense_date }, { header: 'عنوان', value: (e) => e.title },
+              { header: 'مبلغ', value: (e) => e.amount }, { header: 'دسته', value: (e) => e.category || e.pay_method },
+              { header: 'توضیحات', value: (e) => e.description },
+            ])}
+            className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl hover:bg-amber-100 transition cursor-pointer">
+            <Download className="w-3.5 h-3.5" />اکسل هزینه‌ها
+          </button>
+          <FilterSheet title="فیلتر حسابداری" count={(dateFilterMode !== 'all' ? 1 : 0) + (accCourse !== 'all' ? 1 : 0) + (accTerm !== 'all' ? 1 : 0)} onClear={() => { setDateFilterMode('all'); setCustomStartDate(''); setCustomEndDate(''); setAccCourse('all'); setAccTerm('all'); }}>
+          <select value={accCourse} onChange={e => { setAccCourse(e.target.value); setAccTerm('all'); }} aria-label="دوره"
+            className="px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:border-sky-400 cursor-pointer">
+            <option value="all">همه دوره‌ها</option>
+            {courses.map(c => <option key={c.id} value={String(c.id)}>{c.title}</option>)}
+          </select>
+          <select value={accTerm} onChange={e => setAccTerm(e.target.value)} aria-label="شماره دوره"
+            className="px-3 py-2 text-xs border border-amber-200 bg-amber-50/50 font-bold text-amber-900 rounded-xl focus:outline-none cursor-pointer">
+            <option value="all">همه شماره‌ها</option>
+            {termNumbers.map(n => <option key={n} value={String(n)}>دوره شماره {n}</option>)}
+          </select>
           <div className="flex bg-slate-100 p-1 rounded-xl text-xs font-bold border border-slate-200">
             <button onClick={() => setDateFilterMode('all')}
               className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${dateFilterMode === 'all' ? 'bg-white text-sky-700 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}>
@@ -259,6 +283,16 @@ export default function AccountingDashboard({
               تاریخ سفارشی
             </button>
           </div>
+
+          {dateFilterMode === 'custom' && (
+            <div className="flex items-center gap-1.5 text-xs">
+              <input type="text" value={customStartDate} onChange={e => setCustomStartDate(e.target.value)} placeholder="از 1404/01/01"
+                className="w-28 px-2 py-1.5 border border-slate-200 rounded-lg font-mono text-center focus:outline-none focus:border-sky-400" />
+              <input type="text" value={customEndDate} onChange={e => setCustomEndDate(e.target.value)} placeholder="تا 1404/12/29"
+                className="w-28 px-2 py-1.5 border border-slate-200 rounded-lg font-mono text-center focus:outline-none focus:border-sky-400" />
+            </div>
+          )}
+          </FilterSheet>
 
           <button onClick={() => setIsExpenseModalOpen(true)}
             className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition cursor-pointer shadow-xs">
@@ -338,9 +372,6 @@ export default function AccountingDashboard({
             <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
               <Activity className="w-4 h-4 text-sky-500" />نمودار روند جریان درآمد در برابر هزینه‌ها
             </h3>
-            <span className="text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-100">
-              پنج ماه اخیر
-            </span>
           </div>
 
           <div className="h-64">
@@ -357,7 +388,8 @@ export default function AccountingDashboard({
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                {/* interval={0}: every month gets its label (the default skips labels when they are crowded) */}
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#94a3b8" interval={0} angle={-35} textAnchor="end" height={48} />
                 <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
                 <Tooltip formatter={(v: any) => [`${v.toLocaleString('fa-IR')} تومان`]} />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
@@ -374,18 +406,16 @@ export default function AccountingDashboard({
             <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
               <BarChart2 className="w-4 h-4 text-emerald-500" />نمودار مقایسه‌ای کل شهریه و میزان وصولی دوره‌ها
             </h3>
-            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-              تصل تفکیکی
-            </span>
           </div>
 
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={courseComparisonData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} />
+                {/* interval={0}: one label per course (the default dropped labels, so a course looked missing) */}
+                <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} interval={0} angle={-35} textAnchor="end" height={60} />
                 <YAxis stroke="#94a3b8" tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(v: any) => [`${v.toLocaleString('fa-IR')} تومان`]} />
+                <Tooltip formatter={(v: any) => [`${v.toLocaleString('fa-IR')} تومان`]} labelFormatter={(_l: any, p: any) => p?.[0]?.payload?.fullTitle ?? _l} />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
                 <Bar dataKey="شهریه کل" fill="#94a3b8" radius={[4, 4, 0, 0]} maxBarSize={25} />
                 <Bar dataKey="وصول شده" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={25} />
@@ -446,9 +476,40 @@ export default function AccountingDashboard({
         </div>
       </div>
 
+      {/* ── Per-term summary ── */}
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-black text-slate-800">خلاصه مالی به تفکیک شماره دوره</h3>
+          <span className="text-[11px] text-slate-400">مبالغ به تومان</span>
+        </div>
+        {termSummary.length === 0 ? <div className="text-xs text-slate-400 py-6 text-center">ثبت‌نامی در این محدوده نیست.</div> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-slate-50 text-slate-500"><tr>
+                <th className="px-3 py-2.5">دوره</th><th className="px-3 py-2.5">شماره</th><th className="px-3 py-2.5">ثبت‌نام</th>
+                <th className="px-3 py-2.5">کل شهریه</th><th className="px-3 py-2.5">پرداخت‌شده</th><th className="px-3 py-2.5">مانده</th>
+              </tr></thead>
+              <tbody>
+                {termSummary.map(t => (
+                  <tr key={`${t.course_id}|${t.course_number}`} className="border-t border-slate-100 hover:bg-sky-50/40 cursor-pointer"
+                    onClick={() => { setAccCourse(String(t.course_id)); setAccTerm(t.course_number != null ? String(t.course_number) : 'all'); }}>
+                    <td className="px-3 py-2.5 font-bold text-slate-800">{courseTitle(t.course_id)}</td>
+                    <td className="px-3 py-2.5">{t.course_number != null ? t.course_number.toLocaleString('fa-IR') : 'بدون شماره'}</td>
+                    <td className="px-3 py-2.5">{t.count.toLocaleString('fa-IR')}</td>
+                    <td className="px-3 py-2.5">{t.due.toLocaleString('fa-IR')}</td>
+                    <td className="px-3 py-2.5 text-emerald-700">{t.paid.toLocaleString('fa-IR')}</td>
+                    <td className={`px-3 py-2.5 ${t.remaining > 0 ? 'text-rose-600 font-bold' : ''}`}>{t.remaining.toLocaleString('fa-IR')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* ── EXPENSE MODAL ── */}
       {isExpenseModalOpen && (
-        <div className="carla-modal-overlay">
+        <ModalPortal><div className="carla-modal-overlay">
           <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -489,8 +550,13 @@ export default function AccountingDashboard({
               </div>
             </form>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4" id="debtors-report">
+        <h3 className="text-sm font-black text-slate-900 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-rose-600" />گزارش بدهکاران</h3>
+        <DebtorsReport students={students} courses={courses} enrollments={enrollments} payments={payments} />
+      </div>
     </div>
   );
 }

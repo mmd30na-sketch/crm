@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   TrendingUp,
   Users,
@@ -20,7 +20,12 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
+import * as api from '../api/client';
+import { totalOutstanding } from '../utils/finance';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import ModalPortal from './ModalPortal';
+import { jalaliTodayParts } from '../utils/normalize';
+import { listTerms, CourseTerm, TERMS_CHANGED_EVENT } from '../api/courseTerms';
 
 interface SupervisorDashboardProps {
   students: Student[];
@@ -32,6 +37,14 @@ interface SupervisorDashboardProps {
   isSidebarOpen?: boolean;
 }
 
+interface CalendarEvent {
+  day: number;
+  month?: number;
+  year?: number;
+  title: string;
+  time: string;
+}
+
 interface Task {
   id: number;
   text: string;
@@ -41,32 +54,12 @@ interface Task {
 
 const JALALI_MONTHS = ['فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور', 'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'];
 
-function gregorianToJalali(date: Date) {
-  const gy = date.getFullYear();
-  const gm = date.getMonth() + 1;
-  const gd = date.getDate();
-  const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-  let jy = gy <= 1600 ? 0 : 979;
-  let gy2 = gy <= 1600 ? gy - 621 : gy - 1600;
-  const gy2m = gm > 2 ? gy2 + 1 : gy2;
-  let days = 365 * gy2 + Math.floor((gy2m + 3) / 4) - Math.floor((gy2m + 99) / 100) + Math.floor((gy2m + 399) / 400) - 80 + gd + g_d_m[gm - 1];
-  jy += 33 * Math.floor(days / 12053);
-  days %= 12053;
-  jy += 4 * Math.floor(days / 1461);
-  days %= 1461;
-  if (days > 365) {
-    jy += Math.floor((days - 1) / 365);
-    days = (days - 1) % 365;
-  }
-  const jm = days < 186 ? 1 + Math.floor(days / 31) : 7 + Math.floor((days - 186) / 30);
-  const jd = 1 + (days < 186 ? days % 31 : (days - 186) % 30);
-  return { jy, jm, jd };
-}
+const isJalaliLeap = (jy: number) => [1, 5, 9, 13, 17, 22, 26, 30].includes(jy % 33);
 
-function jalaliMonthLength(jm: number) {
+function jalaliMonthLength(jm: number, jy: number) {
   if (jm <= 6) return 31;
   if (jm <= 11) return 30;
-  return 29;
+  return isJalaliLeap(jy) ? 30 : 29;
 }
 
 export default function SupervisorDashboard({
@@ -79,30 +72,28 @@ export default function SupervisorDashboard({
   isSidebarOpen = true,
 }: SupervisorDashboardProps) {
 
-  // Persisted tasks
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem('carla_tasks');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
-    }
-    return [];
-  });
-
+  // To-do list and calendar events live on the server so every admin sees the same ones.
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskText, setNewTaskText] = useState('');
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  // Saved only after the initial GET succeeded AND the user changed something: a failed or slow load
+  // must never overwrite the shared notes with empty lists.
+  const notesLoaded = useRef(false);
+  const notesEdited = useRef(false);
+  const editTasks: typeof setTasks = (v) => { notesEdited.current = true; setTasks(v); };
+  const editEvents: typeof setCalendarEvents = (v) => { notesEdited.current = true; setCalendarEvents(v); };
 
-  // Persisted calendar events
-  const [calendarEvents, setCalendarEvents] = useState(() => {
-    const saved = localStorage.getItem('carla_calendar_events');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
-    }
-    return [];
-  });
-
-  const todayJalali = gregorianToJalali(new Date());
-  const currentMonth = `${JALALI_MONTHS[todayJalali.jm - 1]} ${todayJalali.jy}`;
-  const daysInMonth = jalaliMonthLength(todayJalali.jm);
-  const weekdayLabel = new Date().toLocaleDateString('fa-IR', { weekday: 'long' });
+  const todayJalali = jalaliTodayParts();
+  // Dates are shown with Persian digits, like the header date (toLocaleDateString('fa-IR')).
+  const faNum = (n: number) => n.toLocaleString('fa-IR', { useGrouping: false });
+  const currentMonth = `${JALALI_MONTHS[todayJalali.jm - 1]} ${faNum(todayJalali.jy)}`;
+  const daysInMonth = jalaliMonthLength(todayJalali.jm, todayJalali.jy);
+  // Persian weeks start on Saturday; Sunday = 0 … Saturday = 6 (weekday in Iran, not the browser's zone).
+  const todayWeekdayIndex = (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(
+    new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'Asia/Tehran' }).format(new Date())) + 1) % 7;
+  const firstDayOffset = (((todayWeekdayIndex - (todayJalali.jd - 1)) % 7) + 7) % 7;
+  const eventsOn = (day: number) => calendarEvents.filter(e => e.day === day && e.year === todayJalali.jy && e.month === todayJalali.jm);
+  const weekdayLabel = new Date().toLocaleDateString('fa-IR', { weekday: 'long', timeZone: 'Asia/Tehran' });
 
   const [isCalendarOpen, setIsCalendarOpen]   = useState(false);
   const [selectedDay, setSelectedDay]         = useState(todayJalali.jd);
@@ -111,21 +102,44 @@ export default function SupervisorDashboard({
   const [newEventDay, setNewEventDay]         = useState(todayJalali.jd);
 
   useEffect(() => {
-    localStorage.setItem('carla_tasks', JSON.stringify(tasks));
-  }, [tasks]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const notes = await api.fetchDashboardNotes();
+        let loadedTasks: Task[] = notes.tasks || [];
+        let loadedEvents: CalendarEvent[] = notes.events || [];
+        // One-time move of notes that were kept in this browser before they were shared (only into empty server notes).
+        if (loadedTasks.length === 0 && loadedEvents.length === 0) {
+          try {
+            loadedTasks = JSON.parse(localStorage.getItem('carla_tasks') || '[]');
+            loadedEvents = JSON.parse(localStorage.getItem('carla_calendar_events') || '[]');
+            if (loadedTasks.length || loadedEvents.length) notesEdited.current = true;
+          } catch { /* ignore */ }
+        }
+        // Events saved before months were recorded belong to the current month.
+        loadedEvents = loadedEvents.map(e => ({ ...e, year: e.year || todayJalali.jy, month: e.month || todayJalali.jm }));
+        if (!cancelled) { setTasks(loadedTasks); setCalendarEvents(loadedEvents); notesLoaded.current = true; }
+      } catch { /* not allowed or offline: show empty lists but never save them */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('carla_calendar_events', JSON.stringify(calendarEvents));
-  }, [calendarEvents]);
+    if (!notesLoaded.current || !notesEdited.current) return;
+    // Both lists empty after a user edit = the user cleared them on purpose.
+    const cleared = tasks.length === 0 && calendarEvents.length === 0;
+    const timer = setTimeout(() => { api.saveDashboardNotes({ tasks, events: calendarEvents }, cleared).catch(() => {}); }, 600);
+    return () => clearTimeout(timer);
+  }, [tasks, calendarEvents]);
 
   const handleToggleTask = (id: number) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+    editTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
   };
 
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskText.trim()) return;
-    setTasks(prev => [
+    editTasks(prev => [
       { id: Date.now(), text: newTaskText.trim(), completed: false, priority: 'medium' },
       ...prev,
     ]);
@@ -133,30 +147,59 @@ export default function SupervisorDashboard({
   };
 
   const handleDeleteTask = (id: number) => {
-    setTasks(prev => prev.filter(t => t.id !== id));
+    editTasks(prev => prev.filter(t => t.id !== id));
   };
 
   const handleAddEvent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newEventTitle.trim()) return;
-    setCalendarEvents(prev => [
+    editEvents(prev => [
       ...prev,
-      { day: newEventDay, title: newEventTitle.trim(), time: newEventTime },
+      { day: newEventDay, month: todayJalali.jm, year: todayJalali.jy, title: newEventTitle.trim(), time: newEventTime },
     ]);
     setNewEventTitle('');
   };
 
+  /* Active terms (crm_course_terms.status = 'active'): reloaded on mount, on any term write, on tab focus and every 60s. */
+  const [activeTerms, setActiveTerms] = useState<CourseTerm[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => listTerms({ status: 'active' }).then(r => { if (alive) setActiveTerms(r); }).catch(() => { if (alive) setActiveTerms(prev => prev ?? []); });
+    load();
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    window.addEventListener(TERMS_CHANGED_EVENT, load);
+    document.addEventListener('visibilitychange', onVis);
+    const timer = setInterval(load, 60000);
+    return () => { alive = false; window.removeEventListener(TERMS_CHANGED_EVENT, load); document.removeEventListener('visibilitychange', onVis); clearInterval(timer); };
+  }, []);
+
+  // Active trainees = enrollments whose (course_id, course_number) is an active term.
+  const paidByEnrollment = new Map<number, number>();
+  payments.forEach(p => { if (p.enrollment_id) paidByEnrollment.set(Number(p.enrollment_id), (paidByEnrollment.get(Number(p.enrollment_id)) || 0) + (Number(p.amount) || 0)); });
+  const termRows = (activeTerms || []).map(term => {
+    const ens = enrollments.filter(e => Number(e.course_id) === Number(term.course_id) && Number(e.course_number) === Number(term.course_number));
+    let settled = 0, partial = 0, unpaid = 0, due = 0, paid = 0;
+    ens.forEach(e => {
+      const price = Number(e.final_price) || 0, got = paidByEnrollment.get(Number(e.id)) || 0;
+      due += price; paid += Math.min(got, price || got);
+      if (price > 0 && got >= price) settled++; else if (got > 0) partial++; else if (price > 0) unpaid++; else settled++;
+    });
+    return { term, count: ens.length, students: new Set(ens.map(e => Number(e.student_id))), settled, partial, unpaid, due, paid };
+  });
+  const activeTraineeIds = new Set<number>();
+  termRows.forEach(r => r.students.forEach(id => activeTraineeIds.add(id)));
+
   /* Analytics calculations */
   const totalStudentsCount   = students.length;
-  const activeStudentsCount  = students.filter(s => s.status === 'active').length;
+  const activeStudentsCount  = activeTraineeIds.size;
   const totalTuitionRevenue  = enrollments.reduce((sum, e) => sum + (e.final_price || 0), 0);
   const totalReceivedCash    = payments.reduce((sum, p) => sum + p.amount, 0);
-  const totalOutstandingDebt = Math.max(0, totalTuitionRevenue - totalReceivedCash);
+  const totalOutstandingDebt = totalOutstanding(enrollments, payments); // per-enrollment balances, each clamped at 0
 
   const courseDistribution = courses.map(course => {
-    const count = enrollments.filter(e => e.course_id === course.id).length;
+    const count = enrollments.filter(e => Number(e.course_id) === Number(course.id)).length;
     return {
-      name: course.title.split(' ')[0] + '...',
+      name: course.title.length > 14 ? course.title.slice(0, 13) + '…' : course.title,
       fullTitle: course.title,
       'تعداد هنرجو': count,
     };
@@ -204,7 +247,7 @@ export default function SupervisorDashboard({
             </div>
             <div>
               <span className="text-[11px] font-semibold text-slate-400 block">کل پرونده‌های ثبت‌شده</span>
-              <span className="text-xl font-black text-slate-900 font-mono">{totalStudentsCount} نفر</span>
+              <span className="text-xl font-black text-slate-900 font-mono">{faNum(totalStudentsCount)} نفر</span>
             </div>
           </div>
         </div>
@@ -218,7 +261,7 @@ export default function SupervisorDashboard({
             </div>
             <div>
               <span className="text-[11px] font-semibold text-slate-400 block">کارآموزان فعال و در حال آموزش</span>
-              <span className="text-xl font-black text-emerald-600 font-mono">{activeStudentsCount} نفر</span>
+              <span className="text-xl font-black text-emerald-600 font-mono">{faNum(activeStudentsCount)} نفر</span>
             </div>
           </div>
         </div>
@@ -253,6 +296,45 @@ export default function SupervisorDashboard({
 
       </div>
 
+      {/* ── Active trainees monitoring (live from crm_course_terms) ── */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3" id="active-trainees-monitor">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+          <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-500" />نظارت کارآموزان فعال
+          </h3>
+          <span className="text-[10px] text-slate-400">{faNum(termRows.length)} دوره در حال برگزاری · {faNum(activeStudentsCount)} کارآموز</span>
+        </div>
+        {activeTerms === null ? (
+          <p className="text-xs text-slate-400 py-4 text-center">در حال بارگذاری…</p>
+        ) : termRows.length === 0 ? (
+          <p className="text-xs text-slate-400 py-4 text-center">هیچ دوره‌ای در وضعیت «در حال برگزاری» نیست.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {termRows.map(r => (
+              <button type="button" key={r.term.id} onClick={() => onActiveTabChange('terms')}
+                className="text-right p-3 rounded-xl border border-slate-200 hover:border-emerald-300 bg-slate-50/60 transition space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-xs font-extrabold text-slate-800 block break-words">{r.term.course_title}</span>
+                    <span className="text-[10px] text-slate-400">دوره {faNum(r.term.course_number)}{r.term.title ? ` · ${r.term.title}` : ''}</span>
+                  </div>
+                  <span className="shrink-0 text-sm font-black text-emerald-600 font-mono">{faNum(r.count)}{r.term.capacity ? `/${faNum(r.term.capacity)}` : ''} نفر</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">تسویه {faNum(r.settled)}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">قسطی {faNum(r.partial)}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100">بدون پرداخت {faNum(r.unpaid)}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                  <div className="h-full bg-emerald-500" style={{ width: `${r.due > 0 ? Math.min(100, Math.round(r.paid / r.due * 100)) : 0}%` }} />
+                </div>
+                <span className="text-[10px] text-slate-500 block">وصول {formatCurrency(r.paid)} از {formatCurrency(r.due)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* ── Visual Analytics Section ── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
 
@@ -282,7 +364,7 @@ export default function SupervisorDashboard({
               </ResponsiveContainer>
               <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                 <span className="text-xs font-mono font-bold text-slate-800">
-                  {totalTuitionRevenue > 0 ? Math.round((totalReceivedCash / totalTuitionRevenue) * 100) : 0}%
+                  {faNum(totalTuitionRevenue > 0 ? Math.round((totalReceivedCash / totalTuitionRevenue) * 100) : 0)}٪
                 </span>
                 <span className="text-[8px] text-slate-400 font-semibold">تکمیل</span>
               </div>
@@ -307,14 +389,15 @@ export default function SupervisorDashboard({
             <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
               <Layers className="w-4 h-4 text-violet-500" />توزیع کارآموزان به تفکیک دوره‌ها
             </h3>
-            <span className="text-[10px] text-slate-400">{courses.length} دوره فعال</span>
+            <span className="text-[10px] text-slate-400">{courses.length.toLocaleString('fa-IR')} دوره</span>
           </div>
 
-          <div className="h-44">
+          <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={courseDistribution}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} />
+                {/* interval={0}: one label per course (the default dropped crowded labels, so courses looked missing) */}
+                <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={50} />
                 <YAxis stroke="#94a3b8" tick={{ fontSize: 10 }} allowDecimals={false} />
                 <Tooltip formatter={(value: any, name: any, props: any) => [value, props.payload.fullTitle]} />
                 <Bar dataKey="تعداد هنرجو" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={35} />
@@ -383,15 +466,15 @@ export default function SupervisorDashboard({
 
           <div className="flex items-center gap-4 py-1">
             <div className="w-16 h-16 bg-gradient-to-br from-sky-600 to-sky-500 text-white rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-md shadow-sky-200">
-              <span className="text-xl font-black font-mono leading-none">{String(todayJalali.jd)}</span>
+              <span className="text-xl font-black font-mono leading-none">{faNum(todayJalali.jd)}</span>
               <span className="text-[10px] font-bold mt-1">{currentMonth}</span>
             </div>
             <div>
               <span className="text-[10px] font-bold text-slate-400 block">امروز:</span>
-              <h4 className="text-sm font-extrabold text-slate-900">{weekdayLabel}، {todayJalali.jd} {currentMonth}</h4>
+              <h4 className="text-sm font-extrabold text-slate-900">{weekdayLabel}، {faNum(todayJalali.jd)} {currentMonth}</h4>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                {calendarEvents.filter(e => e.day === todayJalali.jd).length
-                  ? calendarEvents.filter(e => e.day === todayJalali.jd).map(e => e.title).join('، ')
+                {eventsOn(todayJalali.jd).length
+                  ? eventsOn(todayJalali.jd).map(e => e.title).join('، ')
                   : 'رویدادی ثبت نشده'}
               </p>
             </div>
@@ -402,7 +485,7 @@ export default function SupervisorDashboard({
 
       {/* ── CALENDAR POPUP MODAL ── */}
       {isCalendarOpen && (
-        <div className="carla-modal-overlay" onClick={() => setIsCalendarOpen(false)}>
+        <ModalPortal><div className="carla-modal-overlay" onClick={() => setIsCalendarOpen(false)}>
           <div className="carla-modal p-6 space-y-4 max-w-lg" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
@@ -415,16 +498,17 @@ export default function SupervisorDashboard({
             {/* Grid Days */}
             <div className="grid grid-cols-7 text-center gap-1.5 text-xs">
               {['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'].map(d => <div key={d} className="font-bold text-slate-400 py-1 text-[10px]">{d}</div>)}
+              {Array.from({ length: firstDayOffset }).map((_, i) => <div key={`blank-${i}`} />)}
               {Array.from({ length: daysInMonth }).map((_, i) => {
                 const day = i + 1;
-                const hasEvt = calendarEvents.some(e => e.day === day);
+                const hasEvt = eventsOn(day).length > 0;
                 const isSel = selectedDay === day;
                 return (
                   <button key={day} onClick={() => { setSelectedDay(day); setNewEventDay(day); }}
                     className={`aspect-square rounded-lg font-mono font-bold transition flex items-center justify-center cursor-pointer text-xs ${
                       isSel ? 'bg-sky-600 text-white shadow-xs' : hasEvt ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
                     }`}>
-                    {day}
+                    {faNum(day)}
                   </button>
                 );
               })}
@@ -432,8 +516,8 @@ export default function SupervisorDashboard({
 
             {/* Events for selected day */}
             <div className="border-t border-slate-100 pt-3 space-y-2">
-              <div className="text-xs font-bold text-slate-800">برنامه‌های روز {selectedDay} {currentMonth}:</div>
-              {calendarEvents.filter(e => e.day === selectedDay).map((evt, idx) => (
+              <div className="text-xs font-bold text-slate-800">برنامه‌های روز {faNum(selectedDay)} {currentMonth}:</div>
+              {eventsOn(selectedDay).map((evt, idx) => (
                 <div key={idx} className="p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs flex items-center justify-between">
                   <span className="font-semibold text-slate-800">{evt.title}</span>
                   <span className="font-mono text-[10px] text-sky-700 font-bold">{evt.time}</span>
@@ -448,7 +532,7 @@ export default function SupervisorDashboard({
               </form>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );
