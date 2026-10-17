@@ -12,6 +12,7 @@ import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
+import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPay';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -828,6 +829,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
   if (path.startsWith('/campaigns')) return false; // admin only
+  if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
   if (!write) return role === 'cashier';
@@ -3051,6 +3053,12 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
 
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
 registerCourseTerms(app, { isAdmin: (req) => currentRole(req) === 'admin' });
+// Instructor pay (حق‌التدریس): admin-only; falls back to db_store.json ("instructor_pay") when MySQL is off.
+registerInstructorPay(app, {
+  isAdmin: (req) => currentRole(req) === 'admin',
+  readJsonDb: () => readDb(),
+  writeJsonDb: (d) => writeDb(d),
+});
 registerPhase4(app, {
   session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -3160,6 +3168,7 @@ async function startServer() {
   await chabokan.initMysql();
   await ensurePhase4Schema();
   await ensureCourseTermsSchema();
+  await ensureInstructorPaySchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
