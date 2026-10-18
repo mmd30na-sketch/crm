@@ -57,9 +57,6 @@ CREATE TABLE IF NOT EXISTS crm_installment_reminders (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='CRM: installment reminder log / یادآوری اقساط';
 
--- Idempotent: an install of an earlier commit of this branch has the table without the 'sending' state.
-ALTER TABLE crm_installment_reminders
-  MODIFY status ENUM('sending','sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL;
 
 -- Idempotent additive column on the (new-in-branch) crm_online_payments.
 SET @col := (SELECT COUNT(*) FROM information_schema.COLUMNS

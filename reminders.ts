@@ -88,12 +88,6 @@ export async function ensureInstallmentRemindersSchema(): Promise<void> {
       UNIQUE KEY uq_reminder_day (installment_id, send_day),
       KEY idx_reminder_day (send_day, status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='CRM: installment reminder log / یادآوری اقساط'`);
-    // Additive: an install of an earlier commit may have the table without the 'sending' reservation state.
-    const [statusCol] = await db.sql<{ Type: string; Field: string }>(`SHOW COLUMNS FROM crm_installment_reminders LIKE 'status'`);
-    if (statusCol && !String(statusCol.Type).includes("'sending'")) {
-      await db.sqlExec(`ALTER TABLE crm_installment_reminders
-        MODIFY status ENUM('sending','sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL`);
-    }
   } catch (err: any) {
     console.warn('crm_installment_reminders schema setup failed:', err.message);
   }
