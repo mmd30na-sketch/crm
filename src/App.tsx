@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Megaphone,
   CalendarRange,
+  CalendarClock,
   Wallet,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
@@ -33,6 +34,7 @@ import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
+import InstallmentsPanel from './components/InstallmentsPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
 import { taskSummary } from './api/phase4';
 
@@ -83,6 +85,14 @@ const NAV_ITEMS = [
     sublabel: 'تأیید اقساط و رسید',
     icon: Wallet,
     color: 'emerald',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'installments',
+    label: 'اقساط',
+    sublabel: 'زمان‌بندی و لینک پرداخت',
+    icon: CalendarClock,
+    color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -160,7 +170,7 @@ const ACTIVE_BADGE_MAP: Record<string, string> = {
  */
 export default function App() {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('trainee') === '1') return <TraineePaymentsPanel token={params.get('t') || ''} />;
+  if (params.get('trainee') === '1') return <TraineePaymentsPanel token={params.get('t') || ''} code={params.get('code') || ''} />;
   return <StaffApp />;
 }
 
@@ -546,6 +556,15 @@ function StaffApp() {
               )}
               {activeTab === 'online-payments' && (role === 'admin' || role === 'cashier') && (
                 <OnlinePaymentsReview />
+              )}
+              {activeTab === 'installments' && (role === 'admin' || role === 'cashier') && (
+                <InstallmentsPanel
+                  students={students}
+                  courses={courses}
+                  enrollments={enrollments}
+                  payments={payments}
+                  isAdmin={role === 'admin'}
+                />
               )}
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />
