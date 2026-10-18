@@ -218,6 +218,19 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
   };
   const requestBase = (req: express.Request) => deps.publicBaseUrl(req).replace(/\/$/, '');
 
+  /**
+   * Settles the installment a gateway payment was started from (paid exactly once + links burned).
+   * Safe to call on every callback, including a repeated one: markPaid is a no-op once the row is paid.
+   */
+  async function settleLinkedInstallment(row: any): Promise<void> {
+    const installmentId = Number(row?.installment_id) || 0;
+    if (!installmentId || !deps.installments) return;
+    try { await deps.installments.markPaid(installmentId, Number(row.id)); }
+    catch (e: any) { log(`failed to mark installment ${installmentId} paid: ${e?.message}`); }
+    try { await deps.installments.markLinksUsed(installmentId); }
+    catch (e: any) { log(`failed to mark links used for installment ${installmentId}: ${e?.message}`); }
+  }
+
   // ── receipt upload (image or PDF, 8MB) ──
   const receiptStorage = multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, receiptsDir),
@@ -334,7 +347,11 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
     const token = deps.signToken({ kind: 'trainee', student_id: row.student_id, via: 'callback' }, TRAINEE_TTL_LINK_MS);
     const back = (result: string) => res.redirect(302, `${base}/?trainee=1&t=${encodeURIComponent(token)}&payment=${result}`);
 
-    if (String(row.status) === 'paid' || String(row.status) === 'approved') return back('ok');
+    // A repeated callback must still settle the installment (idempotently) in case it failed the first time.
+    if (String(row.status) === 'paid' || String(row.status) === 'approved') {
+      await settleLinkedInstallment(row);
+      return back('ok');
+    }
     if (status !== 'OK') {
       await updateOnline(row.id, { status: 'rejected', admin_note: 'پرداخت در درگاه لغو یا ناموفق شد.' });
       return back('failed');
@@ -345,12 +362,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
       if (result.ok) {
         await updateOnline(row.id, { status: 'paid', ref_id: result.refId, admin_note: null });
         // A payment started from a per-installment link settles that installment and burns the link.
-        if (row.installment_id && deps.installments) {
-          await deps.installments.markPaid(Number(row.installment_id), row.id)
-            .catch((e: any) => log(`failed to mark installment ${row.installment_id} paid: ${e?.message}`));
-          await deps.installments.markLinksUsed(Number(row.installment_id))
-            .catch((e: any) => log(`failed to mark links used for installment ${row.installment_id}: ${e?.message}`));
-        }
+        await settleLinkedInstallment(row);
         return back('ok');
       }
       await updateOnline(row.id, { status: 'rejected', admin_note: deps.sanitize(result.message || 'تأیید پرداخت ناموفق', 500) });

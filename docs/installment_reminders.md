@@ -40,24 +40,33 @@ through the normal `createPaymentCore` path.
 ## Automatic reminders (sms.ir)
 
 A daily `node-cron` task (`CRM_REMINDER_CRON`, default `0 10 * * *`, timezone `Asia/Tehran`) finds unpaid
-installments whose Jalali due date is `CRM_REMINDER_DAYS_BEFORE` days away, skips any that already have a log
-row for that day (`UNIQUE(installment_id, send_day)`), then sends one sms.ir verify-code using
-`SMSIR_REMINDER_TEMPLATE_ID` with params `NAME` / `AMOUNT` / `DATE` / `LINK`. See `reminders.ts` and
-`SMSIR_API_KEY` / `SMSIR_LINE_NUMBER` in `.env.example`.
+installments whose Jalali due date is `CRM_REMINDER_DAYS_BEFORE` days away. It reserves the
+`(installment_id, send_day)` slot by inserting a `sending` log row *before* sending (a rejected
+`UNIQUE(installment_id, send_day)` means another pass already owns the slot, logged `already_sent`), creates
+the per-installment link and then sends one sms.ir verify-code using `SMSIR_REMINDER_TEMPLATE_ID` with params
+`NAME` / `AMOUNT` / `DATE` / `LINK`; the row is then updated to `sent` / `failed`. An in-process lock makes
+the cron and a manual `run-now` mutually exclusive. See `reminders.ts` and `SMSIR_API_KEY` /
+`SMSIR_LINE_NUMBER` in `.env.example`.
 
-Safety: the task is registered only when `CRM_INSTALLMENT_REMINDER_ENABLED=1` **and** the cron expression
-validates; a missing gateway config makes each attempt a logged `failed` (never a crash). Setting
-`CRM_REMINDER_TEST_MOBILE` turns on test mode: every other recipient is logged as `skipped_test_mode`, so no real
-phone can be messaged by accident. Settings can be overridden per-deployment from the UI (stored in
-`settings.installment_reminders`), and the phone number is masked (`0912***4567`) everywhere.
+Safety:
+- `CRM_INSTALLMENT_REMINDER_ENABLED=1` is a **hard gate**: reminders run only when it is set *and* the
+  settings override is not `false`. A settings value can only disable, never enable while the env flag is off;
+  the task is registered only when enabled and the cron expression validates.
+- `CRM_REMINDER_TEST_MOBILE` always wins: when set, every other recipient is logged as `skipped_test_mode`, so
+  no real phone can be messaged by accident. A settings test mobile applies only while the env value is empty,
+  and clearing it from the UI never disables an env test mobile.
+- If the per-installment link cannot be created, the SMS is **not** sent with the placeholder link; the row is
+  logged `failed` with error `link_failed`.
+- A missing gateway config makes each attempt a logged `failed` (never a crash). The phone number is masked
+  (`0912***4567`) everywhere.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/installment-reminders/settings` | current config + `test_mode` / `configured` |
-| PUT | `/api/installment-reminders/settings` | `{enabled, days_before, template_id, cron, test_mobile}` |
+| GET | `/api/installment-reminders/settings` | current config + `env_enabled` / `test_mode` / `test_mobile_env` / `configured` |
+| PUT | `/api/installment-reminders/settings` | `{enabled, days_before, template_id, cron, test_mobile}`; enabling is refused while the env flag is off |
 | GET | `/api/installment-reminders/preview?days=N` | who would be messaged on the target date (no side effects) |
 | GET | `/api/installment-reminders/log?limit=` | send log |
-| POST | `/api/installment-reminders/run-now` | `{confirm:'ارسال', days?}`; refuses unless enabled. `dry_run:true` writes `dry_run` rows without contacting sms.ir |
+| POST | `/api/installment-reminders/run-now` | `{confirm:'ارسال', days?}`; refuses unless enabled. `dry_run:true` returns the results only and writes **no** log rows (so it can never block the real send) |
 
 ## UI
 

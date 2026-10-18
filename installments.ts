@@ -250,8 +250,19 @@ export function createInstallmentStore(deps: InstallmentStoreDeps) {
     deps.writeJsonDb(store);
   }
 
+  /** Marks an unpaid installment paid. Idempotent: a repeated callback is a no-op, it is never re-marked. */
   async function markPaid(installmentId: number, onlinePaymentId: number): Promise<void> {
-    await update(installmentId, { status: 'paid', paid_at: nowSql(), online_payment_id: onlinePaymentId });
+    if (db.isMysqlEnabled()) {
+      await db.sqlExec(
+        `UPDATE crm_installments SET status = 'paid', paid_at = ?, online_payment_id = ? WHERE id = ? AND status = 'unpaid'`,
+        [nowSql(), onlinePaymentId, installmentId]);
+      return;
+    }
+    const store = deps.readJsonDb();
+    const row = jsonInstallments(store).find((r) => Number(r.id) === installmentId);
+    if (!row || row.status !== 'unpaid') return;
+    row.status = 'paid'; row.paid_at = nowSql(); row.online_payment_id = onlinePaymentId;
+    deps.writeJsonDb(store);
   }
 
   /* ── links ── */

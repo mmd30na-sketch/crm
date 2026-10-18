@@ -6,7 +6,8 @@
 --
 -- crm_installments          one planned payment per row; amount is Toman (same unit as payments.amount)
 -- crm_installment_links     short base62 code -> installment + amount, single use, optional expiry
--- crm_installment_reminders append-only log; UNIQUE(installment_id, send_day) prevents a double send/day
+-- crm_installment_reminders append-only log; UNIQUE(installment_id, send_day) plus the 'sending' reservation
+-- row (inserted before the SMS, updated to sent/failed after) prevents a double send on the same day
 --
 -- crm_online_payments (created 20261017) gains one NULLable column `installment_id` so a gateway payment
 -- started from a link settles exactly that installment. crm_online_payments is new in this branch, so the
@@ -47,7 +48,7 @@ CREATE TABLE IF NOT EXISTS crm_installment_reminders (
   installment_id      INT UNSIGNED NOT NULL,
   send_day            CHAR(10)     NOT NULL COMMENT 'Jalali yyyy/mm/dd the reminder is sent on',
   mobile_masked       VARCHAR(20)  NULL COMMENT 'never the full phone number',
-  status              ENUM('sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL,
+  status              ENUM('sending','sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL,
   provider_message_id VARCHAR(64)  NULL,
   error               VARCHAR(255) NULL,
   created_at          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -55,6 +56,10 @@ CREATE TABLE IF NOT EXISTS crm_installment_reminders (
   KEY idx_reminder_day (send_day, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='CRM: installment reminder log / یادآوری اقساط';
+
+-- Idempotent: an install of an earlier commit of this branch has the table without the 'sending' state.
+ALTER TABLE crm_installment_reminders
+  MODIFY status ENUM('sending','sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL;
 
 -- Idempotent additive column on the (new-in-branch) crm_online_payments.
 SET @col := (SELECT COUNT(*) FROM information_schema.COLUMNS

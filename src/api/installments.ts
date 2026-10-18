@@ -48,8 +48,8 @@ export const createInstallmentLink = (id: number) =>
 
 /* ── reminder settings / preview / log (admin) ── */
 export interface ReminderStatusView {
-  enabled: boolean; days_before: number; template_id: number; cron: string;
-  test_mode: boolean; test_mobile_masked: string; configured: boolean; timezone: string; env_enabled: boolean;
+  enabled: boolean; env_enabled: boolean; days_before: number; template_id: number; cron: string;
+  test_mode: boolean; test_mobile_masked: string; test_mobile_env: boolean; configured: boolean; timezone: string;
 }
 export interface ReminderPreviewItem {
   installment_id: number; name_masked: string; mobile_masked: string; amount: number; amount_text: string;
@@ -64,8 +64,12 @@ export interface ReminderLogRow {
 }
 
 export const getReminderSettings = () => call<ReminderStatusView>('/installment-reminders/settings');
+export interface ReminderSettingsResult {
+  ok: true; enabled: boolean; env_enabled: boolean; days_before: number; template_id: number; cron: string;
+  test_mode: boolean; test_mobile_masked: string; test_mobile_env: boolean; configured: boolean;
+}
 export const saveReminderSettings = (body: { enabled?: boolean; days_before?: number; template_id?: number; cron?: string; test_mobile?: string }) =>
-  call<{ ok: true; enabled: boolean; days_before: number; template_id: number; cron: string }>('/installment-reminders/settings', { method: 'PUT', body: JSON.stringify(body) });
+  call<ReminderSettingsResult>('/installment-reminders/settings', { method: 'PUT', body: JSON.stringify(body) });
 export const previewReminders = (days?: number) =>
   call<ReminderPreview>(`/installment-reminders/preview${days !== undefined ? `?days=${days}` : ''}`);
 export const reminderLog = (limit = 200) => call<ReminderLogRow[]>(`/installment-reminders/log?limit=${limit}`);

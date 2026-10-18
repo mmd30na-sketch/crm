@@ -2,10 +2,12 @@
  * Automatic installment-reminder SMS (daily) with a per-installment Zarinpal link.
  *
  * Additive only: one new table `crm_installment_reminders` (JSON store fallback in
- * db_store.json.installment_reminders). Nothing is sent unless CRM_INSTALLMENT_REMINDER_ENABLED === '1'
- * (or the equivalent settings override): the cron task is only registered when enabled, and POST
- * /run-now refuses with the same rule. Test mode (CRM_REMINDER_TEST_MOBILE) makes every other recipient a
- * logged `skipped_test_mode`, so a real number can never receive a message during a trial.
+ * db_store.json.installment_reminders). Nothing is sent unless CRM_INSTALLMENT_REMINDER_ENABLED === '1';
+ * that env flag is a hard gate and a settings value can only disable on top of it (never turn sending on
+ * while the env flag is off): the cron task is only registered when enabled, and POST /run-now refuses with
+ * the same rule. Test mode (CRM_REMINDER_TEST_MOBILE) makes every other recipient a logged
+ * `skipped_test_mode`, so a real number can never receive a message during a trial; the env test mobile
+ * always wins over a settings value, which can only apply while the env one is empty.
  *
  * The actual text comes from the SMS.ir template (default 472328); the CRM only supplies params
  * NAME / AMOUNT / DATE / LINK through the official `smsir-js` SDK. Full phone numbers and the API key are
@@ -18,8 +20,8 @@ import * as db from './mysql-socks';
 import { addJalaliDays } from './src/utils/jalali';
 import { defaultLinkExpiry, type InstallmentStore } from './installments';
 
-export type ReminderStatus = 'sent' | 'failed' | 'skipped_test_mode' | 'skipped_disabled' | 'dry_run';
-export type ReminderReason = 'ok' | 'already_sent' | 'enrollment_settled' | 'no_mobile' | 'test_mode_skip' | 'disabled' | 'not_configured';
+export type ReminderStatus = 'sending' | 'sent' | 'failed' | 'skipped_test_mode' | 'skipped_disabled' | 'dry_run';
+export type ReminderReason = 'ok' | 'already_sent' | 'enrollment_settled' | 'no_mobile' | 'test_mode_skip' | 'disabled' | 'not_configured' | 'link_failed';
 
 const PLACEHOLDER_CODE = 'XXXXXXXXXXXX';
 const PREVIEW_TEMPLATE = '{NAME} عزیز، قسط {AMOUNT} شما در تاریخ {DATE} سررسید می‌شود. پرداخت: {LINK}';
@@ -34,30 +36,41 @@ const intOrNull = (v: unknown) => { const n = Number(v); return Number.isInteger
 const faMoney = (n: number) => Math.round(Number(n) || 0).toLocaleString('fa-IR');
 
 export type ReminderConfig = {
+  /** Hard result: the env flag is on AND the settings override is not false. */
   enabled: boolean;
+  /** The env flag alone (CRM_INSTALLMENT_REMINDER_ENABLED === '1'); the settings can never turn this on. */
+  envEnabled: boolean;
   daysBefore: number;
   templateId: number;
   cron: string;
   testMobile: string;
+  /** True when the test mobile comes from the env (CRM_REMINDER_TEST_MOBILE) and cannot be changed from settings. */
+  testMobileEnv: boolean;
   apiKey: string;
   lineNumber: string;
   configured: boolean;
 };
 
-/** Env values, overridden by `settings.installment_reminders` when present (settings win). */
+/**
+ * Env values, overridden by `settings.installment_reminders` when present, with two hard rules:
+ * the env flag is a hard gate (a settings value can only disable, never enable) and the env test mobile
+ * always wins (settings may set one only while the env value is empty).
+ */
 export function reminderConfig(settings: any, normalizeMobile: (v: unknown) => string): ReminderConfig {
   const s = (settings && settings.installment_reminders) || {};
   const gateways = (settings && settings.gateways) || {};
   const has = (v: unknown) => v !== undefined && v !== null && v !== '';
-  const enabled = s.enabled !== undefined ? !!s.enabled : process.env.CRM_INSTALLMENT_REMINDER_ENABLED === '1';
+  const envEnabled = process.env.CRM_INSTALLMENT_REMINDER_ENABLED === '1';
+  const enabled = envEnabled && s.enabled !== false;
   const daysBefore = Math.min(GRACE_MAX_DAYS, Math.max(0, Number(has(s.days_before) ? s.days_before : (process.env.CRM_REMINDER_DAYS_BEFORE ?? 2)) || 2));
   const templateId = Number(has(s.template_id) ? s.template_id : (process.env.SMSIR_REMINDER_TEMPLATE_ID ?? 472328)) || 472328;
   const cron = String(has(s.cron) ? s.cron : (process.env.CRM_REMINDER_CRON ?? '0 10 * * *')).trim() || '0 10 * * *';
-  const testMobile = normalizeMobile(has(s.test_mobile) ? s.test_mobile : (process.env.CRM_REMINDER_TEST_MOBILE ?? ''));
+  const envTestMobile = normalizeMobile(process.env.CRM_REMINDER_TEST_MOBILE ?? '');
+  const testMobile = envTestMobile || normalizeMobile(has(s.test_mobile) ? s.test_mobile : '');
   // The sms.ir key may also come from the CRM's own SMS gateway when it is set to sms.ir.
   const apiKey = String(process.env.SMSIR_API_KEY || (gateways.sms_provider === 'smsir' ? gateways.sms_api_key : '') || '');
   const lineNumber = String(process.env.SMSIR_LINE_NUMBER || (gateways.sms_provider === 'smsir' ? gateways.sms_sender_line : '') || '');
-  return { enabled, daysBefore, templateId, cron, testMobile, apiKey, lineNumber, configured: !!(apiKey && lineNumber) };
+  return { enabled, envEnabled, daysBefore, templateId, cron, testMobile, testMobileEnv: !!envTestMobile, apiKey, lineNumber, configured: !!(apiKey && lineNumber) };
 }
 
 export async function ensureInstallmentRemindersSchema(): Promise<void> {
@@ -68,13 +81,19 @@ export async function ensureInstallmentRemindersSchema(): Promise<void> {
       installment_id INT UNSIGNED NOT NULL,
       send_day CHAR(10) NOT NULL COMMENT 'Jalali yyyy/mm/dd the reminder is sent on',
       mobile_masked VARCHAR(20) NULL,
-      status ENUM('sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL,
+      status ENUM('sending','sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL,
       provider_message_id VARCHAR(64) NULL,
       error VARCHAR(255) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_reminder_day (installment_id, send_day),
       KEY idx_reminder_day (send_day, status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='CRM: installment reminder log / یادآوری اقساط'`);
+    // Additive: an install of an earlier commit may have the table without the 'sending' reservation state.
+    const [statusCol] = await db.sql<{ Type: string; Field: string }>(`SHOW COLUMNS FROM crm_installment_reminders LIKE 'status'`);
+    if (statusCol && !String(statusCol.Type).includes("'sending'")) {
+      await db.sqlExec(`ALTER TABLE crm_installment_reminders
+        MODIFY status ENUM('sending','sent','failed','skipped_test_mode','skipped_disabled','dry_run') NOT NULL`);
+    }
   } catch (err: any) {
     console.warn('crm_installment_reminders schema setup failed:', err.message);
   }
@@ -143,14 +162,6 @@ export async function previewReminders(deps: ReminderDeps, daysOverride?: number
 
 const linkUrl = (deps: ReminderDeps, code: string) => `${String(deps.publicBaseUrl() || '').replace(/\/$/, '')}/p/${code}`;
 
-async function hasReminderRow(deps: ReminderDeps, installmentId: number, sendDay: string): Promise<boolean> {
-  if (db.isMysqlEnabled()) {
-    const [row] = await db.sql<any>('SELECT id FROM crm_installment_reminders WHERE installment_id = ? AND send_day = ? LIMIT 1', [installmentId, sendDay]);
-    return !!row;
-  }
-  return jsonReminderList(deps.readJsonDb()).some((r: any) => Number(r.installment_id) === installmentId && String(r.send_day) === sendDay);
-}
-
 /** Inserts a reminder log row; false when UNIQUE(installment_id, send_day) already has it. */
 async function insertReminderRow(deps: ReminderDeps, values: {
   installment_id: number; send_day: string; mobile_masked: string | null; status: ReminderStatus;
@@ -181,6 +192,36 @@ async function insertReminderRow(deps: ReminderDeps, values: {
   return true;
 }
 
+/**
+ * Reserves the (installment_id, send_day) slot before the SMS goes out: the row is inserted as
+ * 'sending' and only the caller whose insert succeeded may send. A rejected UNIQUE key means another
+ * run/cron already handled it (already_sent). Same behaviour in the JSON-store fallback.
+ */
+async function reserveReminderRow(deps: ReminderDeps, installmentId: number, sendDay: string, mobileMasked: string | null): Promise<boolean> {
+  return insertReminderRow(deps, { installment_id: installmentId, send_day: sendDay, mobile_masked: mobileMasked, status: 'sending' });
+}
+
+/** Updates the reserved row with the final outcome (no-op when the row vanished). */
+async function finalizeReminderRow(deps: ReminderDeps, values: {
+  installment_id: number; send_day: string; status: 'sent' | 'failed' | 'skipped_test_mode';
+  provider_message_id?: string | null; error?: string | null;
+}): Promise<void> {
+  if (db.isMysqlEnabled()) {
+    await db.sqlExec(
+      `UPDATE crm_installment_reminders SET status = ?, provider_message_id = ?, error = ?
+       WHERE installment_id = ? AND send_day = ?`,
+      [values.status, values.provider_message_id ?? null, values.error ?? null, values.installment_id, values.send_day]);
+    return;
+  }
+  const json = deps.readJsonDb();
+  const row = jsonReminderList(json).find((r: any) => Number(r.installment_id) === values.installment_id && String(r.send_day) === values.send_day);
+  if (!row) return;
+  row.status = values.status;
+  row.provider_message_id = values.provider_message_id ?? null;
+  row.error = values.error ?? null;
+  deps.writeJsonDb(json);
+}
+
 /** One template message via the official sms.ir SDK; never sends when the key/line are missing. */
 async function sendTemplate(cfg: ReminderConfig, mobile: string, params: Array<{ name: string; value: string }>): Promise<{ ok: boolean; messageId: string | null; error?: string }> {
   if (!cfg.configured) return { ok: false, messageId: null, error: 'درگاه پیامک sms.ir تنظیم نشده است (SMSIR_API_KEY/SMSIR_LINE_NUMBER).' };
@@ -195,63 +236,82 @@ async function sendTemplate(cfg: ReminderConfig, mobile: string, params: Array<{
   }
 }
 
-type RunResult = { sent: number; failed: number; skipped: number; dry_run: number; results: Array<{ installment_id: number; status: ReminderStatus; reason?: ReminderReason }> };
+type RunResult = { sent: number; failed: number; skipped: number; dry_run: number; results: Array<{ installment_id: number; status: ReminderStatus | 'already_sent'; reason?: ReminderReason }> };
+
+/** In-process lock: the daily cron and a manual run-now can never overlap inside this process. */
+let reminderRunInProgress = false;
 
 /**
- * One daily pass. `dryRun` writes `dry_run` rows instead of talking to the gateway; otherwise sms.ir is
- * called once per due, still-owing installment (never twice on the same send_day).
+ * One daily pass. `dryRun` only reports what would happen and writes no rows; otherwise sms.ir is called
+ * once per due, still-owing installment. The (installment_id, send_day) slot is reserved as 'sending'
+ * before the SMS is attempted, so two concurrent runs can never send twice for the same installment/day.
  */
 export async function runReminders(deps: ReminderDeps, opts: { dryRun?: boolean; daysOverride?: number } = {}): Promise<RunResult> {
-  const cfg = reminderConfig(deps.settings(), deps.normalizeMobile);
-  const sendDay = deps.jalaliToday();
-  const out: RunResult = { sent: 0, failed: 0, skipped: 0, dry_run: 0, results: [] };
-  if (!cfg.enabled) { deps.log?.('run skipped: reminders disabled'); return out; }
-
-  const target = addJalaliDays(sendDay, opts.daysOverride !== undefined && Number.isFinite(opts.daysOverride)
-    ? Math.min(GRACE_MAX_DAYS, Math.max(0, Math.round(opts.daysOverride))) : cfg.daysBefore);
-  const due = target ? await deps.store.dueForReminder(target) : [];
-  const placeholder = linkUrl(deps, PLACEHOLDER_CODE);
-
-  for (const row of due) {
-    const { item, mobile, name } = evaluate(row, deps, cfg, placeholder);
-    if (await hasReminderRow(deps, row.id, sendDay)) { out.skipped += 1; out.results.push({ installment_id: row.id, status: 'dry_run', reason: 'already_sent' }); continue; }
-
-    if (item.reason === 'test_mode_skip') {
-      await insertReminderRow(deps, { installment_id: row.id, send_day: sendDay, mobile_masked: maskPhone(row.phone_number), status: 'skipped_test_mode' });
-      out.skipped += 1; out.results.push({ installment_id: row.id, status: 'skipped_test_mode', reason: 'test_mode_skip' }); continue;
-    }
-    if (!item.would_send) {
-      out.skipped += 1; out.results.push({ installment_id: row.id, status: 'skipped_disabled', reason: item.reason }); continue;
-    }
-
-    if (opts.dryRun) {
-      await insertReminderRow(deps, { installment_id: row.id, send_day: sendDay, mobile_masked: maskPhone(row.phone_number), status: 'dry_run' });
-      out.dry_run += 1; out.results.push({ installment_id: row.id, status: 'dry_run', reason: 'ok' }); continue;
-    }
-
-    // Create/reuse the per-installment link, then send the template message.
-    let link: { code: string } | null = null;
-    try {
-      const inst = await deps.store.get(row.id);
-      if (inst) link = await deps.store.getOrCreateLink(row.id, Number(inst.amount) || row.amount, defaultLinkExpiry(String(inst.due_date_jalali)));
-    } catch (e: any) { deps.log?.(`link creation failed for installment ${row.id}: ${e?.message}`); }
-    const url = link ? linkUrl(deps, link.code) : placeholder;
-
-    const result = await sendTemplate(cfg, mobile, [
-      { name: 'NAME', value: name || 'کارآموز' },
-      { name: 'AMOUNT', value: item.amount_text },
-      { name: 'DATE', value: row.due_date_jalali },
-      { name: 'LINK', value: url },
-    ]);
-    await insertReminderRow(deps, {
-      installment_id: row.id, send_day: sendDay, mobile_masked: maskPhone(row.phone_number),
-      status: result.ok ? 'sent' : 'failed', provider_message_id: result.messageId,
-      error: result.ok ? null : deps.sanitize(result.error, 255),
-    });
-    if (result.ok) out.sent += 1; else out.failed += 1;
-    out.results.push({ installment_id: row.id, status: result.ok ? 'sent' : 'failed', reason: result.ok ? 'ok' : undefined });
+  if (reminderRunInProgress) {
+    throw Object.assign(new Error('اجرای یادآوری اقساط در حال انجام است؛ کمی بعد دوباره تلاش کنید.'), { status: 409 });
   }
-  return out;
+  reminderRunInProgress = true;
+  try {
+    const cfg = reminderConfig(deps.settings(), deps.normalizeMobile);
+    const sendDay = deps.jalaliToday();
+    const out: RunResult = { sent: 0, failed: 0, skipped: 0, dry_run: 0, results: [] };
+    if (!cfg.enabled) { deps.log?.('run skipped: reminders disabled'); return out; }
+
+    const target = addJalaliDays(sendDay, opts.daysOverride !== undefined && Number.isFinite(opts.daysOverride)
+      ? Math.min(GRACE_MAX_DAYS, Math.max(0, Math.round(opts.daysOverride))) : cfg.daysBefore);
+    const due = target ? await deps.store.dueForReminder(target) : [];
+    const placeholder = linkUrl(deps, PLACEHOLDER_CODE);
+
+    for (const row of due) {
+      const { item, mobile, name } = evaluate(row, deps, cfg, placeholder);
+
+      if (item.reason === 'test_mode_skip') {
+        await insertReminderRow(deps, { installment_id: row.id, send_day: sendDay, mobile_masked: maskPhone(row.phone_number), status: 'skipped_test_mode' });
+        out.skipped += 1; out.results.push({ installment_id: row.id, status: 'skipped_test_mode', reason: 'test_mode_skip' }); continue;
+      }
+      if (!item.would_send) {
+        out.skipped += 1; out.results.push({ installment_id: row.id, status: 'skipped_disabled', reason: item.reason }); continue;
+      }
+      // Dry run must not write anything: a row here would block the real send on the same day.
+      if (opts.dryRun) {
+        out.dry_run += 1; out.results.push({ installment_id: row.id, status: 'dry_run', reason: 'ok' }); continue;
+      }
+
+      // Reserve first; a duplicate means another run/cron already owns this slot for the day.
+      const reserved = await reserveReminderRow(deps, row.id, sendDay, maskPhone(row.phone_number));
+      if (!reserved) {
+        out.skipped += 1; out.results.push({ installment_id: row.id, status: 'already_sent', reason: 'already_sent' }); continue;
+      }
+
+      // Create/reuse the per-installment link; never fall back to the placeholder link in a real send.
+      let link: { code: string } | null = null;
+      try {
+        const inst = await deps.store.get(row.id);
+        if (inst) link = await deps.store.getOrCreateLink(row.id, Number(inst.amount) || row.amount, defaultLinkExpiry(String(inst.due_date_jalali)));
+      } catch (e: any) { deps.log?.(`link creation failed for installment ${row.id}: ${e?.message}`); }
+      if (!link) {
+        await finalizeReminderRow(deps, { installment_id: row.id, send_day: sendDay, status: 'failed', error: 'link_failed' });
+        out.failed += 1; out.results.push({ installment_id: row.id, status: 'failed', reason: 'link_failed' }); continue;
+      }
+
+      const result = await sendTemplate(cfg, mobile, [
+        { name: 'NAME', value: name || 'کارآموز' },
+        { name: 'AMOUNT', value: item.amount_text },
+        { name: 'DATE', value: row.due_date_jalali },
+        { name: 'LINK', value: linkUrl(deps, link.code) },
+      ]);
+      await finalizeReminderRow(deps, {
+        installment_id: row.id, send_day: sendDay,
+        status: result.ok ? 'sent' : 'failed', provider_message_id: result.messageId,
+        error: result.ok ? null : deps.sanitize(result.error, 255),
+      });
+      if (result.ok) out.sent += 1; else out.failed += 1;
+      out.results.push({ installment_id: row.id, status: result.ok ? 'sent' : 'failed', reason: result.ok ? 'ok' : undefined });
+    }
+    return out;
+  } finally {
+    reminderRunInProgress = false;
+  }
 }
 
 export function registerInstallmentReminders(app: express.Express, deps: ReminderDeps) {
@@ -267,9 +327,9 @@ export function registerInstallmentReminders(app: express.Express, deps: Reminde
     if (!requireAdmin(req, res)) return;
     const cfg = reminderConfig(deps.settings(), deps.normalizeMobile);
     res.json({
-      enabled: cfg.enabled, days_before: cfg.daysBefore, template_id: cfg.templateId, cron: cfg.cron,
-      test_mode: !!cfg.testMobile, test_mobile_masked: maskPhone(cfg.testMobile), configured: cfg.configured,
-      timezone: 'Asia/Tehran', env_enabled: process.env.CRM_INSTALLMENT_REMINDER_ENABLED === '1',
+      enabled: cfg.enabled, env_enabled: cfg.envEnabled, days_before: cfg.daysBefore, template_id: cfg.templateId,
+      cron: cfg.cron, test_mode: !!cfg.testMobile, test_mobile_masked: maskPhone(cfg.testMobile),
+      test_mobile_env: cfg.testMobileEnv, configured: cfg.configured, timezone: 'Asia/Tehran',
     });
   }));
 
@@ -277,7 +337,13 @@ export function registerInstallmentReminders(app: express.Express, deps: Reminde
     if (!requireAdmin(req, res)) return;
     const b = req.body || {};
     const patch: Record<string, any> = {};
-    if (b.enabled !== undefined) patch.enabled = !!b.enabled;
+    // The env flag is the hard gate; settings can only disable, never enable while it is off.
+    if (b.enabled !== undefined) {
+      if (b.enabled && process.env.CRM_INSTALLMENT_REMINDER_ENABLED !== '1') {
+        return res.status(400).json({ error: 'برای فعال‌سازی، ابتدا CRM_INSTALLMENT_REMINDER_ENABLED=1 را روی سرور تنظیم کنید.' });
+      }
+      patch.enabled = !!b.enabled;
+    }
     if (b.days_before !== undefined) patch.days_before = Math.min(GRACE_MAX_DAYS, Math.max(0, Number(b.days_before) || 0));
     if (b.template_id !== undefined) patch.template_id = intOrNull(b.template_id) || 472328;
     if (b.cron !== undefined) {
@@ -288,7 +354,11 @@ export function registerInstallmentReminders(app: express.Express, deps: Reminde
     if (b.test_mobile !== undefined) patch.test_mobile = b.test_mobile ? deps.normalizeMobile(b.test_mobile) : '';
     deps.saveSettings(patch);
     const cfg = reminderConfig(deps.settings(), deps.normalizeMobile);
-    res.json({ ok: true, enabled: cfg.enabled, days_before: cfg.daysBefore, template_id: cfg.templateId, cron: cfg.cron });
+    res.json({
+      ok: true, enabled: cfg.enabled, env_enabled: cfg.envEnabled, days_before: cfg.daysBefore,
+      template_id: cfg.templateId, cron: cfg.cron, test_mode: !!cfg.testMobile,
+      test_mobile_masked: maskPhone(cfg.testMobile), test_mobile_env: cfg.testMobileEnv, configured: cfg.configured,
+    });
   }));
 
   app.get('/api/installment-reminders/preview', wrap(async (req, res) => {
@@ -297,8 +367,9 @@ export function registerInstallmentReminders(app: express.Express, deps: Reminde
     const cfg = reminderConfig(deps.settings(), deps.normalizeMobile);
     const { target_date, items } = await previewReminders(deps, days);
     res.json({
-      enabled: cfg.enabled, configured: cfg.configured, test_mode: !!cfg.testMobile, days_before: cfg.daysBefore,
-      template_id: cfg.templateId, cron: cfg.cron, target_date, total: items.length,
+      enabled: cfg.enabled, env_enabled: cfg.envEnabled, configured: cfg.configured, test_mode: !!cfg.testMobile,
+      test_mobile_masked: maskPhone(cfg.testMobile), test_mobile_env: cfg.testMobileEnv, days_before: cfg.daysBefore,
+      template_id: cfg.templateId, cron: cfg.cron, timezone: 'Asia/Tehran', target_date, total: items.length,
       would_send: items.filter((i) => i.would_send).length, items,
     });
   }));
