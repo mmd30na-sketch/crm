@@ -162,16 +162,20 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
           ) : linkInfo ? (
             <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
               <div className="text-center space-y-1">
-                <div className="text-sm font-black text-slate-800">پرداخت قسط</div>
+                <div className="text-sm font-black text-slate-800">{linkInfo.kind === 'debt' ? 'پرداخت مانده بدهی' : 'پرداخت قسط'}</div>
                 <div className="text-[11px] text-slate-500">{[linkInfo.student.first_name, linkInfo.student.last_name].filter(Boolean).join(' ')} · <span className="font-mono" dir="ltr">{linkInfo.student.phone_masked}</span></div>
               </div>
               <div className="grid grid-cols-2 gap-2 text-center">
                 <div className="bg-slate-50 rounded-xl py-3"><div className="text-[10px] text-slate-400">مبلغ قابل پرداخت</div><div className="text-base font-black text-slate-800">{fa(linkInfo.amount)} <span className="text-[10px] font-normal">تومان</span></div></div>
-                <div className="bg-slate-50 rounded-xl py-3"><div className="text-[10px] text-slate-400">سررسید</div><div className="text-sm font-black text-slate-800 font-mono">{linkInfo.due_date_jalali}</div></div>
+                {linkInfo.kind === 'debt' ? (
+                  <div className="bg-slate-50 rounded-xl py-3"><div className="text-[10px] text-slate-400">مانده کل</div><div className="text-sm font-black text-slate-800">{fa(linkInfo.debt_total ?? linkInfo.amount)} <span className="text-[10px] font-normal">تومان</span></div></div>
+                ) : (
+                  <div className="bg-slate-50 rounded-xl py-3"><div className="text-[10px] text-slate-400">سررسید</div><div className="text-sm font-black text-slate-800 font-mono">{linkInfo.due_date_jalali}</div></div>
+                )}
               </div>
               {linkInfo.paid ? (
-                <div className="flex items-center justify-center gap-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl py-3"><CheckCircle2 className="w-4 h-4" />این قسط قبلاً پرداخت شده است.</div>
-              ) : linkInfo.installment.status !== 'unpaid' ? (
+                <div className="flex items-center justify-center gap-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl py-3"><CheckCircle2 className="w-4 h-4" />{linkInfo.kind === 'debt' ? 'مانده بدهی شما تسویه شده است.' : 'این قسط قبلاً پرداخت شده است.'}</div>
+              ) : linkInfo.kind === 'installment' && linkInfo.installment && linkInfo.installment.status !== 'unpaid' ? (
                 <div className="text-center text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200 rounded-xl py-3">این قسط قابل پرداخت نیست.</div>
               ) : (
                 <button disabled={linkBusy} onClick={payLink} className="w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 text-white text-sm font-bold flex items-center justify-center gap-2">

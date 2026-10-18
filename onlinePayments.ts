@@ -22,6 +22,7 @@ import * as db from './mysql-socks';
 import { owedByEnrollment } from './src/utils/finance';
 import { zarinpalConfigFromEnv, requestPayment, verifyPayment } from './zarinpal';
 import type { InstallmentStore } from './installments';
+import type { DebtLinkStore } from './debtSms';
 
 export type OnlineMethod = 'zarinpal' | 'receipt';
 export type OnlineStatus = 'pending' | 'paid' | 'approved' | 'rejected';
@@ -46,6 +47,8 @@ export type OnlinePaymentDeps = {
   publicBaseUrl: (req: express.Request) => string;
   /** Installment schedule + per-installment links (installments.ts); enables the /link/:code routes. */
   installments?: Pick<InstallmentStore, 'resolveLink' | 'markPaid' | 'markLinksUsed' | 'enrollmentRemaining'>;
+  /** Remaining-debt links (debtSms.ts); resolves debt codes on the same /link/:code routes. */
+  debtLinks?: Pick<DebtLinkStore, 'resolveLink' | 'studentDebt' | 'oldestOwingEnrollment' | 'attachPayment' | 'markUsedByPayment' | 'findByPayment'>;
   log?: (msg: string) => void;
 };
 
@@ -219,16 +222,22 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
   const requestBase = (req: express.Request) => deps.publicBaseUrl(req).replace(/\/$/, '');
 
   /**
-   * Settles the installment a gateway payment was started from (paid exactly once + links burned).
-   * Safe to call on every callback, including a repeated one: markPaid is a no-op once the row is paid.
+   * Settles whatever a gateway payment was started from: an installment (paid exactly once + its links
+   * burned) or a remaining-debt link (burned once). Safe to call on every callback, including a repeated
+   * one: markPaid no-ops once the row is paid and markUsedByPayment only sets used_at once.
    */
   async function settleLinkedInstallment(row: any): Promise<void> {
     const installmentId = Number(row?.installment_id) || 0;
-    if (!installmentId || !deps.installments) return;
-    try { await deps.installments.markPaid(installmentId, Number(row.id)); }
-    catch (e: any) { log(`failed to mark installment ${installmentId} paid: ${e?.message}`); }
-    try { await deps.installments.markLinksUsed(installmentId); }
-    catch (e: any) { log(`failed to mark links used for installment ${installmentId}: ${e?.message}`); }
+    if (installmentId && deps.installments) {
+      try { await deps.installments.markPaid(installmentId, Number(row.id)); }
+      catch (e: any) { log(`failed to mark installment ${installmentId} paid: ${e?.message}`); }
+      try { await deps.installments.markLinksUsed(installmentId); }
+      catch (e: any) { log(`failed to mark links used for installment ${installmentId}: ${e?.message}`); }
+    }
+    if (deps.debtLinks) {
+      try { await deps.debtLinks.markUsedByPayment(Number(row.id)); }
+      catch (e: any) { log(`failed to mark debt link used for payment ${row?.id}: ${e?.message}`); }
+    }
   }
 
   // ── receipt upload (image or PDF, 8MB) ──
@@ -413,17 +422,37 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
     res.sendFile(abs);
   }));
 
-  // ── per-installment short links (the code is the auth; see installments.ts) ──
+  // ── short payment links (the code is the auth): debt links first, then legacy installment links ──
   const linkReason = (status: 'not_found' | 'expired' | 'used') =>
     status === 'expired' ? { code: 410, error: 'این لینک پرداخت منقضی شده است.' }
       : status === 'used' ? { code: 409, error: 'این لینک پرداخت قبلاً استفاده شده است.' }
         : { code: 404, error: 'لینک پرداخت پیدا نشد.' };
 
   app.get('/api/trainee-payments/link/:code', wrap(async (req, res) => {
+    const code = String(req.params.code || '');
+    if (deps.debtLinks) {
+      const debt = await deps.debtLinks.resolveLink(code);
+      if (debt.status === 'ok') {
+        const total = await deps.debtLinks.studentDebt(debt.student_id);
+        return res.json({
+          kind: 'debt',
+          student: debt.student,
+          enrollment_id: null,
+          amount: Math.min(debt.amount, total),
+          debt_total: total,
+          due_date_jalali: null,
+          installment: null,
+          expires_at: debt.expires_at,
+          paid: total <= 0,
+        });
+      }
+      if (debt.status !== 'not_found') { const r = linkReason(debt.status); return res.status(r.code).json({ error: r.error }); }
+    }
     if (!deps.installments) return res.status(503).json({ error: 'این بخش در دسترس نیست.' });
-    const resolved = await deps.installments.resolveLink(String(req.params.code || ''));
+    const resolved = await deps.installments.resolveLink(code);
     if (resolved.status !== 'ok') { const r = linkReason(resolved.status); return res.status(r.code).json({ error: r.error }); }
     res.json({
+      kind: 'installment',
       student: resolved.student,
       enrollment_id: resolved.enrollment_id,
       amount: resolved.amount_toman,
@@ -435,8 +464,46 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
   }));
 
   app.post('/api/trainee-payments/link/:code/zarinpal', wrap(async (req, res) => {
+    const code = String(req.params.code || '');
+    const cfg = zarinpalConfigFromEnv(deps.zarinpalMerchantId());
+    if (!cfg.merchantId) return res.status(503).json({ error: 'درگاه پرداخت آنلاین هنوز تنظیم نشده است. با آموزشگاه تماس بگیرید.' });
+    const callbackUrl = `${requestBase(req)}/api/trainee-payments/zarinpal/callback`;
+
+    // Remaining-debt link: charge the link amount, capped at the balance still owed right now.
+    if (deps.debtLinks) {
+      const debt = await deps.debtLinks.resolveLink(code);
+      if (debt.status === 'ok') {
+        const studentId = debt.student_id;
+        const total = await deps.debtLinks.studentDebt(studentId);
+        if (total <= 0) return res.status(409).json({ error: 'مانده بدهی شما تسویه شده است.' });
+        const amount = Math.round(Math.min(debt.amount, total));
+        if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'مبلغ این لینک معتبر نیست.' });
+        const enrollmentId = await deps.debtLinks.oldestOwingEnrollment(studentId);
+        if (!enrollmentId) return res.status(409).json({ error: 'ثبت‌نامی با مانده بدهی پیدا نشد.' });
+        const id = await insertOnline({ student_id: studentId, enrollment_id: enrollmentId, amount, method: 'zarinpal', status: 'pending' });
+        try {
+          const { authority, paymentUrl } = await requestPayment(cfg, {
+            amountToman: amount,
+            description: `پرداخت مانده بدهی - کارآموز ${studentId}`,
+            callbackUrl,
+            mobile: deps.normalizeMobile((await studentContext(studentId))?.student?.phone_number),
+          });
+          await updateOnline(id, { authority });
+          // Attach only once the gateway accepted the request, so a failed request leaves the link free.
+          await deps.debtLinks.attachPayment(code, id);
+          res.json({ payment_url: paymentUrl, authority, online_payment_id: id, kind: 'debt' });
+        } catch (err: any) {
+          await updateOnline(id, { status: 'rejected', admin_note: deps.sanitize(err?.message || 'خطای درگاه پرداخت', 500) });
+          log(`zarinpal request failed for debt link payment ${id}: ${err?.message}`);
+          res.status(err?.status || 502).json({ error: err?.message || 'اتصال به درگاه پرداخت ناموفق بود.' });
+        }
+        return;
+      }
+      if (debt.status !== 'not_found') { const r = linkReason(debt.status); return res.status(r.code).json({ error: r.error }); }
+    }
+
     if (!deps.installments) return res.status(503).json({ error: 'این بخش در دسترس نیست.' });
-    const resolved = await deps.installments.resolveLink(String(req.params.code || ''));
+    const resolved = await deps.installments.resolveLink(code);
     if (resolved.status !== 'ok') { const r = linkReason(resolved.status); return res.status(r.code).json({ error: r.error }); }
     const enrollmentId = resolved.enrollment_id;
     const studentId = resolved.student_id;
@@ -445,11 +512,8 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
     if (resolved.installment_status === 'paid') return res.status(409).json({ error: 'این قسط قبلاً پرداخت شده است.' });
     const remaining = await deps.installments.enrollmentRemaining(enrollmentId);
     if (remaining !== null && remaining <= 0) return res.status(409).json({ error: 'مانده‌ای برای پرداخت روی این دوره وجود ندارد.' });
-    const cfg = zarinpalConfigFromEnv(deps.zarinpalMerchantId());
-    if (!cfg.merchantId) return res.status(503).json({ error: 'درگاه پرداخت آنلاین هنوز تنظیم نشده است. با آموزشگاه تماس بگیرید.' });
 
     const id = await insertOnline({ student_id: studentId, enrollment_id: enrollmentId, amount, method: 'zarinpal', status: 'pending', installment_id: resolved.installment.id });
-    const callbackUrl = `${requestBase(req)}/api/trainee-payments/zarinpal/callback`;
     try {
       const { authority, paymentUrl } = await requestPayment(cfg, {
         amountToman: amount,
@@ -458,7 +522,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
         mobile: deps.normalizeMobile((await studentContext(studentId))?.student?.phone_number),
       });
       await updateOnline(id, { authority });
-      res.json({ payment_url: paymentUrl, authority, online_payment_id: id });
+      res.json({ payment_url: paymentUrl, authority, online_payment_id: id, kind: 'installment' });
     } catch (err: any) {
       await updateOnline(id, { status: 'rejected', admin_note: deps.sanitize(err?.message || 'خطای درگاه پرداخت', 500) });
       log(`zarinpal request failed for installment link payment ${id}: ${err?.message}`);
@@ -526,14 +590,17 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
       return res.status(400).json({ error: 'پرداخت زرین‌پال این ردیف تأیید نشده؛ تا تکمیل پرداخت قابل ثبت نیست.' });
     }
     try {
+      const debtLink = deps.debtLinks ? await deps.debtLinks.findByPayment(id) : null;
       const rows = await deps.createPayment({
         studentId: Number(row.student_id),
         linkedEnrollmentId: Number(row.enrollment_id),
         amount: Number(row.amount) || 0,
         payDate: deps.jalaliToday(),
         payMethod: 'online',
-        paymentKind: 'installment',
-        description: `پرداخت آنلاین #${id} (${row.method === 'zarinpal' ? 'زرین‌پال' : 'رسید'})`,
+        paymentKind: debtLink ? 'debt' : 'installment',
+        description: debtLink
+          ? `پرداخت آنلاین مانده بدهی #${id} (${row.method === 'zarinpal' ? 'زرین‌پال' : 'رسید'})`
+          : `پرداخت آنلاین #${id} (${row.method === 'zarinpal' ? 'زرین‌پال' : 'رسید'})`,
       });
       await updateOnline(id, { status: 'approved', reviewed_by: session?.username || null, reviewed_at: nowSql() });
       res.json({ ok: true, payment: rows[0] || null, allocations: rows.length });

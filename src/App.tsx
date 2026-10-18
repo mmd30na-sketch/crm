@@ -14,7 +14,7 @@ import {
   ClipboardList,
   Megaphone,
   CalendarRange,
-  CalendarClock,
+  BellRing,
   Wallet,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
@@ -34,7 +34,7 @@ import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
-import InstallmentsPanel from './components/InstallmentsPanel';
+import DebtSmsPanel from './components/DebtSmsPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
 import { taskSummary } from './api/phase4';
 
@@ -88,11 +88,11 @@ const NAV_ITEMS = [
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
-    id: 'installments',
-    label: 'اقساط',
-    sublabel: 'زمان‌بندی و لینک پرداخت',
-    icon: CalendarClock,
-    color: 'teal',
+    id: 'debt-sms',
+    label: 'ارسال به بدهکاران',
+    sublabel: 'پیامک بدهی و لینک پرداخت',
+    icon: BellRing,
+    color: 'rose',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -557,14 +557,8 @@ function StaffApp() {
               {activeTab === 'online-payments' && (role === 'admin' || role === 'cashier') && (
                 <OnlinePaymentsReview />
               )}
-              {activeTab === 'installments' && (role === 'admin' || role === 'cashier') && (
-                <InstallmentsPanel
-                  students={students}
-                  courses={courses}
-                  enrollments={enrollments}
-                  payments={payments}
-                  isAdmin={role === 'admin'}
-                />
+              {activeTab === 'debt-sms' && (role === 'admin' || role === 'cashier') && (
+                <DebtSmsPanel isAdmin={role === 'admin'} />
               )}
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />

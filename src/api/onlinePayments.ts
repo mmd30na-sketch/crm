@@ -82,13 +82,15 @@ export const traineeLogin = (student_id: number, national_last4: string) =>
 export const traineeReceiptUrl = (token: string, id: number) =>
   `/api/trainee-payments/receipts/${id}/file?t=${encodeURIComponent(token)}`;
 
-/* ── per-installment short link (the code is the auth; no token) ── */
+/* ── short payment link (the code is the auth; no token). kind tells debt from installment. ── */
 export interface TraineeLinkInfo {
+  kind: 'debt' | 'installment';
   student: { first_name: string; last_name: string; phone_masked: string };
-  enrollment_id: number;
+  enrollment_id: number | null;
   amount: number;
-  due_date_jalali: string;
-  installment: { id: number; seq: number; status: 'unpaid' | 'paid' | 'cancelled' };
+  debt_total?: number;
+  due_date_jalali: string | null;
+  installment?: { id: number; seq: number; status: 'unpaid' | 'paid' | 'cancelled' } | null;
   expires_at: string | null;
   paid: boolean;
 }
@@ -102,4 +104,4 @@ async function publicCall<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const traineeLinkInfo = (code: string) => publicCall<TraineeLinkInfo>(`/link/${encodeURIComponent(code)}`);
 export const traineeLinkZarinpal = (code: string) =>
-  publicCall<{ payment_url: string; authority: string; online_payment_id: number }>(`/link/${encodeURIComponent(code)}/zarinpal`, { method: 'POST', body: '{}' });
+  publicCall<{ payment_url: string; authority: string; online_payment_id: number; kind?: 'debt' | 'installment' }>(`/link/${encodeURIComponent(code)}/zarinpal`, { method: 'POST', body: '{}' });

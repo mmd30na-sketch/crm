@@ -13,8 +13,8 @@ import * as chabokan from './mysql-socks';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
-import { registerInstallments, ensureInstallmentsSchema, createInstallmentStore } from './installments';
-import { registerInstallmentReminders, ensureInstallmentRemindersSchema, startInstallmentReminderScheduler } from './reminders';
+import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
+import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -839,8 +839,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/receipt-settings') && write) return false;
   if (path.startsWith('/payments') || path.startsWith('/expenses')) return role === 'cashier';
   if (path.startsWith('/online-payments')) return role === 'cashier'; // admin handled above
-  if (path.startsWith('/installment-reminders')) return false; // admin only (handled above)
-  if (path.startsWith('/installments')) return role === 'cashier';
+  if (path.startsWith('/debt-sms')) return role === 'cashier'; // settings writes are admin-only in the handler
   if (path.startsWith('/ocr')) return role === 'cashier';
   if (path.includes('report-templates') || path.includes('report-context') || path.includes('/receipt')) return role === 'cashier';
   if (path.startsWith('/registrations')) return role === 'cashier';
@@ -3089,19 +3088,11 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
 registerCourseTerms(app, { isAdmin: (req) => currentRole(req) === 'admin' });
 
-// Installment schedule + short payment links (installments.ts); shared by the CRM routes, the trainee
-// Zarinpal flow (onlinePayments.ts) and the reminder job (reminders.ts).
+// Remaining-debt payment links + SMS (debtSms.ts). The link store is shared with the trainee Zarinpal
+// flow below and the legacy installment-link store stays available for links sent before this change.
 const installmentStore = createInstallmentStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
+const debtLinkStore = createDebtLinkStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
 const publicBaseFromRequest = (req: express.Request) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`);
-const publicBaseFromEnv = () => String(process.env.PUBLIC_BASE_URL || '');
-registerInstallments(app, {
-  store: installmentStore,
-  session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
-  sanitize: (v, max) => sanitizeString(v, max),
-  jalaliToday: () => jalaliNow(),
-  publicBaseUrl: publicBaseFromRequest,
-  log: (msg) => console.warn(`[installments] ${msg}`),
-});
 registerOnlinePayments(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
@@ -3117,31 +3108,29 @@ registerOnlinePayments(app, {
   },
   publicBaseUrl: publicBaseFromRequest,
   installments: installmentStore,
+  debtLinks: debtLinkStore,
   log: (msg) => console.warn(`[online-payments] ${msg}`),
 });
 
-// Automatic installment-reminder SMS. The scheduler only registers when enabled (see reminders.ts).
-const reminderDeps = {
-  store: installmentStore,
-  session: (req: express.Request) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
-  sanitize: (v: unknown, max: number) => sanitizeString(v, max),
+// Remaining-debt SMS with a payment link: preview / single send / bulk send / settings / log.
+registerDebtSms(app, {
+  session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
   normalizeMobile,
-  jalaliToday: () => jalaliNow(),
-  publicBaseUrl: publicBaseFromEnv,
   settings: () => { try { return (readDb() as any).settings || {}; } catch { return {}; } },
   saveSettings: (patch: Record<string, any>) => {
     const d = readDb();
     const settings: any = (d as any).settings = (d as any).settings || {};
-    settings.installment_reminders = { ...(settings.installment_reminders || {}), ...patch };
+    settings.debt_sms = { ...(settings.debt_sms || {}), ...patch };
     writeDb(d);
   },
   readJsonDb: () => readDb(),
   writeJsonDb: (store: any) => writeDb(store),
-  log: (msg: string) => console.warn(`[installment-reminders] ${msg}`),
-};
-registerInstallmentReminders(app, reminderDeps);
+  links: debtLinkStore,
+  log: (msg: string) => console.warn(`[debt-sms] ${msg}`),
+});
 
-// Short public installment-payment URL: /p/<code> opens the trainee panel with the amount preset.
+// Short public payment URL: /p/<code> opens the trainee panel with the amount preset.
 app.get('/p/:code', (req, res) => {
   const code = sanitizeString(req.params.code, 16);
   if (!/^[0-9A-Za-z]{12}$/.test(code)) return res.redirect(302, '/?trainee=1&payment=notfound');
@@ -3260,8 +3249,7 @@ async function startServer() {
   await ensureCourseTermsSchema();
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
-  await ensureInstallmentRemindersSchema();
-  startInstallmentReminderScheduler(reminderDeps);
+  await ensureDebtSmsSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
