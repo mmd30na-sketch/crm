@@ -17,7 +17,11 @@ export default defineConfig(({ mode }) => {
     server: {
       allowedHosts: ['crm.mmd30na.cloud', 'localhost', '127.0.0.1'],
       hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Runtime data written by the API (local DB, uploaded photos/receipts) must not
+      // trigger a full page reload — it wipes in-progress forms like the registration success view.
+      watch: process.env.DISABLE_HMR === 'true' ? null : {
+        ignored: ['**/db_store.json', '**/uploads/**'],
+      },
       proxy: {
         '/api': {
           target: 'http://localhost:5000',
