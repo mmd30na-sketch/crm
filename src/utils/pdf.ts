@@ -16,7 +16,14 @@ export const drawCardexPage = (ctx: any, data: any) => {
   // Demo mock for compiler
 };
 
-
+export const drawSmartCardPage = (
+  ctx: any,
+  studentObj: any,
+  courseObj: any,
+  today: any,
+  courseNumber: any,
+  enrollmentId: any
+) => {
   ctx.save();
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, 1240, 1754);
