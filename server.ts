@@ -1468,6 +1468,313 @@ app.post('/api/settings/gateways', (req, res) => {
   res.json({ success: true });
 });
 
+// ─────────────────────────────────────────────────────────────
+// AI COPILOT — Financial Accounting Agent (tool-calling)
+// ─────────────────────────────────────────────────────────────
+const COPILOT_API_URL = String(process.env.COPILOT_API_URL || '').trim().replace(/\/+$/, '');
+const COPILOT_API_KEY = String(process.env.COPILOT_API_KEY || '').trim();
+const COPILOT_MODEL = String(process.env.COPILOT_MODEL || 'gpt-4o-mini').trim();
+const COPILOT_MAX_ITERATIONS = 4;
+
+const COPILOT_SYSTEM_PROMPT = [
+  'شما «دستیار هوشمند مالی» آموزشگاه کارلا هستید؛ یک دستیار حسابداری فارسی‌زبان، دقیق و حرفه‌ای.',
+  'قوانین کار:',
+  '۱) برای هر عدد، آمار، موجودی، بدهی یا گردش مالی حتماً از ابزارهای در دسترس استفاده کنید و هرگز عددی را حدس نزنید.',
+  '۲) اگر پرسش کاربر نیازمند داده‌ای است که ابزاری برای آن وجود ندارد، صادقانه بگویید داده در دسترس نیست.',
+  '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
+  '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
+  '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید.',
+].join('\n');
+
+const COPILOT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'search_student',
+      description: 'جستجوی کارآموز بر اساس نام، کد ملی یا شماره تماس. برای پیدا کردن شناسه کارآموز استفاده می‌شود.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'نام، نام خانوادگی، کد ملی یا شماره تماس کارآموز' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_student_financial_summary',
+      description: 'خلاصه مالی یک کارآموز: مجموع شهریه، مجموع پرداخت‌ها و مانده بدهی.',
+      parameters: {
+        type: 'object',
+        properties: {
+          student_id: { type: 'integer', description: 'شناسه کارآموز' },
+        },
+        required: ['student_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_daily_cashflow',
+      description: 'گردش مالی یک روز: مجموع دریافتی‌ها، مجموع پرداختی‌ها و خالص جریان نقدی.',
+      parameters: {
+        type: 'object',
+        properties: {
+          date_jalali: { type: 'string', description: 'تاریخ شمسی به فرمت YYYY/MM/DD؛ در صورت خالی بودن، امروز در نظر گرفته می‌شود' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_debtors_list',
+      description: 'فهرست بدهکاران به ترتیب بیشترین بدهی، همراه با شماره تماس.',
+      parameters: {
+        type: 'object',
+        properties: {
+          min_debt: { type: 'number', description: 'حداقل مبلغ بدهی (پیش‌فرض ۱ تومان)' },
+          limit: { type: 'integer', description: 'حداکثر تعداد نتایج (پیش‌فرض ۱۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_course_statistics',
+      description: 'آمار یک دوره: تعداد ثبت‌نام‌ها و مجموع مبالغ وصول‌شده.',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer', description: 'شناسه دوره' },
+        },
+        required: ['course_id'],
+      },
+    },
+  },
+];
+
+function toNumber(value: any): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function runCopilotTool(name: string, args: any): Promise<any> {
+  if (!chabokan.isMysqlEnabled()) {
+    return { error: 'پایگاه داده MySQL در دسترس نیست.' };
+  }
+  const a = args && typeof args === 'object' ? args : {};
+
+  if (name === 'search_student') {
+    const q = String(a.query || '').trim();
+    if (!q) return { error: 'عبارت جستجو خالی است.' };
+    const rows = await chabokan.sql<any>(
+      `SELECT s.student_id AS id, s.first_name, s.last_name, s.national_code, s.phone_number,
+              CAST(COALESCE(SUM(b.balance_due),0) AS DECIMAL(15,2)) AS remaining_debt
+       FROM students s
+       LEFT JOIN v_enrollment_balances b ON b.student_id = s.student_id
+       WHERE s.first_name LIKE ? OR s.last_name LIKE ? OR s.national_code=? OR s.phone_number=?
+       GROUP BY s.student_id LIMIT 10`,
+      [`%${q}%`, `%${q}%`, q, q]
+    );
+    return {
+      query: q,
+      count: rows.length,
+      students: rows.map((r) => ({
+        student_id: r.id,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        national_code: r.national_code,
+        phone_number: r.phone_number,
+        remaining_debt: toNumber(r.remaining_debt),
+      })),
+    };
+  }
+
+  if (name === 'get_student_financial_summary') {
+    const studentId = parseInt(String(a.student_id), 10);
+    if (!Number.isFinite(studentId)) return { error: 'شناسه کارآموز نامعتبر است.' };
+    const rows = await chabokan.sql<any>(
+      `SELECT s.student_id AS id, s.first_name, s.last_name,
+              CAST(SUM(b.final_price) AS DECIMAL(15,2)) AS total_tuition,
+              CAST(SUM(b.amount_paid_from_payments) AS DECIMAL(15,2)) AS total_paid,
+              CAST(SUM(b.balance_due) AS DECIMAL(15,2)) AS remaining_debt
+       FROM students s JOIN v_enrollment_balances b ON b.student_id=s.student_id
+       WHERE s.student_id=? GROUP BY s.student_id`,
+      [studentId]
+    );
+    if (!rows.length) return { student_id: studentId, found: false, message: 'کارآموزی با این شناسه یافت نشد.' };
+    const row = rows[0];
+    return {
+      found: true,
+      student_id: row.id,
+      name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+      total_tuition: toNumber(row.total_tuition),
+      total_paid: toNumber(row.total_paid),
+      remaining_debt: toNumber(row.remaining_debt),
+    };
+  }
+
+  if (name === 'get_daily_cashflow') {
+    const date = String(a.date_jalali || '').trim() || chabokan.jalaliToday();
+    const incomeRows = await chabokan.sql<any>(
+      `SELECT CAST(COALESCE(SUM(amount),0) AS DECIMAL(15,2)) AS total FROM payments WHERE pay_date_jalali=?`,
+      [date]
+    );
+    const expenseRows = await chabokan.sql<any>(
+      `SELECT CAST(COALESCE(SUM(amount),0) AS DECIMAL(15,2)) AS total FROM expenses WHERE expense_date_jalali=?`,
+      [date]
+    );
+    const income = toNumber(incomeRows[0]?.total);
+    const expense = toNumber(expenseRows[0]?.total);
+    return { date_jalali: date, income, expense, net: income - expense };
+  }
+
+  if (name === 'get_debtors_list') {
+    const minDebt = a.min_debt === undefined || a.min_debt === null || a.min_debt === ''
+      ? 1
+      : toNumber(a.min_debt);
+    const limit = a.limit === undefined || a.limit === null || a.limit === ''
+      ? 10
+      : Math.max(1, Math.min(100, Math.floor(toNumber(a.limit)) || 10));
+    const rows = await chabokan.sql<any>(
+      `SELECT s.student_id AS id, s.first_name, s.last_name, s.phone_number,
+              CAST(SUM(b.balance_due) AS DECIMAL(15,2)) AS remaining_debt
+       FROM students s JOIN v_enrollment_balances b ON b.student_id=s.student_id
+       GROUP BY s.student_id HAVING remaining_debt >= ?
+       ORDER BY remaining_debt DESC LIMIT ?`,
+      [minDebt, limit]
+    );
+    return {
+      min_debt: minDebt,
+      limit,
+      count: rows.length,
+      debtors: rows.map((r) => ({
+        student_id: r.id,
+        name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+        phone_number: r.phone_number,
+        remaining_debt: toNumber(r.remaining_debt),
+      })),
+    };
+  }
+
+  if (name === 'get_course_statistics') {
+    const courseId = parseInt(String(a.course_id), 10);
+    if (!Number.isFinite(courseId)) return { error: 'شناسه دوره نامعتبر است.' };
+    const rows = await chabokan.sql<any>(
+      `SELECT c.course_id AS id, c.title, COUNT(e.enrollment_id) AS enrollment_count,
+              CAST(COALESCE(SUM(b.amount_paid_from_payments),0) AS DECIMAL(15,2)) AS total_collected
+       FROM courses c
+       LEFT JOIN enrollments e ON e.course_id=c.course_id
+       LEFT JOIN v_enrollment_balances b ON b.enrollment_id=e.enrollment_id
+       WHERE c.course_id=? GROUP BY c.course_id`,
+      [courseId]
+    );
+    if (!rows.length) return { course_id: courseId, found: false, message: 'دوره‌ای با این شناسه یافت نشد.' };
+    const row = rows[0];
+    return {
+      found: true,
+      course_id: row.id,
+      title: row.title,
+      enrollment_count: toNumber(row.enrollment_count),
+      total_collected: toNumber(row.total_collected),
+    };
+  }
+
+  return { error: `ابزار ناشناخته: ${name}` };
+}
+
+async function callCopilotCompletion(messages: any[]) {
+  const response = await fetch(`${COPILOT_API_URL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${COPILOT_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: COPILOT_MODEL,
+      messages,
+      tools: COPILOT_TOOLS,
+      tool_choice: 'auto',
+      temperature: 0.2,
+      max_tokens: 2000,
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Copilot API error ${response.status}: ${detail.slice(0, 300)}`);
+  }
+  return response.json() as Promise<any>;
+}
+
+app.post('/api/copilot/chat', requireAuth, async (req, res) => {
+  if (!COPILOT_API_URL) {
+    return res.status(503).json({ error: 'سرویس هوش مصنوعی پیکربندی نشده است (COPILOT_API_URL تنظیم نشده).' });
+  }
+  if (!COPILOT_API_KEY) {
+    return res.status(503).json({ error: 'کلید سرویس هوش مصنوعی تنظیم نشده است (COPILOT_API_KEY تنظیم نشده).' });
+  }
+
+  const incoming = Array.isArray(req.body?.messages) ? req.body.messages : [];
+  const history = incoming
+    .filter((m: any) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-20)
+    .map((m: any) => ({ role: m.role, content: String(m.content).slice(0, 4000) }));
+
+  if (!history.length) {
+    return res.status(400).json({ error: 'پیام کاربر ارسال نشده است.' });
+  }
+
+  const messages: any[] = [{ role: 'system', content: COPILOT_SYSTEM_PROMPT }, ...history];
+
+  try {
+    for (let iteration = 0; iteration < COPILOT_MAX_ITERATIONS; iteration++) {
+      const completion = await callCopilotCompletion(messages);
+      const message = completion?.choices?.[0]?.message;
+      if (!message) {
+        return res.status(502).json({ error: 'پاسخ نامعتبر از سرویس هوش مصنوعی دریافت شد.' });
+      }
+      messages.push(message);
+
+      const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      if (!toolCalls.length) {
+        return res.json({ reply: String(message.content || '').trim() });
+      }
+
+      for (const toolCall of toolCalls) {
+        const fn = toolCall?.function || {};
+        let args: any = {};
+        try {
+          args = fn.arguments ? JSON.parse(fn.arguments) : {};
+        } catch {
+          args = {};
+        }
+        let result: any;
+        try {
+          result = await runCopilotTool(String(fn.name || ''), args);
+        } catch (err: any) {
+          result = { error: err?.message || 'اجرای ابزار ناموفق بود.' };
+        }
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCall?.id || `${fn.name || 'tool'}`,
+          name: String(fn.name || ''),
+          content: JSON.stringify(result),
+        });
+      }
+    }
+    return res.status(500).json({ error: 'تعداد دفعات فراخوانی ابزار بیش از حد مجاز بود.' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'خطا در ارتباط با سرویس هوش مصنوعی.' });
+  }
+});
+
 // Vite Integration middleware & SPA fallback
 async function startServer() {
   await chabokan.initMysql();

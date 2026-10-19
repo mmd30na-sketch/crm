@@ -25,6 +25,7 @@ import ContractPrintForm from './components/forms/ContractPrintForm';
 import SupervisorDashboard from './components/SupervisorDashboard';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
+import CopilotWidget from './components/CopilotWidget';
 
 const NAV_ITEMS = [
   {
@@ -478,6 +479,8 @@ export default function App() {
           </div>
         </footer>
       </main>
+
+      <CopilotWidget />
     </div>
   );
 }
