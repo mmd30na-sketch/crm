@@ -275,12 +275,15 @@ input[type="number"]::-webkit-outer-spin-button {
   backdrop-filter: blur(4px);
   z-index: 50;
   display: flex;
-  align-items: center;
+  /* flex-start + margin:auto on the modal: centered when it fits, scrollable (top reachable) when not */
+  align-items: flex-start;
   justify-content: center;
-  padding: 1.5rem;
+  overflow-y: auto;
+  padding: 1rem;
 }
 
 .carla-modal {
+  margin: auto;
   background: white;
   border-radius: 1.25rem;
   box-shadow: 0 24px 64px rgba(0,0,0,0.18), 0 4px 16px rgba(0,0,0,0.08);
@@ -309,24 +312,6 @@ input[type="number"]::-webkit-outer-spin-button {
   gap: 0.5rem;
   font-size: 0.875rem;
   font-weight: 500;
-}
-
-/* Animated Pulse Dot */
-.pulse-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-
-.pulse-dot.green  { background: #10b981; box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
-.pulse-dot.blue   { background: #0ea5e9; box-shadow: 0 0 0 0 rgba(14,165,233,0.4); }
-.pulse-dot.red    { background: #f43f5e; box-shadow: 0 0 0 0 rgba(244,63,94,0.4); }
-
-@keyframes pulse-glow {
-  0%   { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
-  70%  { box-shadow: 0 0 0 6px transparent; opacity: 0.8; }
-  100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
 }
 
 /* Loading Spinner */
@@ -407,26 +392,22 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* Fade-in animation */
 .fade-in {
-  animation: fade-in 0.3s ease forwards;
+  animation: fade-in 0.3s ease backwards;
 }
+/* No `forwards` fill: an animation that stays in effect on `transform` makes every position: fixed
+   modal inside the view fixed to the page instead of the viewport (modals also use ModalPortal). */
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* Slide-in from right (RTL) */
 .slide-in {
-  animation: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) backwards;
 }
 @keyframes slide-in {
   from { opacity: 0; transform: translateX(16px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-
-/* Premium footer */
-.carla-footer {
-  background: white;
-  border-top: 1px solid #f1f5f9;
+  to   { opacity: 1; transform: none; }
 }
 
 /* Recharts override */
@@ -450,4 +431,39 @@ input[type="number"]::-webkit-outer-spin-button {
   border-color: #0ea5e9;
   box-shadow: 0 4px 16px rgba(14, 165, 233, 0.2);
   transform: scale(1.03);
+}
+
+/* === MOBILE / TABLET RESPONSIVE (desktop >=1024px unchanged) === */
+html, body { max-width: 100%; overflow-x: hidden; }
+@media (max-width: 1023px) {
+  /* Drawer nav items: comfortable touch targets */
+  .carla-sidebar nav button, .carla-sidebar nav a { min-height: 44px; }
+}
+@media (max-width: 767px) {
+  /* iOS zooms into inputs under 16px */
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px !important; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select { min-height: 42px; }
+  main button, [role="dialog"] button { min-height: 36px; }
+  /* Tables scroll sideways instead of crushing columns */
+  .overflow-x-auto > table, .overflow-auto > table { min-width: 600px; }
+  .overflow-x-auto, .overflow-auto { -webkit-overflow-scrolling: touch; }
+  /* Modals: full width, never taller than the screen */
+  .fixed.inset-0 > div { max-height: calc(100dvh - 1.5rem); overflow-y: auto; }
+  .fixed.inset-0.p-4, .fixed.inset-0.p-3 { padding: 0.75rem; }
+  /* Long words / numbers never push the page wider */
+  main { overflow-wrap: break-word; }
+  /* Header breadcrumb: hide the sublabel on narrow phones */
+  #main-header .text-sm { min-width: 0; }
+}
+
+/* === MOBILE REVIEW: touch targets + keyboard (desktop >=1024px unchanged) === */
+@media (max-width: 1023px) {
+  main button, header button, aside button, .fixed.inset-0 button, .fixed.inset-0 a, [role="dialog"] button, .carla-modal button, #main-header button { min-height: 40px; min-width: 40px; }
+  .carla-modal { max-height: calc(100dvh - 1.5rem); scroll-padding-bottom: 6rem; }
+  .carla-modal-overlay { padding: 0.75rem; }
+  /* Inline text links styled as buttons inside table cells stay compact but get a taller hit area */
+  main td button { min-height: 36px; }
+  /* Leave room so the on-screen keyboard never hides the last field of a scrolling popup */
+  .fixed.inset-0 > div { scroll-padding-bottom: 6rem; }
+  main .overflow-y-auto { scroll-padding-bottom: 6rem; }
 }

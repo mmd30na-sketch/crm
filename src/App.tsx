@@ -5,15 +5,15 @@ import {
   BarChart3,
   Settings as SettingsIcon,
   Calendar,
-  Bell,
-  FileText,
   Menu,
   LayoutDashboard,
   MessageSquare,
-  ChevronLeft,
   RefreshCw,
-  Wifi,
   LogOut,
+  Contact,
+  ClipboardList,
+  Megaphone,
+  CalendarRange,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -22,10 +22,17 @@ import StudentRegistrationForm from './components/StudentRegistrationForm';
 import AccountingDashboard from './components/AccountingDashboard';
 import Settings from './components/Settings';
 import ContractPrintForm from './components/forms/ContractPrintForm';
+import PrintPreview from './components/print/PrintPreview';
 import SupervisorDashboard from './components/SupervisorDashboard';
+import PendingRegistrationsPanel from './components/PendingRegistrationsPanel';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
 import CopilotWidget from './components/CopilotWidget';
+import LeadsPanel from './components/LeadsPanel';
+import TasksPanel from './components/TasksPanel';
+import BulkMessaging from './components/BulkMessaging';
+import CourseTermsPanel from './components/CourseTermsPanel';
+import { taskSummary } from './api/phase4';
 
 const NAV_ITEMS = [
   {
@@ -43,6 +50,14 @@ const NAV_ITEMS = [
     icon: Users,
     color: 'teal',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
+  },
+  {
+    id: 'terms',
+    label: 'مدیریت دوره‌ها',
+    sublabel: 'شماره دوره، ظرفیت و وضعیت',
+    icon: CalendarRange,
+    color: 'teal',
+    roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
     id: 'register',
@@ -66,7 +81,32 @@ const NAV_ITEMS = [
     sublabel: 'مرکز ارتباطی',
     icon: MessageSquare,
     color: 'rose',
+    // The server allows /api/messenger for admin and cashier only.
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'leads',
+    label: 'سرنخ‌ها',
+    sublabel: 'تماس‌گیرندگان و پیگیری',
+    icon: Contact,
+    color: 'teal',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'tasks',
+    label: 'کارها',
+    sublabel: 'ارجاع و مهلت',
+    icon: ClipboardList,
+    color: 'brand',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
+  },
+  {
+    id: 'campaigns',
+    label: 'پیام انبوه',
+    sublabel: 'کمپین روبیکا',
+    icon: Megaphone,
+    color: 'rose',
+    roles: ['admin'] as StaffRole[],
   },
   {
     id: 'settings',
@@ -107,8 +147,18 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>('supervisor');
+  const [taskCounts, setTaskCounts] = useState<{ open: number; overdue: number }>({ open: 0, overdue: 0 });
+  const refreshTaskCounts = () => { taskSummary().then(setTaskCounts).catch(() => undefined); };
+  useEffect(() => {
+    if (!currentUser) return;
+    refreshTaskCounts();
+    const t = setInterval(refreshTaskCounts, 120000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  // On phones the sidebar overlays the content, so start collapsed there.
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => window.innerWidth >= 1024);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const [students, setStudents] = useState<Student[]>([]);
@@ -120,20 +170,28 @@ export default function App() {
   const refreshAllData = async () => {
     setIsRefreshing(true);
     try {
-      const [stdData, crsData, enrData, payData, expData] = await Promise.all([
+      // Photo/receipt URLs are built with the file token, so get one before the lists are loaded.
+      await api.ensureFileToken();
+      // Each dataset is loaded on its own: a role that may not read payments/expenses (e.g. the instructor)
+      // must still get students and courses, and a failed refresh keeps what is already on screen.
+      const results = await Promise.allSettled([
         api.fetchStudents(),
         api.fetchCourses(),
         api.fetchEnrollments(),
         api.fetchPayments(),
         api.fetchExpenses(),
       ]);
-      setStudents(stdData);
-      setCourses(crsData);
-      setEnrollments(enrData);
-      setPayments(payData);
-      setExpenses(expData);
-    } catch (err) {
-      console.error('Error fetching dashboard datasets:', err);
+      const apply = <T,>(r: PromiseSettledResult<T>, set: React.Dispatch<React.SetStateAction<T>>) => {
+        if (r.status === 'fulfilled') set(r.value);
+      };
+      apply(results[0] as PromiseSettledResult<Student[]>, setStudents);
+      apply(results[1] as PromiseSettledResult<Course[]>, setCourses);
+      apply(results[2] as PromiseSettledResult<Enrollment[]>, setEnrollments);
+      apply(results[3] as PromiseSettledResult<Payment[]>, setPayments);
+      apply(results[4] as PromiseSettledResult<Expense[]>, setExpenses);
+      results.forEach((r, i) => {
+        if (r.status === 'rejected' && !/403|Forbidden/i.test(String(r.reason))) console.error('Error fetching dataset', i, r.reason);
+      });
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -149,6 +207,16 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      try {
+        const u = new URL(window.location.href);
+        const ssoTicket = u.searchParams.get('sso_ticket');
+        if (ssoTicket) {
+          u.searchParams.delete('sso_ticket');
+          window.history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+          setAuthChecking(true);
+          await api.ssoExchange(ssoTicket);
+        }
+      } catch {}
       if (!api.getAuthToken()) {
         setAuthChecking(false);
         setAuthed(false);
@@ -174,8 +242,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authed) refreshAllData();
+    if (!authed) return;
+    api.startFileTokenRefresh();
+    refreshAllData();
   }, [authed]);
+
+  // A renewed file token goes into the photo/receipt URLs already on screen (images re-render with it).
+  useEffect(() => {
+    const onFileToken = () => {
+      setStudents(prev => prev.map(api.withCurrentFileToken));
+      setEnrollments(prev => prev.map(e => (e.receipt_pdf_path ? { ...e, receipt_pdf_path: api.protectedFileUrl(e.receipt_pdf_path) } : e)));
+    };
+    window.addEventListener(api.FILE_TOKEN_EVENT, onFileToken);
+    return () => window.removeEventListener(api.FILE_TOKEN_EVENT, onFileToken);
+  }, []);
 
   const role: StaffRole = currentUser?.role === 'cashier' || currentUser?.role === 'instructor' ? currentUser.role : 'admin';
   const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role));
@@ -183,6 +263,8 @@ export default function App() {
   const handleActiveTabChange = (newTab: string) => {
     if (!visibleNav.some(item => item.id === newTab)) return;
     setActiveTab(newTab);
+    // On phones the sidebar covers the content: close it once a tab is picked.
+    if (window.innerWidth < 1024) setIsSidebarOpen(false);
   };
 
   useEffect(() => {
@@ -193,7 +275,7 @@ export default function App() {
 
   const activeNavItem = visibleNav.find(n => n.id === activeTab) || NAV_ITEMS.find(n => n.id === activeTab);
 
-  const jalaliDate = new Date().toLocaleDateString('fa-IR');
+  const jalaliDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' });
 
   if (authChecking) {
     return <div className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center" dir="rtl">در حال بررسی ورود...</div>;
@@ -204,7 +286,7 @@ export default function App() {
 
   return (
     <div
-      className="flex h-screen w-screen overflow-hidden text-slate-900"
+      className="flex h-screen h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
       style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #f8fafc 50%, #f0fdf4 100%)' }}
       dir="rtl"
       id="app-root"
@@ -212,9 +294,13 @@ export default function App() {
       {/* ═══════════════════════════════════════════════
           SIDEBAR — Dark Premium Navigation
       ═══════════════════════════════════════════════ */}
+      {/* Phones: the sidebar is an overlay above the content; tapping the backdrop closes it. */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden="true" />
+      )}
       <aside
-        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out ${
-          isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden'
+        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 lg:static lg:z-auto ${
+          isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden invisible'
         }`}
         id="app-sidebar"
       >
@@ -226,7 +312,6 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-white text-base font-bold tracking-tight leading-tight">Carla CRM</h1>
-              
             </div>
           </div>
         </div>
@@ -267,6 +352,12 @@ export default function App() {
                     {item.sublabel}
                   </div>
                 </div>
+                {item.id === 'tasks' && taskCounts.open > 0 && (
+                  <span title={taskCounts.overdue ? `${taskCounts.overdue} کار عقب‌افتاده` : 'کارهای باز'}
+                    className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${taskCounts.overdue ? 'bg-rose-500 text-white animate-pulse' : 'bg-white/15 text-white'}`}>
+                    {(taskCounts.overdue || taskCounts.open).toLocaleString('fa-IR')}
+                  </span>
+                )}
                 {isActive && (
                   <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)] shrink-0" />
                 )}
@@ -277,21 +368,8 @@ export default function App() {
 
         {/* Sidebar Footer */}
         <div className="p-4 border-t border-white/5">
-          {/* Server Status */}
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 mb-3">
-            <div className="pulse-dot green" />
-            <span className="text-[10px] text-slate-400 font-medium flex-1">سرور فعال</span>
-            <Wifi className="h-3 w-3 text-slate-600" />
-          </div>
           {/* User Card */}
           <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/5">
-            <div className="h-8 w-8 rounded-xl overflow-hidden border border-white/10 shrink-0">
-              <img
-                src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=64&h=64&q=80"
-                alt="اپراتور"
-                className="h-full w-full object-cover"
-              />
-            </div>
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-300 leading-tight truncate">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
               <div className="text-[9px] text-slate-600 leading-tight">{ROLE_LABEL[role]}</div>
@@ -310,18 +388,20 @@ export default function App() {
       {/* ═══════════════════════════════════════════════
           MAIN CONTENT
       ═══════════════════════════════════════════════ */}
-      <main className="flex-1 flex flex-col overflow-hidden" id="main-view-wrapper">
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden" id="main-view-wrapper">
 
         {/* ── HEADER ── */}
         <header
-          className="carla-header h-16 px-6 flex items-center justify-between shrink-0"
+          className="carla-header h-16 px-3 sm:px-6 gap-2 flex items-center justify-between shrink-0"
           id="main-header"
         >
           {/* Left: Sidebar Toggle + Breadcrumb */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 rounded-xl text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all"
+              aria-label="منو"
+              aria-expanded={isSidebarOpen}
+              className="p-2 min-w-10 min-h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all"
               title={isSidebarOpen ? 'بستن منو' : 'باز کردن منو'}
             >
               <Menu className="h-5 w-5" />
@@ -329,8 +409,6 @@ export default function App() {
 
             {/* Breadcrumb */}
             <div className="flex items-center gap-1.5 text-sm">
-              
-              <ChevronLeft className="h-3.5 w-3.5 text-slate-300" />
               {activeNavItem && (
                 <div className="flex items-center gap-1.5">
                   <activeNavItem.icon className={`h-4 w-4 ${ICON_COLOR_MAP[activeNavItem.color]}`} />
@@ -354,23 +432,11 @@ export default function App() {
             {/* Separator */}
             <div className="h-6 w-px bg-slate-200" />
 
-            {/* Online Badge */}
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 rounded-full border border-emerald-100">
-              <span className="pulse-dot green" style={{ width: 7, height: 7 }} />
-              <span className="text-[10px] font-bold text-emerald-700">API متصل</span>
-            </div>
-
             {/* Date */}
             <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
               <Calendar className="h-3.5 w-3.5 text-sky-400" />
               <span className="font-bold font-mono text-[11px] text-slate-600">{jalaliDate}</span>
             </div>
-
-            {/* Notification */}
-            <button className="relative p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all">
-              <Bell className="h-4.5 w-4.5" />
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 bg-rose-500 rounded-full ring-2 ring-white" />
-            </button>
 
             {/* Separator */}
             <div className="h-6 w-px bg-slate-200" />
@@ -381,24 +447,19 @@ export default function App() {
                 <div className="text-xs font-bold text-slate-700 leading-tight">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
                 <div className="text-[9px] text-slate-400">{ROLE_LABEL[role]}</div>
               </div>
-              <div className="h-8 w-8 rounded-xl overflow-hidden border-2 border-sky-100 ring-1 ring-sky-200/50">
-                <img
-                  src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=facearea&facepad=2&w=64&h=64&q=80"
-                  alt="اپراتور"
-                  className="h-full w-full object-cover"
-                />
-              </div>
             </div>
           </div>
         </header>
 
         {/* ── CONTENT AREA ── */}
         <div
-          className="flex-1 overflow-y-auto p-6 space-y-5"
+          className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 space-y-5"
           id="main-content-scroll"
         >
           {new URLSearchParams(window.location.search).get('print') === 'contract' ? (
               <ContractPrintForm />
+          ) : new URLSearchParams(window.location.search).get('print') === 'all' ? (
+              <PrintPreview enrollmentId={Number(new URLSearchParams(window.location.search).get('enrollment')) || undefined} />
           ) : loading ? (
             <div className="flex flex-col items-center justify-center py-40 space-y-4 fade-in">
               <div className="carla-spinner" />
@@ -406,6 +467,9 @@ export default function App() {
             </div>
           ) : (
             <div className="fade-in">
+              {activeTab === 'supervisor' && role === 'admin' && (
+                <PendingRegistrationsPanel onActiveTabChange={handleActiveTabChange} />
+              )}
               {activeTab === 'supervisor' && role === 'admin' && (
                 <SupervisorDashboard
                   students={students}
@@ -425,6 +489,7 @@ export default function App() {
                   payments={payments}
                   onRefresh={refreshAllData}
                   onActiveTabChange={handleActiveTabChange}
+                  role={role}
                 />
               )}
               {activeTab === 'register' && (role === 'admin' || role === 'cashier') && (
@@ -445,11 +510,26 @@ export default function App() {
                   onRefresh={refreshAllData}
                 />
               )}
-              {activeTab === 'messenger' && (
+              {activeTab === 'messenger' && (role === 'admin' || role === 'cashier') && (
                 <MessengerHub
                   students={students}
+                  courses={courses}
+                  enrollments={enrollments}
+                  payments={payments}
                   onRefresh={refreshAllData}
                 />
+              )}
+              {activeTab === 'terms' && (role === 'admin' || role === 'cashier') && (
+                <CourseTermsPanel courses={courses} isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
+                <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />
+              )}
+              {activeTab === 'tasks' && currentUser && (
+                <TasksPanel username={currentUser.username} isAdmin={role === 'admin'} onCountsChange={refreshTaskCounts} />
+              )}
+              {activeTab === 'campaigns' && role === 'admin' && (
+                <BulkMessaging courses={courses} />
               )}
               {activeTab === 'settings' && role === 'admin' && (
                 <Settings
@@ -461,23 +541,6 @@ export default function App() {
           )}
         </div>
 
-        {/* ── FOOTER ── */}
-        <footer
-          className="carla-footer px-6 py-2.5 flex items-center justify-between shrink-0"
-          id="app-footer"
-        >
-          <div className="flex items-center gap-4 text-[10px] text-slate-400">
-            <span className="flex items-center gap-1">
-              <span className="pulse-dot green" style={{ width: 6, height: 6 }} />
-              درگاه: متصل
-            </span>
-            <span>آرشیو رسید: فعال</span>
-            <span>Carla CRM v2.4.0</span>
-          </div>
-          <div className="text-[10px] text-slate-400">
-            سیستم مدیریت
-          </div>
-        </footer>
       </main>
 
       <CopilotWidget />

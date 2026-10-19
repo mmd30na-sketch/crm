@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
+  Paperclip,
   MessageSquare,
   Send,
   Smartphone,
@@ -15,22 +16,38 @@ import {
   Check,
   Search,
   Zap,
-  Radio,
   User,
   Phone,
-  Paperclip,
   CheckCheck,
-  ShieldCheck,
   RefreshCw,
   Plus,
   Tag,
 } from 'lucide-react';
-import { Student } from '../types';
+import { Student, Course, Enrollment, Payment } from '../types';
+import { MediaBlock, MessageMenu, MsgMedia } from './MessengerExtras';
 import * as api from '../api/client';
+import ModalPortal from './ModalPortal';
+import { studentBalance } from '../utils/finance';
 
 interface MessengerHubProps {
   students: Student[];
+  courses?: Course[];
+  enrollments?: Enrollment[];
+  payments?: Payment[];
   onRefresh: () => void;
+}
+
+const digitsOnly = (v: unknown) => String(v ?? '')
+  .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0))
+  .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660))
+  .replace(/\D/g, '');
+const phoneKey = (v: unknown) => digitsOnly(v).replace(/^98/, '0').replace(/^9(?=\d{9}$)/, '09');
+
+function Avatar({ name, className }: { name: string; className: string }) {
+  return (
+    <div className={`${className} bg-sky-100 text-sky-700 font-black flex items-center justify-center shrink-0`}>
+      {(name || '?').trim().charAt(0)}    </div>
+  );
 }
 
 interface ChatThread {
@@ -40,7 +57,11 @@ interface ChatThread {
   avatar: string;
   courseTitle: string;
   phone: string;
-  channel: 'rubika' | 'bale' | 'eitaa' | 'sms';
+  /** Main Rubika account chat (object_guid); replies go out through the account. */
+  chatId?: string;
+  source?: 'account' | 'bot';
+  person?: { kind: string; id: number | string; name: string };
+  channel: 'rubika' | 'sms';
   lastMessage: string;
   time: string;
   unreadCount: number;
@@ -49,7 +70,10 @@ interface ChatThread {
     sender: 'student' | 'system' | 'admin';
     text: string;
     time: string;
-    status: 'sent' | 'delivered' | 'read';
+    status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+    error?: string;
+    /** Rubika main-account message extras */
+    account?: boolean; rubikaId?: string | null; media?: MsgMedia; edited?: boolean; transcription?: string; deletedRemote?: boolean;
   }>;
 }
 
@@ -60,10 +84,11 @@ interface SmsLog {
   text: string;
   templateTitle: string;
   time: string;
-  status: 'delivered' | 'sent' | 'pending';
+  status: 'delivered' | 'sent' | 'pending' | 'failed';
+  error?: string;
 }
 
-const QUICK_TEMPLATES = [
+const DEFAULT_TEMPLATES = [
   {
     id: 'welcome',
     title: 'خوش‌آمدگویی و ثبت‌نام',
@@ -90,8 +115,28 @@ const QUICK_TEMPLATES = [
   },
 ];
 
-export default function MessengerHub({ students, onRefresh }: MessengerHubProps) {
+export default function MessengerHub({ students, courses = [], enrollments = [], payments = [], onRefresh }: MessengerHubProps) {
+  const studentsRef = useRef(students);
+  studentsRef.current = students;
   const [activeTab, setActiveTab] = useState<'chat' | 'sms' | 'templates'>('chat');
+  // Templates live on the server (editable); the built-in list is only shown until the first load answers.
+  const [QUICK_TEMPLATES, setTemplates] = useState<{ id: string; title: string; body: string; color: string }[]>(DEFAULT_TEMPLATES);
+  const [tplDraft, setTplDraft] = useState<{ id?: string; title: string; body: string; color: string } | null>(null);
+  const [tplBusy, setTplBusy] = useState(false);
+  const [tplError, setTplError] = useState('');
+  const loadTemplates = () => api.fetchMessageTemplates().then(r => { if (Array.isArray(r)) setTemplates(r); }).catch(() => {});
+  useEffect(() => { loadTemplates(); }, []);
+  const saveTpl = async () => {
+    if (!tplDraft) return;
+    setTplBusy(true); setTplError('');
+    try { await api.saveMessageTemplate(tplDraft); setTplDraft(null); await loadTemplates(); }
+    catch (e: any) { setTplError(e?.message || 'ذخیره نشد'); } finally { setTplBusy(false); }
+  };
+  const deleteTpl = async (id: string, title: string) => {
+    if (!window.confirm(`الگوی «${title}» حذف شود؟`)) return;
+    setTplError('');
+    try { await api.deleteMessageTemplate(id); await loadTemplates(); } catch (e: any) { setTplError(e?.message || 'حذف نشد'); }
+  };
 
   const [threads, setThreads] = useState<ChatThread[]>([]);
 
@@ -110,14 +155,26 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
 
           if (realThreads && realThreads.length > 0) {
             for (const rTh of realThreads) {
+              if (rTh.source === 'account' || rTh.source === 'bot') {
+                const ex = updated.find(t => t.source === rTh.source && t.chatId === rTh.external_id);
+                if (ex) { ex.senderName = rTh.title || ex.senderName; ex.person = rTh.person; if (rTh.phone) ex.phone = rTh.phone; if (rTh.student_id) ex.studentId = rTh.student_id; continue; }
+                updated.push({
+                  id: rTh.thread_id, studentId: rTh.student_id, senderName: rTh.title || 'کاربر روبیکا', avatar: '',
+                  courseTitle: rTh.source === 'bot' ? 'ربات روبیکا' : 'اکانت اصلی روبیکا', phone: rTh.phone || '', chatId: rTh.external_id, source: rTh.source, person: rTh.person,
+                  channel: 'rubika', lastMessage: rTh.last_message_text || '',
+                  time: rTh.updated_at ? new Date(rTh.updated_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : '',
+                  unreadCount: rTh.unread_count || 0, messages: [],
+                });
+                continue;
+              }
               const exists = updated.find(t => t.id === rTh.thread_id || t.senderName === rTh.title);
               if (!exists) {
                 updated.unshift({
                   id: rTh.thread_id || Date.now(),
                   senderName: rTh.title || 'کاربر روبیکا',
-                  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+                  avatar: '',
                   courseTitle: 'چت عمومی',
-                  phone: rTh.external_id || '09120000000',
+                  phone: rTh.external_id || '',
                   channel: (rTh.channel as any) || 'rubika',
                   lastMessage: rTh.last_message_text || '',
                   time: rTh.updated_at ? new Date(rTh.updated_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : '',
@@ -138,18 +195,54 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
 
           if (rawMsgs && rawMsgs.length > 0) {
             for (const msg of rawMsgs) {
-              const phone = String(msg.sender_phone || msg.phone || '').replace(/^\+98/, '0');
-              let targetThread = updated.find(t => t.phone === phone || t.senderName.includes(msg.sender));
+              if ((msg.source === 'account' || msg.source === 'bot') && msg.chat_id) {
+                let th = updated.find(t => t.source === msg.source && t.chatId === msg.chat_id);
+                if (!th) {
+                  th = { id: msg.id, senderName: msg.chat_title || 'کاربر روبیکا', avatar: '', courseTitle: msg.source === 'bot' ? 'ربات روبیکا' : 'اکانت اصلی روبیکا',
+                    phone: phoneKey(msg.sender_phone) || '', chatId: msg.chat_id, source: msg.source, channel: 'rubika',
+                    lastMessage: '', time: '', unreadCount: 0, messages: [] };
+                  updated.push(th);
+                }
+                const extra = {
+                  account: msg.source === 'account', rubikaId: msg.rubika_message_id || (/:(\d{6,})$/.exec(String(msg.ext_id || '')) || [])[1] || null,
+                  media: msg.media, edited: !!msg.edited, transcription: msg.transcription, deletedRemote: !!msg.deleted_remote,
+                };
+                const existing = th.messages.find(m => m.id === msg.id);
+                if (existing) { Object.assign(existing, extra, { text: msg.message }); continue; }
+                {
+                  const out = msg.direction === 'out';
+                  const pending = out ? th.messages.find(m => m.sender === 'admin' && m.status === 'sending' && m.text === msg.message) : undefined;
+                  if (pending) { Object.assign(pending, extra, { id: msg.id, status: 'sent' }); }
+                  else th.messages.push({
+                    ...extra,
+                    id: msg.id, sender: out ? 'admin' : 'student', text: msg.message,
+                    time: msg.received_at ? new Date(msg.received_at).toLocaleString('fa-IR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '',
+                    status: out ? 'sent' : 'read',
+                  });
+                  th.lastMessage = msg.message;
+                  th.time = msg.received_at ? new Date(msg.received_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : th.time;
+                }
+                continue;
+              }
+              const phone = phoneKey(msg.sender_phone || msg.phone);
+              const isAdminMsg = msg.sender === 'admin';
+              const known = phone ? studentsRef.current.find(st => phoneKey(st.phone_number) === phone) : undefined;
+              let targetThread = updated.find(t => !t.chatId && ((phone && phoneKey(t.phone) === phone) || (!isAdminMsg && msg.sender && t.senderName.includes(msg.sender))));
               if (targetThread) {
                 const exists = targetThread.messages.some(m => m.id === msg.id);
                 if (!exists) {
-                  targetThread.messages.push({
-                    id: msg.id || Date.now(),
-                    sender: msg.sender === 'admin' ? 'admin' : 'student',
-                    text: msg.message,
-                    time: msg.received_at ? new Date(msg.received_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : 'هم‌اکنون',
-                    status: 'read',
-                  });
+                  const pending = isAdminMsg ? targetThread.messages.find(m => m.sender === 'admin' && m.status === 'sending' && m.text === msg.message) : undefined;
+                  if (pending) {
+                    pending.id = msg.id; pending.status = msg.status === 'sent' ? 'sent' : pending.status;
+                  } else {
+                    targetThread.messages.push({
+                      id: msg.id || Date.now(),
+                      sender: isAdminMsg ? 'admin' : 'student',
+                      text: msg.message,
+                      time: msg.received_at ? new Date(msg.received_at).toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' }) : 'هم‌اکنون',
+                      status: isAdminMsg ? (msg.status === 'sent' ? 'sent' : msg.status ? 'failed' : 'sent') : 'read',
+                    });
+                  }
                   targetThread.lastMessage = msg.message;
                   targetThread.time = 'هم‌اکنون';
                 }
@@ -157,20 +250,21 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                 // Add new thread for unknown sender
                 updated.unshift({
                   id: msg.id || Date.now(),
-                  senderName: msg.sender || 'کاربر روبیکا',
-                  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-                  courseTitle: 'پیام ورودی',
+                  studentId: known?.id,
+                  senderName: known ? `${known.first_name} ${known.last_name}` : (isAdminMsg ? (phone || 'گیرنده') : msg.sender) || 'کاربر روبیکا',
+                  avatar: '',
+                  courseTitle: isAdminMsg ? 'پیام ارسالی' : 'پیام ورودی',
                   phone: phone || '',
                   channel: (msg.channel as any) || 'rubika',
                   lastMessage: msg.message,
                   time: 'هم‌اکنون',
-                  unreadCount: 1,
+                  unreadCount: isAdminMsg ? 0 : 1,
                   messages: [{
                     id: msg.id || Date.now(),
-                    sender: 'student',
+                    sender: isAdminMsg ? 'admin' : 'student',
                     text: msg.message,
                     time: 'هم‌اکنون',
-                    status: 'read',
+                    status: isAdminMsg ? (msg.status === 'sent' ? 'sent' : 'failed') : 'read',
                   }]
                 });
               }
@@ -198,13 +292,16 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
   const [smsCustomPhone, setSmsCustomPhone]               = useState('');
   const [selectedTemplateId, setSelectedTemplateId]       = useState('');
   const [smsBody, setSmsBody]                             = useState('');
+  const [smsError, setSmsError]                           = useState('');
   const [isSendingSms, setIsSendingSms]                   = useState(false);
   const [smsSuccessToast, setSmsSuccessToast]             = useState('');
 
   const [smsLogs, setSmsLogs] = useState<SmsLog[]>([]);
 
 
-  const activeThread = useMemo(() => threads.find(t => t.id === activeThreadId) ?? threads[0], [threads, activeThreadId]);
+  const activeThread = useMemo(() => threads.find(t => t.id === activeThreadId) ?? threads.find(t => !!(t.chatId || t.phone)) ?? threads[0], [threads, activeThreadId]);
+  /** A reply needs a destination: an account chat (object_guid) or a mobile number. Old webhook rows can have neither. */
+  const canReply = !!activeThread && !!(activeThread.chatId || /^0?9\d{9}$/.test(String(activeThread.phone || '').replace(/\D/g, '').replace(/^98/, '0')));
 
   /* Filter threads */
   const filteredThreads = useMemo(() => threads.filter(t => {
@@ -219,42 +316,94 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
 
   /* Send message in chat thread */
   const handleSendMessage = async () => {
-    if (!messageInput.trim() || !activeThread) return;
+    if (!messageInput.trim() || !activeThread || !canReply) return;
     const textToSend = messageInput.trim();
-    const newMsg = {
-      id: Date.now(),
-      sender: 'admin' as const,
-      text: textToSend,
+    const localId = Date.now();
+    const threadId = activeThread.id;
+    const patchMessage = (changes: Partial<ChatThread['messages'][number]>) =>
+      setThreads(prev => prev.map(t => t.id !== threadId ? t : { ...t, messages: t.messages.map(m => m.id === localId ? { ...m, ...changes } : m) }));
+
+    setThreads(prev => prev.map(t => t.id !== threadId ? t : {
+      ...t,
+      lastMessage: textToSend,
       time: 'هم‌اکنون',
-      status: 'delivered' as const,
-    };
-    setThreads(prev => prev.map(t => {
-      if (t.id === activeThread.id) {
-        return {
-          ...t,
-          lastMessage: newMsg.text,
-          time: 'هم‌اکنون',
-          unreadCount: 0,
-          messages: [...t.messages, newMsg],
-        };
-      }
-      return t;
+      unreadCount: 0,
+      messages: [...t.messages, { id: localId, sender: 'admin' as const, text: textToSend, time: 'هم‌اکنون', status: 'sending' as const }],
     }));
     setMessageInput('');
 
-    // Real API Call to Backend Server /api/messenger/send
     try {
-      await api.sendMessengerMessage({
+      const r = await api.sendMessengerMessage({
         channel: activeThread.channel,
         recipient: activeThread.phone,
         messageText: textToSend,
+        student_id: activeThread.studentId,
+        ...(activeThread.chatId ? { chat_id: activeThread.chatId, source: activeThread.source || 'account' } : {}),
       });
-    } catch (e) {
-        console.warn('Real API messenger send fallback:', e);
+      // Reuse the server id so the polled copy of this message is recognised, not shown twice.
+      if (r.success) patchMessage({ id: r.message_id ?? localId, status: 'sent' });
+      else patchMessage({ id: r.message_id ?? localId, status: 'failed', error: r.message });
+    } catch (e: any) {
+      patchMessage({ status: 'failed', error: e?.message || 'ارسال نشد' });
     }
   };
 
-  /* Fill SMS from template */
+  /* ── Rubika account message actions ── */
+  type ThreadMsg = ChatThread['messages'][number];
+  const [msgDialog, setMsgDialog] = useState<null | { kind: 'delete-crm' | 'delete-global' | 'edit'; msg: ThreadMsg; text?: string }>(null);
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgNotice, setMsgNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const patchThreadMsg = (msgId: number, fn: (m: ThreadMsg) => ThreadMsg | null) =>
+    setThreads(prev => prev.map(t => ({ ...t, messages: t.messages.map(m => (m.id === msgId ? fn(m) : m)).filter(Boolean) as ThreadMsg[] })));
+  const runMsgDialog = async () => {
+    if (!msgDialog) return;
+    setMsgBusy(true); setMsgNotice(null);
+    try {
+      if (msgDialog.kind === 'edit') {
+        const text = (msgDialog.text || '').trim(); if (!text) return;
+        await api.editMessengerMessage(msgDialog.msg.id, text);
+        patchThreadMsg(msgDialog.msg.id, m => ({ ...m, text, edited: true }));
+        setMsgNotice({ ok: true, text: 'پیام در روبیکا ویرایش شد.' });
+      } else {
+        const r = await api.deleteMessengerMessage(msgDialog.msg.id, msgDialog.kind === 'delete-global' ? 'global' : 'crm');
+        patchThreadMsg(msgDialog.msg.id, () => null);
+        setMsgNotice({ ok: true, text: r.note || (r.scope === 'global' ? 'پیام برای هر دو طرف حذف شد.' : 'پیام فقط از CRM حذف شد.') });
+      }
+      setMsgDialog(null);
+    } catch (e: any) { setMsgNotice({ ok: false, text: e?.message || 'انجام نشد' }); setMsgDialog(null); }
+    finally { setMsgBusy(false); }
+  };
+  const attachRef = useRef<HTMLInputElement>(null);
+  const [attachBusy, setAttachBusy] = useState(false);
+  const handleAttach = async (file: File | undefined) => {
+    if (!file || !activeThread?.chatId || activeThread.source !== 'account') return;
+    if (file.size > 20 * 1024 * 1024) { setMsgNotice({ ok: false, text: 'حداکثر حجم فایل ۲۰ مگابایت است.' }); return; }
+    setAttachBusy(true); setMsgNotice(null);
+    try { await api.sendMessengerAttachment(activeThread.chatId, file, messageInput.trim()); setMessageInput(''); setMsgNotice({ ok: true, text: 'فایل ارسال شد.' }); }
+    catch (e: any) { setMsgNotice({ ok: false, text: e?.message || 'ارسال فایل ناموفق بود.' }); }
+    finally { setAttachBusy(false); }
+  };
+  // Mark the chat as read in Rubika when it is opened here (once per open).
+  const seenFor = useRef<string>('');
+  useEffect(() => {
+    const t = activeThread;
+    if (!t?.chatId || t.source !== 'account' || seenFor.current === t.chatId) return;
+    seenFor.current = t.chatId;
+    api.markMessengerThreadSeen(t.chatId).catch(() => {});
+    setThreads(prev => prev.map(x => (x.id === t.id ? { ...x, unreadCount: 0 } : x)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThread?.chatId]);
+
+  /** Values for the template placeholders, computed from the student's real records. */
+  const studentTemplateValues = (st: Student) => {
+    const enr = enrollments.filter(e => e.student_id === st.id);
+    const last = enr.slice().sort((a, b) => b.id - a.id)[0];
+    const courseTitle = last ? courses.find(c => c.id === last.course_id)?.title : undefined;
+    const { debt } = studentBalance(enr, payments.filter(p => p.student_id === st.id));
+    return { courseTitle, debt: payments.length > 0 || enr.length === 0 ? debt : undefined };
+  };
+
+  /* Fill SMS from template. Placeholders without a real value ([تاریخ]، [ساعت]…) stay in the text and must be completed before sending. */
   useEffect(() => {
     if (selectedTemplateId) {
       const tmpl = QUICK_TEMPLATES.find(t => t.id === selectedTemplateId);
@@ -263,65 +412,64 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
         if (smsRecipientStudentId) {
           const st = students.find(s => s.id.toString() === smsRecipientStudentId);
           if (st) {
-            text = text
-              .replace('[نام]', st.first_name)
-              .replace('[خانوادگی]', st.last_name)
-              .replace('[دوره]', 'پایه سوم')
-              .replace('[بدهی]', '۲,۵۰۰,۰۰۰ تومان')
-              .replace('[تاریخ]', '۱۴۰۵/۰۶/۰۵')
-              .replace('[ساعت]', '۱۰:۰۰');
+            const v = studentTemplateValues(st);
+            text = text.replace('[نام]', st.first_name).replace('[خانوادگی]', st.last_name);
+            if (v.courseTitle) text = text.replace('[دوره]', v.courseTitle);
+            if (v.debt !== undefined) text = text.replace('[بدهی]', `${v.debt.toLocaleString('fa-IR')} تومان`);
             setSmsCustomPhone(st.phone_number || '');
           }
         }
         setSmsBody(text);
       }
     }
-  }, [selectedTemplateId, smsRecipientStudentId, students]);
+  }, [selectedTemplateId, smsRecipientStudentId, students, courses, enrollments, payments]);
 
-  /* Send SMS Action */
-  const handleSendSms = (e: React.FormEvent) => {
+  /* Send SMS Action: really sends through the server and shows the true result */
+  const handleSendSms = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!smsBody.trim()) return;
-
-    let rName = 'شماره دستی';
-    let rPhone = smsCustomPhone || '—';
-
-    if (smsRecipientStudentId) {
-      const st = students.find(s => s.id.toString() === smsRecipientStudentId);
-      if (st) {
-        rName = `${st.first_name} ${st.last_name}`;
-        rPhone = st.phone_number || smsCustomPhone;
-      }
+    if (/\[[^\]]+\]/.test(smsBody)) {
+      setSmsSuccessToast('');
+      setSmsError('جای‌گذاری‌های داخل [ ] را کامل کنید، سپس ارسال کنید.');
+      return;
     }
 
-    setIsSendingSms(true);
-    setTimeout(() => {
-      const log: SmsLog = {
-        id: Date.now(),
-        recipientName: rName,
-        phoneNumber: rPhone,
-        text: smsBody,
-        templateTitle: QUICK_TEMPLATES.find(t => t.id === selectedTemplateId)?.title || 'متن دلخواه',
-        time: '۱۴۰۵/۰۵/۲۸ - ۱۳:۵۰',
-        status: 'delivered',
-      };
-      setSmsLogs(prev => [log, ...prev]);
-      setIsSendingSms(false);
-      setSmsSuccessToast(`پیامک با موفقیت به ${rPhone} ارسال شد.`);
+    let rName = 'شماره دستی';
+    let rPhone = smsCustomPhone || '';
+    let rStudentId: number | undefined;
+    if (smsRecipientStudentId) {
+      const st = students.find(s => s.id.toString() === smsRecipientStudentId);
+      if (st) { rName = `${st.first_name} ${st.last_name}`; rPhone = st.phone_number || smsCustomPhone; rStudentId = st.id; }
+    }
+
+    setIsSendingSms(true); setSmsError('');
+    let status: SmsLog['status'] = 'sent'; let error: string | undefined;
+    try {
+      const r = await api.sendMessengerMessage({ channel: 'sms', recipient: rPhone, messageText: smsBody.trim(), student_id: rStudentId, prefer_sms: true });
+      if (r.success) setSmsSuccessToast(`پیامک برای ${rPhone} ارسال شد.`);
+      else { status = 'failed'; error = r.message; setSmsError(r.message); }
+    } catch (err: any) {
+      status = 'failed'; error = err?.message || 'ارسال ناموفق بود.'; setSmsError(error!);
+    }
+    setSmsLogs(prev => [{
+      id: Date.now(), recipientName: rName, phoneNumber: rPhone || '—', text: smsBody,
+      templateTitle: QUICK_TEMPLATES.find(t => t.id === selectedTemplateId)?.title || 'متن دلخواه',
+      time: new Date().toLocaleString('fa-IR'), status, error,
+    }, ...prev]);
+    setIsSendingSms(false);
+    if (status === 'sent') {
       setSmsBody(''); setSelectedTemplateId(''); setSmsRecipientStudentId(''); setSmsCustomPhone('');
       setTimeout(() => setSmsSuccessToast(''), 3500);
-    }, 1000);
+    }
   };
 
   /* Channel Badge Component */
   const ChannelBadge = ({ channel }: { channel: ChatThread['channel'] }) => {
     const map = {
       rubika: { label: 'روبیکا', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
-      bale:   { label: 'بله',   cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-      eitaa:  { label: 'ایتا',  cls: 'bg-amber-50 text-amber-700 border-amber-200' },
       sms:    { label: 'پیامک', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
     };
-    return <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${map[channel].cls}`}>{map[channel].label}</span>;
+    return <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${(map[channel] || map.rubika).cls}`}>{(map[channel] || map.rubika).label}</span>;
   };
 
   return (
@@ -339,11 +487,8 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-black text-slate-900">مرکز ارتباطی و پیام‌رسان کارلا</h2>
-              <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                <Radio className="w-2.5 h-2.5 text-emerald-500 animate-pulse" />درگاه متصل
-              </span>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">مدیریت گفتگوهای روبیکا، بله، ایتا و پنل پیامک انبوه کشوری</p>
+            <p className="text-xs text-slate-400 mt-0.5">گفتگوهای روبیکا و ارسال پیامک تکی</p>
           </div>
         </div>
 
@@ -371,7 +516,7 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
             }`}
           >
             <Smartphone className="w-4 h-4 text-emerald-500" />
-            ارسال پیامک (SMS)
+            ارسال پیامک
           </button>
 
           <button
@@ -412,8 +557,6 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                 {[
                   { id: 'all', label: 'همه' },
                   { id: 'rubika', label: 'روبیکا' },
-                  { id: 'bale', label: 'بله' },
-                  { id: 'eitaa', label: 'ایتا' },
                 ].map(item => (
                   <button
                     key={item.id}
@@ -452,7 +595,7 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                   >
                     {/* Avatar */}
                     <div className="relative shrink-0">
-                      <img src={thread.avatar} alt="" className="w-10 h-10 rounded-xl object-cover border border-slate-200" />
+                      <Avatar name={thread.senderName} className="w-10 h-10 rounded-xl border border-slate-200" />
                       {thread.unreadCount > 0 && (
                         <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-white">
                           {thread.unreadCount}
@@ -472,6 +615,11 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className="text-[10px] text-slate-400 truncate">{thread.courseTitle}</span>
                         <ChannelBadge channel={thread.channel} />
+                        {thread.person && (
+                          <span title={thread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${thread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[thread.person.kind] || 'مرتبط'}
+                          </span>
+                        )}
                       </div>
 
                       <p className={`text-xs truncate ${thread.unreadCount > 0 ? 'font-bold text-slate-900' : 'text-slate-500'}`}>
@@ -486,7 +634,6 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
             {/* Footer Summary */}
             <div className="p-3 border-t border-slate-200 bg-white text-[10px] text-slate-400 flex justify-between items-center">
               <span>{threads.length} گفتگوی فعال</span>
-              <span className="text-emerald-600 font-bold">همگام با CRM</span>
             </div>
           </div>
 
@@ -497,21 +644,28 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                 {/* Active Chat Header Bar */}
                 <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/60 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <img src={activeThread.avatar} alt="" className="w-9 h-9 rounded-xl object-cover border border-slate-200" />
+                    <Avatar name={activeThread.senderName} className="w-9 h-9 rounded-xl border border-slate-200" />
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-xs font-bold text-slate-900">{activeThread.senderName}</h3>
                         <ChannelBadge channel={activeThread.channel} />
+                        {activeThread.person && (
+                          <span title={activeThread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${activeThread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[activeThread.person.kind] || 'مرتبط'}
+                          </span>
+                        )}
                       </div>
                       <p className="text-[10px] text-slate-400">{activeThread.courseTitle} — {activeThread.phone}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded-md">
-                      پرونده #{activeThread.studentId ?? '۱۰۱'}
-                    </span>
-                  </div>
+                  {activeThread.studentId !== undefined && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded-md">
+                        پرونده #{activeThread.studentId}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Chat Messages Stream Area */}
@@ -530,7 +684,7 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                         className={`flex items-start gap-2.5 max-w-[80%] ${isStudent ? 'mr-0 ml-auto flex-row' : 'ml-0 mr-auto flex-row-reverse'}`}
                       >
                         {isStudent ? (
-                          <img src={activeThread.avatar} alt="" className="w-7 h-7 rounded-lg object-cover border border-slate-200 mt-1 shrink-0" />
+                          <Avatar name={activeThread.senderName} className="w-7 h-7 rounded-lg border border-slate-200 mt-1 text-[11px]" />
                         ) : (
                           <div className="w-7 h-7 rounded-lg bg-sky-600 text-white font-bold text-[10px] flex items-center justify-center mt-1 shrink-0 shadow-xs">
                             کارلا
@@ -543,6 +697,15 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                               {isStudent ? activeThread.senderName : 'اپراتور پذیرش'}
                             </span>
                             <span className="text-[9px] text-slate-400 font-mono">{msg.time}</span>
+                            {msg.account && msg.status !== 'sending' && (
+                              <MessageMenu align={isStudent ? 'left' : 'right'}
+                                actions={[
+                                  ...(!isStudent && msg.rubikaId && !msg.media ? [{ key: 'edit', label: 'ویرایش پیام' }] : []),
+                                  { key: 'delete-crm', label: 'حذف فقط از CRM' },
+                                  ...(msg.rubikaId ? [{ key: 'delete-global', label: 'حذف برای هر دو طرف', danger: true }] : []),
+                                ]}
+                                onPick={(k) => setMsgDialog({ kind: k as any, msg, text: k === 'edit' ? msg.text : undefined })} />
+                            )}
                           </div>
 
                           <div
@@ -552,13 +715,36 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                                 : 'bg-gradient-to-l from-sky-600 to-sky-500 text-white rounded-tl-none font-medium'
                             }`}
                           >
-                            {msg.text}
+                            {msg.media && (msg.text || '').startsWith('[') ? null : <span className="whitespace-pre-wrap break-words">{msg.text}</span>}
+                            {msg.media && msg.account && (
+                              <MediaBlock id={msg.id} media={msg.media} transcription={msg.transcription}
+                                onTranscribed={(t) => patchThreadMsg(msg.id, m => ({ ...m, transcription: t }))} />
+                            )}
+                            {!msg.media && msg.account && /^\[(Voice|Image|File|Music|Video|Gif)\]/.test(msg.text || '') && (
+                              <MediaBlock id={msg.id} media={{ type: (/^\[(\w+)\]/.exec(msg.text) || [])[1] || 'File' }} transcription={msg.transcription}
+                                onTranscribed={(t) => patchThreadMsg(msg.id, m => ({ ...m, transcription: t }))} />
+                            )}
+                            {(msg.edited || msg.deletedRemote) && (
+                              <span className={`block mt-1 text-[9px] font-bold ${isStudent ? 'text-slate-400' : 'text-white/75'}`}>
+                                {msg.deletedRemote ? 'در روبیکا حذف شده' : 'ویرایش شده'}
+                              </span>
+                            )}
                           </div>
 
                           {!isStudent && (
-                            <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-emerald-600 font-bold">
-                              <CheckCheck className="w-3 h-3" />تحویل داده شد
-                            </div>
+                            msg.status === 'failed' ? (
+                              <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-rose-600 font-bold">
+                                <AlertCircle className="w-3 h-3" />{msg.error || 'ارسال نشد'}
+                              </div>
+                            ) : msg.status === 'sending' ? (
+                              <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-slate-400 font-bold">
+                                <Clock className="w-3 h-3" />در حال ارسال...
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-emerald-600 font-bold">
+                                <CheckCheck className="w-3 h-3" />ارسال شد
+                              </div>
+                            )
                           )}
                         </div>
                       </div>
@@ -582,11 +768,24 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                     ))}
                   </div>
 
+                  {msgNotice && (
+                    <p className={`mb-2 text-[11px] font-bold px-3 py-1.5 rounded-lg ${msgNotice.ok ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>{msgNotice.text}</p>
+                  )}
                   {/* Input Form */}
                   <div className="flex items-center gap-2">
+                    {activeThread.source === 'account' && activeThread.chatId && (
+                      <>
+                        <input ref={attachRef} type="file" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; void handleAttach(f); }} />
+                        <button type="button" onClick={() => attachRef.current?.click()} disabled={attachBusy} aria-label="ارسال عکس یا فایل" title="ارسال عکس یا فایل (متن کادر به‌عنوان توضیح)"
+                          className="p-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 shrink-0">
+                          {attachBusy ? <Clock className="w-4 h-4 animate-pulse" /> : <Paperclip className="w-4 h-4" />}
+                        </button>
+                      </>
+                    )}
                     <input
                       type="text"
-                      placeholder={`پاسخ به ${activeThread.senderName}...`}
+                      placeholder={canReply ? `پاسخ به ${activeThread.senderName}...` : 'این گفتگو شماره یا شناسه روبیکا ندارد؛ پاسخ ممکن نیست.'}
+                      disabled={!canReply}
                       value={messageInput}
                       onChange={e => setMessageInput(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
@@ -594,7 +793,8 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                     />
                     <button
                       onClick={handleSendMessage}
-                      disabled={!messageInput.trim()}
+                      disabled={!messageInput.trim() || !canReply}
+                      title={canReply ? '' : 'این گفتگو مقصد ندارد'}
                       className="px-4 py-2 bg-gradient-to-l from-sky-600 to-sky-500 hover:from-sky-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
                     >
                       <Send className="w-3.5 h-3.5" />
@@ -624,6 +824,12 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
             <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-2 shadow-xs">
               <CheckCircle className="w-4 h-4 text-emerald-600" />
               {smsSuccessToast}
+            </div>
+          )}
+          {smsError && (
+            <div role="alert" className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-xl flex items-center gap-2 shadow-xs">
+              <AlertCircle className="w-4 h-4 text-rose-500" />
+              {smsError}
             </div>
           )}
 
@@ -725,24 +931,6 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
 
             {/* Right: Gateway Config & Recent SMS Logs (5 cols) */}
             <div className="lg:col-span-5 space-y-4">
-              {/* Gateway config box */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span className="flex items-center gap-1.5"><ShieldCheck className="w-4 h-4 text-emerald-500" />وضعیت درگاه پیامکی</span>
-                  <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">IPPanel Active</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px] pt-1">
-                  <div className="bg-white p-2 rounded-lg border border-slate-100">
-                    <span className="text-slate-400 block mb-0.5">خط اختصاصی:</span>
-                    <span className="font-mono font-bold text-slate-700">5000400070</span>
-                  </div>
-                  <div className="bg-white p-2 rounded-lg border border-slate-100">
-                    <span className="text-slate-400 block mb-0.5">اعتبار پنل:</span>
-                    <span className="font-mono font-bold text-emerald-600">۴,۲۵۰,۰۰۰ تومان</span>
-                  </div>
-                </div>
-              </div>
-
               {/* Logs */}
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -760,9 +948,15 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                       <p className="text-slate-600 text-[11px] leading-relaxed line-clamp-2">{log.text}</p>
                       <div className="flex justify-between items-center pt-1 border-t border-slate-200/60 text-[10px]">
                         <span className="text-slate-400 font-medium">{log.templateTitle}</span>
-                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                          <CheckCircle className="w-3 h-3 text-emerald-500" />رسیده به مقصد
-                        </span>
+                        {log.status === 'failed' ? (
+                          <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full font-bold flex items-center gap-1" title={log.error}>
+                            <AlertCircle className="w-3 h-3 text-rose-500" />ارسال نشد
+                          </span>
+                        ) : (
+                          <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3 text-emerald-500" />ارسال شد
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -782,9 +976,30 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">مدیریت الگوهای آماده ارسال</h3>
-              <p className="text-xs text-slate-400">قالب‌های استاندارد اطلاع‌رسانی به کارآموزان جهت استفاده در درگاه</p>
+              <p className="text-xs text-slate-400">جای‌گذاری‌ها: [نام] [خانوادگی] [دوره] [بدهی] [تاریخ] [ساعت]</p>
             </div>
+            <button type="button" onClick={() => { setTplError(''); setTplDraft({ title: '', body: '', color: 'sky' }); }}
+              className="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shrink-0">+ الگوی جدید</button>
           </div>
+          {tplError && <p className="text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{tplError}</p>}
+          {tplDraft && (
+            <div className="bg-sky-50/50 border border-sky-200 rounded-xl p-4 space-y-3">
+              <input value={tplDraft.title} onChange={e => setTplDraft({ ...tplDraft, title: e.target.value })} placeholder="عنوان الگو" maxLength={80}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white" />
+              <textarea value={tplDraft.body} onChange={e => setTplDraft({ ...tplDraft, body: e.target.value })} placeholder="متن الگو" rows={4} maxLength={1000}
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white leading-relaxed" />
+              <div className="flex items-center gap-2 flex-wrap">
+                <select value={tplDraft.color} onChange={e => setTplDraft({ ...tplDraft, color: e.target.value })} className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+                  {['sky', 'rose', 'teal', 'amber', 'violet', 'emerald', 'slate'].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <span className="flex-1" />
+                <button type="button" onClick={() => setTplDraft(null)} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg">انصراف</button>
+                <button type="button" onClick={saveTpl} disabled={tplBusy || !tplDraft.title.trim() || !tplDraft.body.trim()}
+                  className="px-4 py-1.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg">{tplBusy ? 'در حال ذخیره…' : 'ذخیره الگو'}</button>
+              </div>
+            </div>
+          )}
+          {QUICK_TEMPLATES.length === 0 && !tplDraft && <p className="text-xs text-slate-400 text-center py-6">هنوز الگویی ثبت نشده است.</p>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {QUICK_TEMPLATES.map(tmpl => (
@@ -793,7 +1008,10 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
                   <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <Tag className="w-3.5 h-3.5 text-sky-500" />{tmpl.title}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">ID: {tmpl.id}</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    <button type="button" onClick={() => { setTplError(''); setTplDraft({ id: tmpl.id, title: tmpl.title, body: tmpl.body, color: tmpl.color }); }} className="px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md">ویرایش</button>
+                    <button type="button" onClick={() => deleteTpl(tmpl.id, tmpl.title)} className="px-2 py-1 text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-md">حذف</button>
+                  </span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100">
                   {tmpl.body}
@@ -814,6 +1032,38 @@ export default function MessengerHub({ students, onRefresh }: MessengerHubProps)
             ))}
           </div>
         </div>
+      )}
+
+      {msgDialog && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" dir="rtl" role="dialog" aria-modal="true" onClick={() => !msgBusy && setMsgDialog(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
+              <h3 className="text-sm font-black text-slate-900">
+                {msgDialog.kind === 'edit' ? 'ویرایش پیام' : msgDialog.kind === 'delete-global' ? 'حذف برای هر دو طرف' : 'حذف فقط از CRM'}
+              </h3>
+              {msgDialog.kind === 'edit' ? (
+                <textarea value={msgDialog.text || ''} onChange={e => setMsgDialog({ ...msgDialog, text: e.target.value })} rows={4} maxLength={2000}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg leading-relaxed focus:outline-none focus:border-sky-400" />
+              ) : (
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {msgDialog.kind === 'delete-global'
+                    ? (msgDialog.msg.sender === 'student'
+                      ? 'این پیام از روبیکا حذف می‌شود. اگر روبیکا حذف برای طرف مقابل را نپذیرد، فقط از سمت ما حذف می‌شود و به شما اطلاع داده می‌شود.'
+                      : 'این پیام در روبیکا برای شما و گیرنده حذف می‌شود و از CRM هم پاک می‌شود. قابل بازگشت نیست.')
+                    : 'پیام فقط از فهرست CRM پاک می‌شود و در روبیکا باقی می‌ماند.'}
+                </p>
+              )}
+              <p className="text-[11px] text-slate-400 bg-slate-50 rounded-lg px-2.5 py-1.5 line-clamp-3">{msgDialog.msg.text}</p>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setMsgDialog(null)} disabled={msgBusy} className="px-3 py-2 text-xs font-bold rounded-lg bg-slate-100 text-slate-700">انصراف</button>
+                <button type="button" onClick={runMsgDialog} disabled={msgBusy || (msgDialog.kind === 'edit' && !(msgDialog.text || '').trim())}
+                  className={`px-4 py-2 text-xs font-bold rounded-lg text-white disabled:opacity-50 ${msgDialog.kind === 'edit' ? 'bg-sky-600' : 'bg-rose-600'}`}>
+                  {msgBusy ? 'در حال انجام…' : msgDialog.kind === 'edit' ? 'ذخیره ویرایش' : 'حذف'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
       )}
 
     </div>
