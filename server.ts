@@ -750,7 +750,7 @@ function verifySsoTicket(ticket: string): { ok: true; jti: string; exp: number }
 app.post('/api/auth/sso', (req, res) => {
   if (overLimit(ssoBuckets, clientIp(req), 10)) return res.status(429).json({ error: 'Too many attempts' });
   const v = verifySsoTicket(String(req.body?.ticket || ''));
-  if (!v.ok) { console.warn(`[sso] rejected (${v.reason})`); return res.status(401).json({ error: 'ورود خودکار ناموفق بود؛ دوباره از پنل سایت تلاش کنید.' }); }
+  if (!v.ok) { const reason = 'reason' in v ? v.reason : 'unknown'; console.warn(`[sso] rejected (${reason})`); return res.status(401).json({ error: 'ورود خودکار ناموفق بود؛ دوباره از پنل سایت تلاش کنید.' }); }
   ssoUsedJti.set(v.jti, v.exp + 5_000);
   const want = String(process.env.CRM_SSO_USER || '').trim();
   const envUser = process.env.CRM_ADMIN_USER || 'admin';
@@ -2999,6 +2999,7 @@ const COPILOT_SYSTEM_PROMPT = [
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید.',
+  '۶) ابزار send_notification فقط با تأیید صریح کاربر («بله ارسال کن» یا «بفرست») فعال شود.',
 ].join('\n');
 
 const COPILOT_TOOLS = [
@@ -3070,6 +3071,22 @@ const COPILOT_TOOLS = [
           course_id: { type: 'integer', description: 'شناسه دوره' },
         },
         required: ['course_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_notification',
+      description: 'ارسال پیام یادآوری یا اطلاعیه به یک کارآموز از طریق تلگرام یا روبیکا. فقط پس از تأیید صریح کاربر استفاده شود.',
+      parameters: {
+        type: 'object',
+        properties: {
+          channel: { type: 'string', enum: ['telegram', 'rubika'], description: 'کانال ارسال پیام' },
+          recipient: { type: 'string', description: 'شناسه گیرنده: برای تلگرام chat_id عددی، برای روبیکا guid مخاطب' },
+          message: { type: 'string', description: 'متن پیام به فارسی' },
+        },
+        required: ['channel', 'recipient', 'message'],
       },
     },
   },
@@ -3200,6 +3217,49 @@ async function runCopilotTool(name: string, args: any): Promise<any> {
       enrollment_count: toNumber(row.enrollment_count),
       total_collected: toNumber(row.total_collected),
     };
+  }
+
+  if (name === 'send_notification') {
+    const channel = String(args.channel || '').trim();
+    const recipient = String(args.recipient || '').trim();
+    const message = String(args.message || '').trim();
+
+    if (!channel || !recipient || !message) {
+      return { error: 'channel، recipient و message همگی الزامی هستند.' };
+    }
+    if (message.length > 3000) {
+      return { error: 'متن پیام بیش از ۳۰۰۰ کاراکتر است.' };
+    }
+
+    if (channel === 'telegram') {
+      const tgToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+      if (!tgToken) return { error: 'TELEGRAM_BOT_TOKEN تنظیم نشده است.' };
+      try {
+        const tgRes = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: recipient, text: message }),
+        });
+        const tgData: any = await tgRes.json().catch(() => ({}));
+        if (!tgRes.ok || !tgData?.ok) {
+          return { sent: false, channel: 'telegram', error: tgData?.description || `Telegram API error ${tgRes.status}` };
+        }
+        return { sent: true, channel: 'telegram', message_id: tgData?.result?.message_id, recipient };
+      } catch (err: any) {
+        return { sent: false, channel: 'telegram', error: err?.message || 'خطا در ارسال به تلگرام' };
+      }
+    }
+
+    if (channel === 'rubika') {
+      try {
+        await sendRubikaMessage(recipient, message);
+        return { sent: true, channel: 'rubika', recipient };
+      } catch (err: any) {
+        return { sent: false, channel: 'rubika', error: err?.message || 'خطا در ارسال پیام روبیکا' };
+      }
+    }
+
+    return { error: `کانال نامعتبر: ${channel}. مقادیر مجاز: telegram یا rubika` };
   }
 
   return { error: `ابزار ناشناخته: ${name}` };
