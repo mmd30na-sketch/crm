@@ -43,6 +43,7 @@ function sendRubikaMessage(chatId: string, text: string): Promise<any> {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
       },
+      timeout: 15000,
     };
     const req = https.request(options, (res) => {
       let data = '';
@@ -51,6 +52,7 @@ function sendRubikaMessage(chatId: string, text: string): Promise<any> {
         try { resolve(JSON.parse(data)); } catch { resolve({ raw: data }); }
       });
     });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
     req.on('error', reject);
     req.write(body);
     req.end();
@@ -829,6 +831,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
   if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
+  if (path.startsWith('/copilot')) return role === 'cashier';
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
   if (!write) return role === 'cashier';
   return false;
@@ -3098,10 +3101,56 @@ function toNumber(value: any): number {
 }
 
 async function runCopilotTool(name: string, args: any): Promise<any> {
+  const a = args && typeof args === 'object' ? args : {};
+
+  if (name === 'send_notification') {
+    const channel = String(a.channel || '').trim();
+    const recipient = String(a.recipient || '').trim();
+    const message = String(a.message || '').trim();
+
+    if (!channel || !recipient || !message) {
+      return { error: 'channel، recipient و message همگی الزامی هستند.' };
+    }
+    if (message.length > 3000) {
+      return { error: 'متن پیام بیش از ۳۰۰۰ کاراکتر است.' };
+    }
+
+    if (channel === 'telegram') {
+      const tgToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+      if (!tgToken) return { error: 'TELEGRAM_BOT_TOKEN تنظیم نشده است.' };
+      try {
+        const tgRes = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: recipient, text: message }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const tgData: any = await tgRes.json().catch(() => ({}));
+        if (!tgRes.ok || !tgData?.ok) {
+          return { sent: false, channel: 'telegram', error: tgData?.description || `Telegram API error ${tgRes.status}` };
+        }
+        return { sent: true, channel: 'telegram', message_id: tgData?.result?.message_id, recipient };
+      } catch (err: any) {
+        return { sent: false, channel: 'telegram', error: err?.message || 'خطا در ارسال به تلگرام' };
+      }
+    }
+
+    if (channel === 'rubika') {
+      try {
+        const r = await sendRubikaMessage(recipient, message);
+        if (r?.status === 'OK') return { sent: true, channel: 'rubika', recipient };
+        return { sent: false, channel: 'rubika', error: String(r?.status || r?.raw || 'نامشخص').slice(0, 120) };
+      } catch (err: any) {
+        return { sent: false, channel: 'rubika', error: err?.message || 'خطا در ارسال پیام روبیکا' };
+      }
+    }
+
+    return { error: `کانال نامعتبر: ${channel}. مقادیر مجاز: telegram یا rubika` };
+  }
+
   if (!chabokan.isMysqlEnabled()) {
     return { error: 'پایگاه داده MySQL در دسترس نیست.' };
   }
-  const a = args && typeof args === 'object' ? args : {};
 
   if (name === 'search_student') {
     const q = String(a.query || '').trim();
@@ -3219,49 +3268,6 @@ async function runCopilotTool(name: string, args: any): Promise<any> {
     };
   }
 
-  if (name === 'send_notification') {
-    const channel = String(args.channel || '').trim();
-    const recipient = String(args.recipient || '').trim();
-    const message = String(args.message || '').trim();
-
-    if (!channel || !recipient || !message) {
-      return { error: 'channel، recipient و message همگی الزامی هستند.' };
-    }
-    if (message.length > 3000) {
-      return { error: 'متن پیام بیش از ۳۰۰۰ کاراکتر است.' };
-    }
-
-    if (channel === 'telegram') {
-      const tgToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
-      if (!tgToken) return { error: 'TELEGRAM_BOT_TOKEN تنظیم نشده است.' };
-      try {
-        const tgRes = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: recipient, text: message }),
-        });
-        const tgData: any = await tgRes.json().catch(() => ({}));
-        if (!tgRes.ok || !tgData?.ok) {
-          return { sent: false, channel: 'telegram', error: tgData?.description || `Telegram API error ${tgRes.status}` };
-        }
-        return { sent: true, channel: 'telegram', message_id: tgData?.result?.message_id, recipient };
-      } catch (err: any) {
-        return { sent: false, channel: 'telegram', error: err?.message || 'خطا در ارسال به تلگرام' };
-      }
-    }
-
-    if (channel === 'rubika') {
-      try {
-        await sendRubikaMessage(recipient, message);
-        return { sent: true, channel: 'rubika', recipient };
-      } catch (err: any) {
-        return { sent: false, channel: 'rubika', error: err?.message || 'خطا در ارسال پیام روبیکا' };
-      }
-    }
-
-    return { error: `کانال نامعتبر: ${channel}. مقادیر مجاز: telegram یا rubika` };
-  }
-
   return { error: `ابزار ناشناخته: ${name}` };
 }
 
@@ -3280,6 +3286,7 @@ async function callCopilotCompletion(messages: any[]) {
       temperature: 0.2,
       max_tokens: 2000,
     }),
+    signal: AbortSignal.timeout(60000),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
