@@ -2992,7 +2992,7 @@ app.post('/api/settings/gateways', (req, res) => {
 const COPILOT_API_URL = String(process.env.COPILOT_API_URL || '').trim().replace(/\/+$/, '');
 const COPILOT_API_KEY = String(process.env.COPILOT_API_KEY || '').trim();
 const COPILOT_MODEL = String(process.env.COPILOT_MODEL || 'gpt-4o-mini').trim();
-const COPILOT_MAX_ITERATIONS = 4;
+const COPILOT_MAX_ITERATIONS = 6;
 
 const COPILOT_SYSTEM_PROMPT = [
   'شما «دستیار هوشمند مالی» آموزشگاه کارلا هستید؛ یک دستیار حسابداری فارسی‌زبان، دقیق و حرفه‌ای.',
@@ -3003,6 +3003,8 @@ const COPILOT_SYSTEM_PROMPT = [
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید.',
   '۶) ابزار send_notification فقط با تأیید صریح کاربر («بله ارسال کن» یا «بفرست») فعال شود.',
+  '۷) برای فهرست دوره‌ها، شهریه/قیمت دوره یا پیدا کردن شناسه دوره از list_courses استفاده کنید؛ برای ثبت‌نام‌های سایت و موارد در انتظار تأیید از list_site_registrations.',
+  '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
 ].join('\n');
 
 const COPILOT_TOOLS = [
@@ -3080,6 +3082,29 @@ const COPILOT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'list_courses',
+      description: 'فهرست همه دوره‌ها با شناسه، عنوان، شهریه (تومان) و وضعیت فعال بودن. برای پرسش قیمت/شهریه یا یافتن شناسه دوره.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_site_registrations',
+      description: 'ثبت‌نام‌های آنلاین سایت. status=pending (پیش‌فرض) یعنی در انتظار تأیید؛ all یعنی همه ثبت‌نام‌های اخیر.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['pending', 'all'], description: 'pending یا all' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'send_notification',
       description: 'ارسال پیام یادآوری یا اطلاعیه به یک کارآموز از طریق تلگرام یا روبیکا. فقط پس از تأیید صریح کاربر استفاده شود.',
       parameters: {
@@ -3150,6 +3175,36 @@ async function runCopilotTool(name: string, args: any): Promise<any> {
 
   if (!chabokan.isMysqlEnabled()) {
     return { error: 'پایگاه داده MySQL در دسترس نیست.' };
+  }
+
+  if (name === 'list_courses') {
+    const rows = await chabokan.listCourses();
+    return {
+      currency: 'toman',
+      count: rows.length,
+      courses: rows.map((r: any) => ({ course_id: r.id, title: r.title, price_toman: toNumber(r.tuition), active: Boolean(Number(r.active)) })),
+    };
+  }
+
+  if (name === 'list_site_registrations') {
+    const status = String(a.status || 'pending').trim() === 'all' ? 'all' : 'pending';
+    const limit = Math.max(1, Math.min(100, Math.floor(toNumber(a.limit)) || 20));
+    const all: any[] = await chabokan.listWebsiteRegistrations();
+    // Same filter as the pending list page (PendingRegistrationsPanel).
+    const filtered = status === 'pending' ? all.filter((r) => r.status === 'pending' && !r.student_id) : all;
+    return {
+      status,
+      total: filtered.length,
+      registrations: filtered.slice(0, limit).map((r) => ({
+        tracking_code: r.tracking_code,
+        full_name: r.full_name,
+        phone_number: r.phone_number,
+        category: r.category,
+        status: r.status,
+        created_at: r.created_at,
+        paid_online_toman: toNumber(r.paid_toman),
+      })),
+    };
   }
 
   if (name === 'search_student') {
@@ -3271,7 +3326,7 @@ async function runCopilotTool(name: string, args: any): Promise<any> {
   return { error: `ابزار ناشناخته: ${name}` };
 }
 
-async function callCopilotCompletion(messages: any[]) {
+async function callCopilotCompletion(messages: any[], withTools = true) {
   const response = await fetch(`${COPILOT_API_URL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -3281,8 +3336,7 @@ async function callCopilotCompletion(messages: any[]) {
     body: JSON.stringify({
       model: COPILOT_MODEL,
       messages,
-      tools: COPILOT_TOOLS,
-      tool_choice: 'auto',
+      ...(withTools ? { tools: COPILOT_TOOLS, tool_choice: 'auto' } : {}),
       temperature: 0.2,
       max_tokens: 2000,
     }),
@@ -3315,6 +3369,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
 
   const messages: any[] = [{ role: 'system', content: COPILOT_SYSTEM_PROMPT }, ...history];
 
+  const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   try {
     for (let iteration = 0; iteration < COPILOT_MAX_ITERATIONS; iteration++) {
       const completion = await callCopilotCompletion(messages);
@@ -3337,11 +3392,15 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
         } catch {
           args = {};
         }
-        let result: any;
-        try {
-          result = await runCopilotTool(String(fn.name || ''), args);
-        } catch (err: any) {
-          result = { error: err?.message || 'اجرای ابزار ناموفق بود.' };
+        const cacheKey = `${fn.name}:${JSON.stringify(args)}`;
+        let result: any = toolCache.get(cacheKey);
+        if (result === undefined || fn.name === 'send_notification') {
+          try {
+            result = await runCopilotTool(String(fn.name || ''), args);
+          } catch (err: any) {
+            result = { error: err?.message || 'اجرای ابزار ناموفق بود.' };
+          }
+          toolCache.set(cacheKey, result);
         }
         messages.push({
           role: 'tool',
@@ -3351,7 +3410,11 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
         });
       }
     }
-    return res.status(500).json({ error: 'تعداد دفعات فراخوانی ابزار بیش از حد مجاز بود.' });
+    // Tool budget spent: ask once more without tools so the user still gets an answer from the data gathered so far.
+    messages.push({ role: 'user', content: 'با همین داده‌های به‌دست‌آمده و بدون فراخوانی ابزار دیگر، پاسخ نهایی را کوتاه بنویسید.' });
+    const final = await callCopilotCompletion(messages, false);
+    const finalText = String(final?.choices?.[0]?.message?.content || '').trim();
+    return res.json({ reply: finalText || 'پاسخ کامل آماده نشد؛ لطفاً پرسش را دقیق‌تر بپرسید.' });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'خطا در ارتباط با سرویس هوش مصنوعی.' });
   }
