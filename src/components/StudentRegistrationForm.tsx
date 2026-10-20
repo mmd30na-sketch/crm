@@ -238,7 +238,9 @@ const REGISTRATION_COURSES: Record<string, { id: number; hint: string }> = {
   hazardous_materials: { id: 2, hint: 'خطرناک' },
   passenger_bus: { id: 3, hint: 'مسافر' },
   passenger_transport: { id: 3, hint: 'مسافر' },
-  ceo_company: { id: 4, hint: 'مدیرعامل' },
+  ceo_company: { id: 4, hint: 'مدیرعامل' }, // legacy site key
+  ceo_freight: { id: 4, hint: 'مدیر شرکت حمل' },
+  ceo_passenger: { id: 5, hint: 'مسافر' },
   technical_manager: { id: 6, hint: 'مسئول فنی' },
 };
 

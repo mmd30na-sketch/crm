@@ -132,7 +132,9 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
                     <tr key={r.id} className="border-b border-slate-100 last:border-0 hover:bg-violet-50/40 transition align-middle">
                       <td className="p-2"><div className="flex gap-1.5"><DocThumb r={r} kind="personal_photo" onOpen={(url, title) => setPreview({ url, title })} /><DocThumb r={r} kind="national_card" onOpen={(url, title) => setPreview({ url, title })} /></div></td>
                       <td className="p-2 font-bold text-slate-800">{r.full_name || 'بدون نام'}<div className="text-[10px] font-normal text-slate-400"><bdi dir="ltr" className="font-mono">{r.tracking_code}</bdi></div></td>
-                      <td className="p-2"><bdi dir="ltr" className="font-mono text-slate-600">{r.phone_number}</bdi></td>
+                      <td className="p-2"><bdi dir="ltr" className="font-mono text-slate-600">{r.phone_number}</bdi>{(r.paid_toman || 0) > 0
+                        ? <div><span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200" title={r.paid_ref ? `کد رهگیری زرین‌پال: ${r.paid_ref}` : ''}>پرداخت آنلاین {Number(r.paid_toman).toLocaleString('fa-IR')} ت</span></div>
+                        : <div><span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-50 text-slate-500 border border-slate-200">پرداخت نشده</span></div>}</td>
                       <td className="p-2 text-slate-600 whitespace-nowrap">{faDate(r.created_at)}</td>
                       <td className="p-2 text-slate-700">{r.category || '—'}</td>
                       <td className="p-2">{rv
