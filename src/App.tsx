@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Megaphone,
   CalendarRange,
+  Bot,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -27,7 +28,7 @@ import SupervisorDashboard from './components/SupervisorDashboard';
 import PendingRegistrationsPanel from './components/PendingRegistrationsPanel';
 import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
-import CopilotWidget from './components/CopilotWidget';
+import { CopilotProvider, CopilotBar, CopilotPage } from './components/CopilotWidget';
 import LeadsPanel from './components/LeadsPanel';
 import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
@@ -73,6 +74,14 @@ const NAV_ITEMS = [
     sublabel: 'درآمد و مخارج',
     icon: BarChart3,
     color: 'amber',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'copilot',
+    label: 'دستیار مالی',
+    sublabel: 'همان گفتگوی داشبورد',
+    icon: Bot,
+    color: 'brand',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -285,6 +294,7 @@ export default function App() {
   }
 
   return (
+    <CopilotProvider onOpenTab={() => handleActiveTabChange('copilot')}>
     <div
       className="flex h-screen h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
       style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #f8fafc 50%, #f0fdf4 100%)' }}
@@ -453,7 +463,9 @@ export default function App() {
 
         {/* ── CONTENT AREA ── */}
         <div
-          className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 space-y-5"
+          className={`flex-1 overflow-x-hidden p-3 sm:p-6 ${
+            activeTab === 'copilot' ? 'flex min-h-0 flex-col overflow-hidden' : 'space-y-5 overflow-y-auto'
+          }`}
           id="main-content-scroll"
         >
           {new URLSearchParams(window.location.search).get('print') === 'contract' ? (
@@ -466,20 +478,26 @@ export default function App() {
               <p className="text-sm text-slate-400 font-medium">در حال بارگذاری داده‌ها...</p>
             </div>
           ) : (
-            <div className="fade-in">
-              {activeTab === 'supervisor' && role === 'admin' && (
-                <PendingRegistrationsPanel onActiveTabChange={handleActiveTabChange} />
+            <div className={activeTab === 'copilot' ? 'fade-in flex h-full min-h-0 flex-col' : 'fade-in'}>
+              {activeTab === 'copilot' && (role === 'admin' || role === 'cashier') && (
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <CopilotPage />
+                </div>
               )}
               {activeTab === 'supervisor' && role === 'admin' && (
-                <SupervisorDashboard
-                  students={students}
-                  courses={courses}
-                  enrollments={enrollments}
-                  payments={payments}
-                  onRefresh={refreshAllData}
-                  onActiveTabChange={handleActiveTabChange}
-                  isSidebarOpen={isSidebarOpen}
-                />
+                <div className="space-y-5">
+                  <CopilotBar />
+                  <PendingRegistrationsPanel onActiveTabChange={handleActiveTabChange} />
+                  <SupervisorDashboard
+                    students={students}
+                    courses={courses}
+                    enrollments={enrollments}
+                    payments={payments}
+                    onRefresh={refreshAllData}
+                    onActiveTabChange={handleActiveTabChange}
+                    isSidebarOpen={isSidebarOpen}
+                  />
+                </div>
               )}
               {activeTab === 'students' && (
                 <StudentList
@@ -542,8 +560,7 @@ export default function App() {
         </div>
 
       </main>
-
-      <CopilotWidget />
     </div>
+    </CopilotProvider>
   );
 }

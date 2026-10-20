@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Bot, X, Send, Loader2 } from 'lucide-react';
+import React, { createContext, useContext, useRef, useState } from 'react';
+import { Bot, Send, Loader2, PanelRightOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import { getAuthToken } from '../api/client';
 
 interface Message {
@@ -8,10 +8,12 @@ interface Message {
 }
 
 const QUICK_PROMPTS = [
-  'تراز ورودی و خروجی امروز چقدر است؟',
+  'مانده امروز؟',
   'لیست ۵ بدهکار با بالاترین بدهی را بده',
   'وضعیت پرداختهای دوره جاری چطوره؟',
 ];
+
+const SEND_FAILED = 'ارسال نشد — دوباره';
 
 function copilotEndpoint(): string {
   const envOrigin = (import.meta as any).env?.VITE_API_ORIGIN as string | undefined;
@@ -22,29 +24,55 @@ function copilotEndpoint(): string {
   return '/api/copilot/chat';
 }
 
-export default function CopilotWidget() {
-  const [isOpen, setIsOpen] = useState<boolean>(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+interface CopilotContextValue {
+  messages: Message[];
+  input: string;
+  setInput: (value: string) => void;
+  isLoading: boolean;
+  error: string | null;
+  sendMessage: (raw: string) => Promise<void>;
+  retry: () => void;
+  openTab: () => void;
+}
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, isLoading, isOpen]);
+const CopilotContext = createContext<CopilotContextValue | null>(null);
+
+function useCopilot(): CopilotContextValue {
+  const ctx = useContext(CopilotContext);
+  if (!ctx) throw new Error('Copilot view rendered outside CopilotProvider');
+  return ctx;
+}
+
+export function CopilotProvider({
+  children,
+  onOpenTab,
+}: {
+  children: React.ReactNode;
+  onOpenTab: () => void;
+}) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+  const loadingRef = useRef(false);
 
   const sendMessage = async (raw: string) => {
     const content = raw.trim();
-    if (!content || isLoading) return;
+    if (!content || loadingRef.current) return;
 
-    const nextUserMessage: Message = { role: 'user', content };
-    const conversation: Message[] = [...messages, nextUserMessage];
+    const current = messagesRef.current;
+    const last = current[current.length - 1];
+    const conversation: Message[] =
+      last?.role === 'user' && last.content === content
+        ? current
+        : [...current, { role: 'user', content }];
 
+    messagesRef.current = conversation;
     setMessages(conversation);
     setInput('');
     setError(null);
+    loadingRef.current = true;
     setIsLoading(true);
 
     try {
@@ -59,149 +87,298 @@ export default function CopilotWidget() {
           messages: conversation.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
-
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'خطا در ارتباط با دستیار هوشمند');
-
-      setMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: String(data?.reply || '') },
-      ]);
-    } catch (err: any) {
-      const message = err?.message || 'خطای ناشناخته';
-      setError(message);
-      setMessages((prev) => [...prev, { role: 'assistant', content: `خطا: ${message}` }]);
+      if (!res.ok) {
+        const serverError = typeof data?.error === 'string' ? data.error.trim() : '';
+        throw new Error(serverError || SEND_FAILED);
+      }
+      const reply = String(data?.reply || '').trim();
+      if (!reply) throw new Error(SEND_FAILED);
+      const next: Message[] = [...conversation, { role: 'assistant', content: reply }];
+      messagesRef.current = next;
+      setMessages(next);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message.trim() : '';
+      const offline = !message || /failed to fetch|networkerror|load failed/i.test(message);
+      setError(offline ? SEND_FAILED : message);
     } finally {
+      loadingRef.current = false;
       setIsLoading(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void sendMessage(input);
+  const retry = () => {
+    const last = [...messagesRef.current].reverse().find((m) => m.role === 'user');
+    if (last) void sendMessage(last.content);
   };
 
   return (
-    <div dir="rtl">
-      {/* ── Floating launcher ── */}
+    <CopilotContext.Provider
+      value={{ messages, input, setInput, isLoading, error, sendMessage, retry, openTab: onOpenTab }}
+    >
+      {children}
+    </CopilotContext.Provider>
+  );
+}
+
+function MessageList({
+  messages,
+  isLoading,
+  limit,
+  empty,
+}: {
+  messages: Message[];
+  isLoading: boolean;
+  limit?: number;
+  empty: React.ReactNode;
+}) {
+  const shown = typeof limit === 'number' ? messages.slice(-limit) : messages;
+  if (shown.length === 0 && !isLoading) return <>{empty}</>;
+  return (
+    <div className="space-y-3">
+      {shown.map((msg, idx) => (
+        <div
+          key={`${msg.role}-${idx}-${msg.content.slice(0, 12)}`}
+          className={`flex items-start gap-2 ${msg.role === 'user' ? 'ml-auto max-w-[85%]' : 'mr-auto max-w-[85%]'}`}
+        >
+          {msg.role === 'assistant' && (
+            <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+              <Bot size={14} strokeWidth={2} />
+            </div>
+          )}
+          <div
+            className={`whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-6 ${
+              msg.role === 'user'
+                ? 'rounded-bl-sm bg-sky-600 text-white'
+                : 'rounded-br-sm bg-slate-100 text-slate-800'
+            }`}
+          >
+            {msg.content}
+          </div>
+        </div>
+      ))}
+      {isLoading && (
+        <div className="mr-auto flex max-w-[85%] items-center gap-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+            <Bot size={14} strokeWidth={2} />
+          </div>
+          <div className="flex items-center gap-2 rounded-2xl rounded-br-sm bg-slate-100 px-3 py-2 text-slate-500">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-sm">در حال محاسبه...</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ErrorLine({ error, onRetry, disabled }: { error: string | null; onRetry: () => void; disabled: boolean }) {
+  if (!error) return null;
+  return (
+    <div className="flex items-center justify-between gap-2 px-1 text-xs text-rose-700">
+      <span>{error}</span>
       <button
         type="button"
-        onClick={() => setIsOpen((v) => !v)}
-        title="دستیار هوشمند مالی"
-        aria-label="دستیار هوشمند مالی"
-        className="fixed bottom-6 left-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-950/50 transition-all duration-200 hover:bg-indigo-500 hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 focus:ring-offset-slate-950"
+        onClick={onRetry}
+        disabled={disabled}
+        className="rounded-lg px-2 py-1 font-semibold underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
       >
-        <Bot size={22} strokeWidth={2} />
+        دوباره
       </button>
+    </div>
+  );
+}
 
-      {/* ── Chat drawer ── */}
-      {isOpen && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 flex h-[420px] flex-col rounded-t-2xl border-t border-slate-700 bg-slate-900 shadow-2xl">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600/20 text-indigo-300">
-                <Bot size={18} strokeWidth={2} />
-              </div>
-              <div className="text-right">
-                <h3 className="text-sm font-bold text-slate-100">دستیار هوشمند مالی</h3>
-                <p className="text-[10px] text-slate-500">پرسش‌های حسابداری خود را بپرسید</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              title="بستن"
-              aria-label="بستن"
-              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100"
-            >
-              <X size={18} />
-            </button>
-          </div>
+export function CopilotBar() {
+  const { messages, input, setInput, isLoading, error, sendMessage, retry, openTab } = useCopilot();
+  const [expanded, setExpanded] = useState(false);
+  const last = messages[messages.length - 1];
+  const showErrorInBar = Boolean(error) && !expanded;
+  const preview = showErrorInBar
+    ? error
+    : isLoading
+      ? 'در حال محاسبه...'
+      : last
+        ? last.content.replace(/\s+/g, ' ')
+        : '';
 
-          {/* Messages */}
-          <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-            {messages.length === 0 && (
-              <div className="space-y-2 pt-2">
-                <p className="text-xs text-slate-500">پرسش‌های پیشنهادی:</p>
-                <div className="flex flex-wrap gap-2">
-                  {QUICK_PROMPTS.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      onClick={() => void sendMessage(prompt)}
-                      className="rounded-full border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs text-slate-200 transition-colors hover:border-indigo-500 hover:bg-indigo-600/20 hover:text-white"
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+  return (
+    <section
+      dir="rtl"
+      className={`flex flex-col rounded-2xl border border-slate-200 bg-white shadow-sm ${
+        expanded ? 'max-h-[40vh] sm:max-h-[320px]' : 'h-12'
+      }`}
+      aria-label="دستیار مالی"
+    >
+      <div className="flex h-12 shrink-0 items-center gap-2 px-3">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-sky-400"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+            <Bot size={16} />
+          </span>
+          <span className="shrink-0 text-sm font-bold text-slate-800">دستیار مالی</span>
+          {preview && (
+            <span className={`min-w-0 flex-1 truncate text-xs ${showErrorInBar ? 'text-rose-700' : 'text-slate-500'}`}>
+              {preview}
+            </span>
+          )}
+          {expanded ? <ChevronUp size={16} className="shrink-0 text-slate-400" /> : <ChevronDown size={16} className="shrink-0 text-slate-400" />}
+        </button>
+        {!last && !expanded && (
+          <button
+            type="button"
+            onClick={() => void sendMessage(QUICK_PROMPTS[0])}
+            disabled={isLoading}
+            className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
+          >
+            مانده امروز؟
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={openTab}
+          className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400"
+        >
+          <PanelRightOpen size={14} />
+          ادامه در تب
+        </button>
+      </div>
 
-            {messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`flex items-start gap-2 ${msg.role === 'user' ? 'ml-auto max-w-[80%]' : 'mr-auto max-w-[85%]'}`}
-              >
-                {msg.role === 'assistant' && (
-                  <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 text-indigo-300">
-                    <Bot size={14} strokeWidth={2} />
-                  </div>
-                )}
-                <div
-                  className={`whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-6 ${
-                    msg.role === 'user'
-                      ? 'rounded-br-sm bg-indigo-600 text-white'
-                      : 'rounded-bl-sm bg-slate-800 text-slate-100'
-                  }`}
+      {expanded && (
+        <div className="flex min-h-0 flex-1 flex-col gap-2 border-t border-slate-100 px-3 py-2">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <MessageList
+              messages={messages}
+              isLoading={isLoading}
+              limit={3}
+              empty={
+                <button
+                  type="button"
+                  onClick={() => void sendMessage(QUICK_PROMPTS[0])}
+                  disabled={isLoading}
+                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400"
                 >
-                  {msg.content}
-                </div>
-              </div>
-            ))}
-
-            {isLoading && (
-              <div className="mr-auto flex max-w-[85%] items-center gap-2">
-                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600/20 text-indigo-300">
-                  <Bot size={14} strokeWidth={2} />
-                </div>
-                <div className="flex items-center gap-2 rounded-2xl rounded-bl-sm bg-slate-800 px-3 py-2 text-slate-400">
-                  <Loader2 size={16} className="animate-spin" />
-                  <span className="text-sm">در حال محاسبه...</span>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
-                {error}
-              </div>
-            )}
+                  مانده امروز؟
+                </button>
+              }
+            />
           </div>
-
-          {/* Input */}
-          <form onSubmit={handleSubmit} className="flex items-center gap-2 border-t border-slate-700 p-3">
+          <ErrorLine error={error} onRetry={retry} disabled={isLoading} />
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void sendMessage(input);
+            }}
+            className="flex items-center gap-2"
+          >
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="پرسش مالی خود را بنویسید..."
+              placeholder="پرسش مالی..."
+              disabled={isLoading}
               dir="rtl"
-              className="flex-1 rounded-xl border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition-colors focus:border-indigo-500"
+              className="h-9 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-60"
             />
             <button
               type="submit"
               disabled={isLoading || !input.trim()}
-              title="ارسال"
               aria-label="ارسال"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-600 text-white hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <Send size={18} />
+              <Send size={16} />
             </button>
           </form>
         </div>
       )}
-    </div>
+    </section>
+  );
+}
+
+export function CopilotPage() {
+  const { messages, input, setInput, isLoading, error, sendMessage, retry } = useCopilot();
+  const listRef = useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, isLoading]);
+
+  return (
+    <section dir="rtl" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="دستیار مالی">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-100 px-4">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
+          <Bot size={16} />
+        </span>
+        <div className="min-w-0 text-right">
+          <h2 className="text-sm font-bold text-slate-800">دستیار مالی</h2>
+          <p className="truncate text-[11px] text-slate-500">همان گفتگوی داشبورد، این‌جا کامل است.</p>
+        </div>
+      </div>
+
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <MessageList
+          messages={messages}
+          isLoading={isLoading}
+          empty={
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500">یک سؤال را انتخاب کنید یا بنویسید.</p>
+              <div className="flex flex-wrap gap-2">
+                {QUICK_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => void sendMessage(prompt)}
+                    disabled={isLoading}
+                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          }
+        />
+      </div>
+
+      <div className="shrink-0 space-y-2 border-t border-slate-100 p-3">
+        <ErrorLine error={error} onRetry={retry} disabled={isLoading} />
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void sendMessage(input);
+          }}
+          className="flex items-end gap-2"
+        >
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void sendMessage(input);
+              }
+            }}
+            rows={2}
+            disabled={isLoading}
+            placeholder="پرسش مالی...  Enter ارسال، Shift+Enter خط جدید"
+            dir="rtl"
+            className="max-h-28 min-h-10 flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !input.trim()}
+            aria-label="ارسال"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-600 text-white hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Send size={16} />
+          </button>
+        </form>
+      </div>
+    </section>
   );
 }
