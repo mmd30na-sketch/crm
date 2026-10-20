@@ -86,6 +86,9 @@ export interface WebsiteRegistration {
   source?: string;
   student_id?: number | null;
   created_at?: string;
+  /** Online payments from the site (site_registration_payments); absent if that table does not exist yet. */
+  paid_toman?: number;
+  paid_ref?: string | null;
 }
 
 export interface NationalCardOcrResult {

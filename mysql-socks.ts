@@ -803,13 +803,27 @@ export async function findStaffByUsername(username: string) {
 }
 
 export async function listWebsiteRegistrations() {
-  return sql(
+  const rows: any[] = await sql(
     `SELECT registration_id AS id, tracking_code, national_code, full_name, phone_number,
             category, academic_degree, military_status, has_temp_permit,
             national_card_path, personal_photo_path, status, source, student_id,
             approved_by, approved_at, created_at
      FROM registrations ORDER BY registration_id DESC`
   );
+  // Site online payments (read-only; the site creates this table). Missing table -> no badge, never an error.
+  try {
+    const pays: any[] = await sql(
+      `SELECT tracking_code, SUM(amount_toman) AS paid, MAX(ref_id) AS ref
+         FROM site_registration_payments WHERE status = 'paid' GROUP BY tracking_code`
+    );
+    const map = new Map(pays.map(p => [String(p.tracking_code), p]));
+    for (const r of rows) {
+      const p = map.get(String(r.tracking_code));
+      r.paid_toman = p ? Number(p.paid) || 0 : 0;
+      r.paid_ref = p ? p.ref : null;
+    }
+  } catch { /* table not created yet */ }
+  return rows;
 }
 
 export async function getWebsiteRegistrationFiles(trackingCode: string) {
