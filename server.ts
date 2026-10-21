@@ -15,7 +15,7 @@ import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
 import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
-import { registerPhase4, ensurePhase4Schema } from './phase4';
+import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
@@ -3008,9 +3008,11 @@ const COPILOT_TOOL_GUIDE: [string, string][] = [
   ['list_courses', 'قیمت/فهرست دوره‌ها'], ['list_site_registrations', 'ثبت‌نام‌های سایت و در انتظار تأیید'],
   ['pending_site_registrations', 'فهرست سریع ثبت‌نام‌های در انتظار بررسی'], ['site_registrations_by_status', 'تعداد ثبت‌نام‌های سایت به تفکیک وضعیت'],
   ['list_leads', 'سرنخ‌ها'], ['get_sales_funnel', 'قیف فروش'], ['list_tasks', 'کارهای کارکنان'],
-  ['list_course_terms', 'دوره‌های در حال برگزاری/شماره دوره و ظرفیت'], ['list_enrollments', 'ثبت‌نام کارآموزان در دوره‌ها و مانده هر ثبت‌نام'],
+  ['list_course_terms', 'دوره‌های در حال برگزاری/شماره دوره و ظرفیت'], ['list_exams', 'زمان‌بندی آزمون دوره‌ها و مانده بدهی پیش از آزمون'],
+  ['list_enrollments', 'ثبت‌نام کارآموزان در دوره‌ها و مانده هر ثبت‌نام'], ['list_documents', 'مدارک و فایل‌های کارآموزان (رسید، قرارداد، کارت ملی)'],
   ['list_payments', 'فیش‌ها و دریافتی‌ها'], ['monthly_income', 'درآمد یک ماه شمسی'],
   ['get_financial_report', 'هزینه‌ها، سود و زیان ماهانه، حساب‌های بانکی و اقساط معوق'], ['list_messaging', 'گفتگوهای پیام‌رسان و کمپین‌ها'],
+  ['list_sms', 'سوابق پیامک‌های ارسالی و الگوهای پیامک'],
   ['list_activity_log', 'سوابق تغییرات و تماس‌ها'], ['search_student', 'جست‌وجوی کارآموز'], ['trainee_count', 'تعداد کل کارآموزان'],
   ['get_student_financial_summary', 'خلاصه مالی یک کارآموز'], ['get_daily_cashflow', 'گردش روزانه'],
   ['get_debtors_list', 'بدهکاران'], ['top_debtors', 'بیشترین بدهکاران'], ['get_course_statistics', 'آمار یک دوره'],
@@ -3194,6 +3196,22 @@ const COPILOT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'list_exams',
+      description: 'زمان‌بندی آزمون دوره‌ها. نتیجه یا نمره آزمون در CRM ذخیره نمی‌شود؛ تاریخ آزمون بر پایه تاریخ پایان دوره‌ها گزارش می‌شود: دوره، شماره دوره، تاریخ شروع و پایان، تعداد ثبت‌نام‌ها و تعداد کارآموزان دارای مانده بدهی.',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer', description: 'شناسه نوع دوره' },
+          status: { type: 'string', enum: ['active', 'finished'], description: 'فیلتر وضعیت دوره (اختیاری)' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_enrollments',
       description: 'ثبت‌نام‌های کارآموزان در دوره‌ها: کارآموز، دوره، شماره دوره، تاریخ ثبت‌نام، شهریه، پرداختی، مانده و وجود رسید/قرارداد.',
       parameters: {
@@ -3203,6 +3221,22 @@ const COPILOT_TOOLS = [
           course_id: { type: 'integer', description: 'شناسه نوع دوره' },
           course_number: { type: 'integer', description: 'شماره دوره' },
           limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۳۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_documents',
+      description: 'مدارک و فایل‌های کارآموزان: رسید پرداخت، قرارداد، کارت ملی، عکس کارت ملی و عکس شخصی. فقط نام فایل، نوع، تاریخ و تعداد برگردانده می‌شود؛ محتوای فایل‌ها هرگز خوانده یا برگردانده نمی‌شود.',
+      parameters: {
+        type: 'object',
+        properties: {
+          student_id: { type: 'integer', description: 'شناسه کارآموز' },
+          kind: { type: 'string', enum: ['documents', 'generated'], description: 'documents (پیش‌فرض) = مدارک ثبت‌نام و عکس‌ها؛ generated = مدارک تولیدشده از الگوها' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
         },
         required: [],
       },
@@ -3262,6 +3296,21 @@ const COPILOT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'list_sms',
+      description: 'پیامک‌ها: messages = سوابق پیامک‌های ارسالی و وضعیت آن‌ها، templates = الگوهای پیامک آماده، campaigns = کمپین‌های پیامک انبوه و آمار ارسال. فقط خواندنی است و هیچ پیامکی ارسال نمی‌کند.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['messages', 'templates', 'campaigns'], description: 'پیش‌فرض messages' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_activity_log',
       description: 'سوابق فعالیت: audit = گزارش تغییرات کاربران CRM (چه کسی، چه زمانی، چه بخشی)، activities = تماس‌ها و یادداشت‌های ثبت‌شده برای کارآموز یا سرنخ.',
       parameters: {
@@ -3280,6 +3329,7 @@ const COPILOT_TOOLS = [
 ];
 
 const LEAD_STATUS_FA: Record<string, string> = { new: 'جدید', contacted: 'تماس گرفته شد', in_negotiation: 'در حال پیگیری', converted: 'تبدیل‌شده', lost: 'از دست رفته' };
+const SMS_STATUS_FA: Record<string, string> = { sent: 'ارسال‌شده', failed: 'ناموفق', not_configured: 'تنظیم‌نشده', queued: 'در صف', delivered: 'تحویل‌شده', received: 'دریافت‌شده', pending: 'در انتظار' };
 
 /** Bounded LIMIT for Copilot tools (1..50). */
 function copilotLimit(v: any, def: number): number {
@@ -3293,6 +3343,15 @@ function copilotTehran(v: any): string | null {
   const d = v instanceof Date ? v : new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(String(v)) ? String(v) : `${String(v).replace(' ', 'T')}Z`);
   if (isNaN(d.getTime())) return String(v);
   return d.toLocaleString('fa-IR-u-ca-persian-nu-latn', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+/** Last change date of a stored file (public path under the project root), or null when it is missing. */
+function copilotFileDate(v: any): string | null {
+  if (!v) return null;
+  try {
+    const rel = decodeURIComponent(String(v).split(/[?#]/)[0]).replace(/^\/+/, '');
+    return copilotTehran(fs.statSync(path.resolve(process.cwd(), rel)).mtime);
+  } catch { return null; }
 }
 
 /** Normalizes a Jalali date argument to zero-padded YYYY/MM/DD (Latin digits), or null. */
@@ -3495,6 +3554,27 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     })) };
   }
 
+  if (name === 'list_exams') {
+    // The CRM stores no exam table: exam timing is read from the course terms (end date) and the trainees' settlement.
+    const where: string[] = []; const params: any[] = [];
+    const cid = parseInt(String(a.course_id ?? ''), 10);
+    if (Number.isFinite(cid)) { where.push('t.course_id = ?'); params.push(cid); }
+    if (a.status) { where.push('t.status = ?'); params.push(String(a.status).trim()); }
+    const rows = await chabokan.sql<any>(
+      `SELECT t.id, t.course_id, c.title AS course, t.course_number, t.title, t.start_date, t.end_date, t.capacity, t.status,
+              (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = t.course_id AND e.course_number = t.course_number) AS enrolled,
+              (SELECT COUNT(*) FROM enrollments e JOIN v_enrollment_balances b ON b.enrollment_id = e.enrollment_id
+                WHERE e.course_id = t.course_id AND e.course_number = t.course_number AND b.balance_due > 0) AS unsettled
+       FROM crm_course_terms t LEFT JOIN courses c ON c.course_id = t.course_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY t.end_date IS NULL, t.end_date DESC, t.id DESC LIMIT ?`,
+      [...params, copilotLimit(a.limit, 20)]);
+    return { note: 'نتیجه یا نمره آزمون در CRM ذخیره نمی‌شود؛ تاریخ آزمون بر پایه تاریخ پایان دوره است.',
+      count: rows.length, exams: rows.map((r) => ({
+        course: r.course, course_number: r.course_number, title: r.title, start_date: r.start_date, end_date: r.end_date,
+        status: r.status, capacity: r.capacity, enrolled: toNumber(r.enrolled), unsettled: toNumber(r.unsettled),
+      })) };
+  }
+
   if (name === 'list_enrollments') {
     const where: string[] = []; const params: any[] = [];
     for (const [k, col] of [['student_id', 'e.student_id'], ['course_id', 'e.course_id'], ['course_number', 'e.course_number']] as const) {
@@ -3514,6 +3594,59 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
       paid: toNumber(r.paid), remaining: toNumber(r.balance_due),
       documents: { receipt: Boolean(Number(r.has_receipt)), contract: Boolean(Number(r.has_contract)), id_card: Boolean(Number(r.has_idcard)) },
     })) };
+  }
+
+  if (name === 'list_documents') {
+    // Only file metadata (name, type, date, count); the file contents are never read.
+    const limit = copilotLimit(a.limit, 20);
+    const sid = parseInt(String(a.student_id ?? ''), 10);
+    const where: string[] = []; const params: any[] = [];
+    if (Number.isFinite(sid)) { where.push('e.student_id = ?'); params.push(sid); }
+    if (String(a.kind || 'documents') === 'generated') {
+      try {
+        const rows = await chabokan.sql<any>(
+          `SELECT d.document_id, d.enrollment_id, e.student_id, s.first_name, s.last_name, c.title AS course, e.course_number,
+                  rt.title_fa AS title, rt.category, d.paper_size, d.generated_at
+           FROM enrollment_documents d JOIN enrollments e ON e.enrollment_id = d.enrollment_id
+           JOIN students s ON s.student_id = e.student_id LEFT JOIN courses c ON c.course_id = e.course_id
+           LEFT JOIN report_templates rt ON rt.template_id = d.template_id
+           ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY d.generated_at DESC, d.document_id DESC LIMIT ?`,
+          [...params, limit]);
+        return { kind: 'generated', count: rows.length, documents: rows.map((r) => ({
+          document_id: r.document_id, student_id: r.student_id, name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+          course: r.course, course_number: r.course_number, title: r.title, category: r.category,
+          paper_size: r.paper_size, generated_at: copilotTehran(r.generated_at),
+        })) };
+      } catch {
+        return { kind: 'generated', count: 0, documents: [], note: 'جدول مدارک تولیدشده در این پایگاه داده موجود نیست.' };
+      }
+    }
+    const rows = await chabokan.sql<any>(
+      `SELECT e.enrollment_id, e.student_id, s.first_name, s.last_name, c.title AS course, e.course_number,
+              e.receipt_pdf_path, e.idcard_pdf_path, e.contract_pdf_path, s.id_card_photo, s.personal_photo
+       FROM enrollments e JOIN students s ON s.student_id = e.student_id LEFT JOIN courses c ON c.course_id = e.course_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY e.enrollment_id DESC LIMIT ?`, [...params, limit]);
+    const docs: any[] = []; const photos: any[] = []; const counts: Record<string, number> = {};
+    const seenStudents = new Set<any>();
+    for (const r of rows) {
+      const name = `${r.first_name || ''} ${r.last_name || ''}`.trim();
+      const add = (list: any[], type: string, file: any) => {
+        if (!file) return;
+        counts[type] = (counts[type] || 0) + 1;
+        list.push({ student_id: r.student_id, name, enrollment_id: r.enrollment_id, course: r.course, course_number: r.course_number,
+          type, file_name: String(file).split('/').pop(), date: copilotFileDate(file) });
+      };
+      add(docs, 'رسید پرداخت', r.receipt_pdf_path);
+      add(docs, 'قرارداد', r.contract_pdf_path);
+      add(docs, 'کارت ملی', r.idcard_pdf_path);
+      if (!seenStudents.has(r.student_id)) {
+        seenStudents.add(r.student_id);
+        add(photos, 'عکس کارت ملی', r.id_card_photo);
+        add(photos, 'عکس شخصی', r.personal_photo);
+      }
+    }
+    return { kind: 'documents', enrollment_count: rows.length, document_count: docs.length, photo_count: photos.length,
+      counts, documents: docs.slice(0, limit), photos: photos.slice(0, limit) };
   }
 
   if (name === 'list_payments') {
@@ -3588,6 +3721,41 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     return { kind: 'threads', count: rows.length, threads: rows.map((r) => ({ thread_id: r.thread_id, channel: r.channel, name: r.display_name,
       student_id: r.student_id, lead_id: r.lead_id, unread: toNumber(r.unread_count), last_message_at: copilotTehran(r.last_message_at),
       last_message: r.last_message_preview ? String(r.last_message_preview).slice(0, 150) : null, last_direction: r.last_message_direction })) };
+  }
+
+  if (name === 'list_sms') {
+    // Read-only: the SMS log, the stored templates and the bulk-SMS campaign stats. Nothing is ever sent here.
+    const limit = copilotLimit(a.limit, 20);
+    const kind = String(a.kind || 'messages');
+    if (kind === 'templates') {
+      const stored = (readDb() as any).message_templates;
+      const list = Array.isArray(stored) ? stored : DEFAULT_MESSAGE_TEMPLATES;
+      return { kind: 'templates', count: list.length, templates: list.slice(0, limit).map((t: any) => ({
+        id: t.id, title: t.title, body: String(t.body || '').slice(0, 500), updated_at: copilotTehran(t.updated_at) })) };
+    }
+    if (kind === 'campaigns') {
+      const rows = await chabokan.sql<any>(
+        'SELECT id, name, status, dry_run, created_by, total, sent, failed, skipped, created_at, finished_at, filters FROM crm_campaigns ORDER BY id DESC LIMIT ?', [limit]);
+      const campaigns = rows.filter((r: any) => {
+        let f: any = r.filters;
+        if (typeof f === 'string') { try { f = JSON.parse(f || '{}'); } catch { f = {}; } }
+        const channel = String(f?.channel || 'rubika');
+        return channel === 'sms' || channel === 'rubika_sms';
+      }).map((r) => ({ id: r.id, name: r.name, status: SMS_STATUS_FA[r.status] || r.status, dry_run: Boolean(Number(r.dry_run)),
+        created_by: r.created_by, total: toNumber(r.total), sent: toNumber(r.sent), failed: toNumber(r.failed), skipped: toNumber(r.skipped),
+        created_at: copilotTehran(r.created_at), finished_at: copilotTehran(r.finished_at) }));
+      return { kind: 'campaigns', count: campaigns.length, campaigns };
+    }
+    const db = readDb() as any;
+    const history = (((db.outbox || []) as any[]).filter((m: any) => m.channel === 'sms')).map((m: any) => ({
+      id: m.id, direction: 'ارسالی', recipient: maskPhone(m.recipient), student_id: m.student_id ?? null,
+      status: String(m.status || 'sent'), at: m.sent_at, text: String(m.message || '').slice(0, 150),
+    })).sort((a: any, b: any) => String(b.at || '').localeCompare(String(a.at || '')));
+    const counts: Record<string, number> = {};
+    for (const m of history) counts[SMS_STATUS_FA[m.status] || m.status] = (counts[SMS_STATUS_FA[m.status] || m.status] || 0) + 1;
+    return { kind: 'messages', count: history.length, counts, messages: history.slice(0, limit).map((m: any) => ({
+      id: m.id, direction: m.direction, recipient: m.recipient, student_id: m.student_id,
+      status: SMS_STATUS_FA[m.status] || m.status, at: copilotTehran(m.at), text: m.text })) };
   }
 
   if (name === 'list_activity_log') {
