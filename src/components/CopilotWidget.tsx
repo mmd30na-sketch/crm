@@ -33,6 +33,8 @@ interface Message {
 interface PendingConfirmation {
   pending_id: string;
   preview: string;
+  busy?: boolean;
+  error?: string;
 }
 
 interface CopilotContextValue {
@@ -46,7 +48,7 @@ interface CopilotContextValue {
   openTab: () => void;
   prompts: string[];
   pendingConfirmations: PendingConfirmation[];
-  clearPendingConfirmations: () => void;
+  actOnPending: (id: string, action: 'confirm' | 'cancel') => Promise<void>;
 }
 export function quickPrompts(isAdmin: boolean): string[] {
   return [
@@ -105,7 +107,23 @@ export function CopilotProvider({
   const messagesRef = useRef<Message[]>([]);
   const loadingRef = useRef(false);
 
-  const clearPendingConfirmations = () => setPendingConfirmations([]);
+  /** Confirm or cancel one pending send; only that item is removed. Errors stay on the item in Persian. */
+  const actOnPending = async (id: string, action: 'confirm' | 'cancel') => {
+    const patch = (v: Partial<PendingConfirmation>) => setPendingConfirmations((l) => l.map((c) => (c.pending_id === id ? { ...c, ...v } : c)));
+    patch({ busy: true, error: undefined });
+    try {
+      const token = getAuthToken();
+      const res = await fetch(copilotEndpoint().replace(/\/chat$/, `/pending/${encodeURIComponent(id)}/${action}`), {
+        method: 'POST',
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) { patch({ busy: false, error: String(data?.error || 'عملیات ناموفق بود.') }); return; }
+      setPendingConfirmations((l) => l.filter((c) => c.pending_id !== id));
+    } catch {
+      patch({ busy: false, error: 'ارتباط با سرور برقرار نشد.' });
+    }
+  };
 
   const sendMessage = async (raw: string) => {
     const content = raw.trim();
@@ -122,7 +140,6 @@ export function CopilotProvider({
     setMessages(conversation);
     setInput('');
     setError(null);
-    setPendingConfirmations([]);
     loadingRef.current = true;
     setIsLoading(true);
 
@@ -146,7 +163,7 @@ export function CopilotProvider({
       const reply = String(data?.reply || '').trim();
       if (!reply) throw new Error(SEND_FAILED);
       if (Array.isArray(data?.pendingConfirmations) && data.pendingConfirmations.length > 0) {
-        setPendingConfirmations(data.pendingConfirmations);
+        setPendingConfirmations((l) => [...l, ...data.pendingConfirmations]);
       }
       const next: Message[] = [...conversation, { role: 'assistant', content: reply }];
       messagesRef.current = next;
@@ -168,7 +185,7 @@ export function CopilotProvider({
 
   return (
     <CopilotContext.Provider
-      value={{ messages, input, setInput, isLoading, error, sendMessage, retry, openTab: onOpenTab, prompts: quickPrompts(isAdmin), pendingConfirmations, clearPendingConfirmations }}
+      value={{ messages, input, setInput, isLoading, error, sendMessage, retry, openTab: onOpenTab, prompts: quickPrompts(isAdmin), pendingConfirmations, actOnPending }}
     >
       {children}
     </CopilotContext.Provider>
@@ -255,11 +272,12 @@ function PendingConfirmations({ confirmations, onConfirm, onCancel, disabled }: 
       {confirmations.map((c) => (
         <div key={c.pending_id} className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm">
           <div className="whitespace-pre-wrap text-slate-700 mb-2">{c.preview}</div>
+          {c.error && <div className="mb-2 text-xs font-semibold text-rose-600">{c.error}</div>}
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={() => onCancel(c.pending_id)}
-              disabled={disabled}
+              disabled={disabled || c.busy}
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
             >
               لغو
@@ -267,7 +285,7 @@ function PendingConfirmations({ confirmations, onConfirm, onCancel, disabled }: 
             <button
               type="button"
               onClick={() => onConfirm(c.pending_id)}
-              disabled={disabled}
+              disabled={disabled || c.busy}
               className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
             >
               تأیید و ارسال
@@ -280,7 +298,7 @@ function PendingConfirmations({ confirmations, onConfirm, onCancel, disabled }: 
 }
 
 export function CopilotBar() {
-  const { messages, input, setInput, isLoading, error, sendMessage, retry, openTab, prompts, pendingConfirmations, clearPendingConfirmations } = useCopilot();
+  const { messages, input, setInput, isLoading, error, sendMessage, retry, openTab, prompts, pendingConfirmations, actOnPending } = useCopilot();
   const [expanded, setExpanded] = useState(false);
   const last = messages[messages.length - 1];
   const showErrorInBar = Boolean(error) && !expanded;
@@ -292,27 +310,6 @@ export function CopilotBar() {
         ? last.content.replace(/\s+/g, ' ')
         : '';
 
-  const handleConfirm = async (pendingId: string) => {
-    try {
-      const token = getAuthToken();
-      await fetch(copilotEndpoint().replace(/\/chat$/, `/pending/${pendingId}/confirm`), {
-        method: 'POST',
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      });
-      clearPendingConfirmations();
-    } catch {}
-  };
-
-  const handleCancel = async (pendingId: string) => {
-    try {
-      const token = getAuthToken();
-      await fetch(copilotEndpoint().replace(/\/chat$/, `/pending/${pendingId}/cancel`), {
-        method: 'POST',
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      });
-      clearPendingConfirmations();
-    } catch {}
-  };
 
   return (
     <section
@@ -379,7 +376,7 @@ export function CopilotBar() {
               }
             />
           </div>
-          <PendingConfirmations confirmations={pendingConfirmations} onConfirm={handleConfirm} onCancel={handleCancel} disabled={isLoading} />
+          <PendingConfirmations confirmations={pendingConfirmations} onConfirm={(id) => actOnPending(id, 'confirm')} onCancel={(id) => actOnPending(id, 'cancel')} disabled={isLoading} />
           <ErrorLine error={error} onRetry={retry} disabled={isLoading} />
           <form
             onSubmit={(e) => {
@@ -413,30 +410,9 @@ export function CopilotBar() {
 }
 
 export function CopilotPage() {
-  const { messages, input, setInput, isLoading, error, sendMessage, retry, prompts, pendingConfirmations, clearPendingConfirmations } = useCopilot();
+  const { messages, input, setInput, isLoading, error, sendMessage, retry, prompts, pendingConfirmations, actOnPending } = useCopilot();
   const listRef = useRef<HTMLDivElement>(null);
 
-  const handleConfirm = async (pendingId: string) => {
-    try {
-      const token = getAuthToken();
-      await fetch(copilotEndpoint().replace(/\/chat$/, `/pending/${pendingId}/confirm`), {
-        method: 'POST',
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      });
-      clearPendingConfirmations();
-    } catch {}
-  };
-
-  const handleCancel = async (pendingId: string) => {
-    try {
-      const token = getAuthToken();
-      await fetch(copilotEndpoint().replace(/\/chat$/, `/pending/${pendingId}/cancel`), {
-        method: 'POST',
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      });
-      clearPendingConfirmations();
-    } catch {}
-  };
 
   React.useEffect(() => {
     const el = listRef.current;
@@ -480,7 +456,7 @@ export function CopilotPage() {
         />
       </div>
 
-      <PendingConfirmations confirmations={pendingConfirmations} onConfirm={handleConfirm} onCancel={handleCancel} disabled={isLoading} />
+      <PendingConfirmations confirmations={pendingConfirmations} onConfirm={(id) => actOnPending(id, 'confirm')} onCancel={(id) => actOnPending(id, 'cancel')} disabled={isLoading} />
 
       <div className="shrink-0 space-y-2 border-t border-slate-100 p-3">
         <ErrorLine error={error} onRetry={retry} disabled={isLoading} />
