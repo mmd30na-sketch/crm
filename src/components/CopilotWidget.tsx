@@ -265,7 +265,7 @@ export function CopilotBar() {
             disabled={isLoading}
             className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
           >
-            مانده امروز؟
+            {prompts[0]}
           </button>
         )}
         <button
@@ -292,7 +292,7 @@ export function CopilotBar() {
                   disabled={isLoading}
                   className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400"
                 >
-                  مانده امروز؟
+                  {prompts[0]}
                 </button>
               }
             />
