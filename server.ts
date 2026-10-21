@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import https from 'https';
+import http from 'http';
 import { execFile, spawn } from 'child_process';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
@@ -539,6 +540,27 @@ setInterval(() => {
   const now = Date.now();
   for (const map of [rateBuckets, fileRateBuckets, loginBuckets, failedLogins]) {
     for (const [key, b] of map) if (now > b.resetAt) map.delete(key);
+  }
+}, 60_000).unref();
+
+/** Pending messages awaiting admin confirmation (copilot send tools). */
+interface PendingMessage {
+  id: string;
+  createdBy: string;
+  channel: 'telegram' | 'rubika';
+  recipient: string;
+  label: string;
+  text: string;
+  createdAt: number;
+  expiresAt: number;
+}
+const pendingMessages = new Map<string, PendingMessage>();
+const PENDING_TTL_MS = 15 * 60 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, msg] of pendingMessages) {
+    if (now > msg.expiresAt) pendingMessages.delete(key);
   }
 }, 60_000).unref();
 
@@ -3365,6 +3387,86 @@ const COPILOT_SITE_SQL_TOOL = {
   },
 };
 
+/** Telegram Bot API send (TELEGRAM_BOT_TOKEN; optional TELEGRAM_PROXY as http://host:port, tunnelled with CONNECT). */
+function sendTelegramMessage(chatId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  const token = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  if (!token) return Promise.resolve({ ok: false, error: 'ارسال تلگرام پیکربندی نشده است' });
+  const body = JSON.stringify({ chat_id: chatId, text });
+  const send = (socket?: any) => new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    const r = https.request({ host: 'api.telegram.org', port: 443, method: 'POST', path: `/bot${token}/sendMessage`, servername: 'api.telegram.org',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 15000, ...(socket ? { socket, agent: false } : {}) }, (res) => {
+      let d = ''; res.on('data', (c) => { d += c; });
+      res.on('end', () => { let j: any = {}; try { j = JSON.parse(d); } catch {} resolve(j.ok ? { ok: true } : { ok: false, error: String(j.description || `HTTP ${res.statusCode}`) }); });
+    });
+    r.on('timeout', () => r.destroy(new Error('timeout')));
+    r.on('error', (e) => resolve({ ok: false, error: e.message }));
+    r.end(body);
+  });
+  const proxy = String(process.env.TELEGRAM_PROXY || '').trim();
+  if (!proxy) return send();
+  let u: URL; try { u = new URL(proxy); } catch { return Promise.resolve({ ok: false, error: 'TELEGRAM_PROXY نامعتبر است' }); }
+  if (u.protocol !== 'http:') return Promise.resolve({ ok: false, error: 'فقط پروکسی http برای تلگرام پشتیبانی می‌شود' });
+  return new Promise((resolve) => {
+    const c = http.request({ host: u.hostname, port: Number(u.port || 80), method: 'CONNECT', path: 'api.telegram.org:443', timeout: 15000 });
+    c.on('connect', (res, socket) => { if (res.statusCode !== 200) { socket.destroy(); resolve({ ok: false, error: `proxy ${res.statusCode}` }); } else send(socket).then(resolve); });
+    c.on('timeout', () => c.destroy(new Error('proxy timeout')));
+    c.on('error', (e) => resolve({ ok: false, error: e.message }));
+    c.end();
+  });
+}
+
+const maskChatId = (v: string) => (v.length > 6 ? `${v.slice(0, 4)}…${v.slice(-2)}` : '***');
+
+/** Resolve a Copilot send recipient: «chat:<id>» = explicit chat id; otherwise a trainee by student_id, mobile or name, using the stored Rubika link. */
+async function resolveCopilotRecipient(channel: 'telegram' | 'rubika', raw: string): Promise<{ chatId: string; label: string } | { error: string }> {
+  const q = sanitizeString(raw, 100);
+  if (/^chat:/i.test(q)) { const id = q.slice(5).trim(); return id ? { chatId: id, label: `گفتگو ${maskChatId(id)}` } : { error: 'شناسه گفتگو خالی است.' }; }
+  let rows: any[] = [];
+  const mobile = normalizeMobile(q);
+  if (/^\d{1,9}$/.test(q)) rows = await chabokan.sql<any>('SELECT student_id, first_name, last_name FROM students WHERE student_id = ? LIMIT 2', [Number(q)]);
+  else if (/^09\d{9}$/.test(mobile)) rows = await chabokan.sql<any>('SELECT student_id, first_name, last_name FROM students WHERE phone_number = ? LIMIT 2', [mobile]);
+  else rows = await chabokan.sql<any>("SELECT student_id, first_name, last_name FROM students WHERE CONCAT(first_name, ' ', last_name) LIKE ? LIMIT 5", [`%${q}%`]);
+  if (!rows.length) return { error: 'کارآموزی با این مشخصات پیدا نشد.' };
+  if (rows.length > 1) return { error: `${rows.length} کارآموز با این مشخصات پیدا شد؛ شناسه کارآموز (student_id) را بدهید.` };
+  const st = rows[0];
+  const label = `آقای ${String(st.first_name || '').trim()} ${String(st.last_name || '').trim()}`.trim();
+  const link = channel === 'rubika' ? (readDb() as any).rubika_links?.[String(st.student_id)] : null; // Telegram links are not stored in the CRM.
+  if (!link) return { error: 'این کارآموز به روبیکا/تلگرام وصل نیست' };
+  return { chatId: String(link), label };
+}
+
+const COPILOT_SEND_TELEGRAM_TOOL = {
+  type: 'function',
+  function: {
+    name: 'send_telegram_message',
+    description: 'یک پیام تلگرام پیش‌نویس می‌سازد و برای تأیید ادمین در صف می‌گذارد. هیچ‌چیزی ارسال نمی‌شود تا زمانی که ادمین در ویجت تأیید کند. پارامترها: recipient (student_id کارآموز یا chat_id صریح)، text (متن پیام). بازگرداندن: { pending_id, preview }.',
+    parameters: {
+      type: 'object',
+      properties: {
+        recipient: { type: 'string', description: 'شناسه کارآموز (student_id)، موبایل یا نام کارآموز؛ یا chat:<شناسه گفتگو> برای یک گفتگوی مشخص' },
+        text: { type: 'string', description: 'متن پیام برای ارسال' },
+      },
+      required: ['recipient', 'text'],
+    },
+  },
+};
+
+const COPILOT_SEND_RUBIKA_TOOL = {
+  type: 'function',
+  function: {
+    name: 'send_rubika_message',
+    description: 'یک پیام روبیکا پیش‌نویس می‌سازد و برای تأیید ادمین در صف می‌گذارد. هیچ‌چیزی ارسال نمی‌شود تا زمانی که ادمین در ویجت تأیید کند. پارامترها: recipient (student_id کارآموز یا chat_id صریح)، text (متن پیام). بازگرداندن: { pending_id, preview }.',
+    parameters: {
+      type: 'object',
+      properties: {
+        recipient: { type: 'string', description: 'شناسه کارآموز (student_id)، موبایل یا نام کارآموز؛ یا chat:<شناسه گفتگو> برای یک گفتگوی مشخص' },
+        text: { type: 'string', description: 'متن پیام برای ارسال' },
+      },
+      required: ['recipient', 'text'],
+    },
+  },
+};
+
 /** Tools offered to this user (admin-only extras): SQL via DBHub (COPILOT_DB_BACKEND=dbhub, falls back to builtin when down) or builtin run_sql_query, plus get_site_analytics. */
 /** Admin-only read-only tools (exams, documents, SMS); offered only to admin and re-checked in runCopilotTool. */
 const COPILOT_ADMIN_READ_TOOLS = [
@@ -3424,7 +3526,7 @@ async function copilotToolsFor(role: string) {
     const dbhub = dbhubSelected() ? await getDbhubTools() : null;
     sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
   }
-  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
+  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -3456,6 +3558,50 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   if (name === 'send_notification') {
     // Disabled: sending must go through a human-confirmed UI flow, never directly from the model.
     return { error: 'ارسال پیام از طریق دستیار غیرفعال است؛ از بخش پیام‌رسان استفاده کنید.' };
+  }
+
+  if (name === 'send_telegram_message') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
+    const recipient = sanitizeString(a.recipient, 100);
+    const text = sanitizeString(a.text, 2000);
+    if (!recipient || !text) return { error: 'recipient و text الزامی هستند.' };
+    const to = await resolveCopilotRecipient('telegram', recipient);
+    if ('error' in to) return { error: to.error };
+    const pendingId = `tg_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const now = Date.now();
+    pendingMessages.set(pendingId, {
+      id: pendingId,
+      createdBy: ctx.username,
+      channel: 'telegram',
+      recipient: to.chatId,
+      label: to.label,
+      text,
+      createdAt: now,
+      expiresAt: now + PENDING_TTL_MS,
+    });
+    return { pending_id: pendingId, preview: `📱 تلگرام → ${to.label}\n${text}` };
+  }
+
+  if (name === 'send_rubika_message') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
+    const recipient = sanitizeString(a.recipient, 100);
+    const text = sanitizeString(a.text, 2000);
+    if (!recipient || !text) return { error: 'recipient و text الزامی هستند.' };
+    const to = await resolveCopilotRecipient('rubika', recipient);
+    if ('error' in to) return { error: to.error };
+    const pendingId = `rb_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const now = Date.now();
+    pendingMessages.set(pendingId, {
+      id: pendingId,
+      createdBy: ctx.username,
+      channel: 'rubika',
+      recipient: to.chatId,
+      label: to.label,
+      text,
+      createdAt: now,
+      expiresAt: now + PENDING_TTL_MS,
+    });
+    return { pending_id: pendingId, preview: `💬 روبیکا → ${to.label}\n${text}` };
   }
 
   if (!chabokan.isMysqlEnabled()) {
@@ -3955,6 +4101,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const messages: any[] = [{ role: 'system', content: copilotSystemPrompt(tools) + sqlRule + '\n' + copilotDateRule() }, ...history];
 
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
+  const pendingConfirmations: Array<{ pending_id: string; preview: string }> = [];
   try {
     for (let iteration = 0; iteration < COPILOT_MAX_ITERATIONS; iteration++) {
       const completion = await callCopilotCompletion(messages, true, tools);
@@ -3966,7 +4113,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
 
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       if (!toolCalls.length) {
-        return res.json({ reply: String(message.content || '').trim() });
+        return res.json({ reply: String(message.content || '').trim(), pendingConfirmations });
       }
 
       for (const toolCall of toolCalls) {
@@ -3987,6 +4134,9 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
           }
           toolCache.set(cacheKey, result);
         }
+        if (result && typeof result === 'object' && result.pending_id && result.preview) {
+          pendingConfirmations.push({ pending_id: result.pending_id, preview: result.preview });
+        }
         messages.push({
           role: 'tool',
           tool_call_id: toolCall?.id || `${fn.name || 'tool'}`,
@@ -3999,11 +4149,89 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
     messages.push({ role: 'user', content: 'با همین داده‌های به‌دست‌آمده و بدون فراخوانی ابزار دیگر، پاسخ نهایی را کوتاه بنویسید.' });
     const final = await callCopilotCompletion(messages, false);
     const finalText = String(final?.choices?.[0]?.message?.content || '').trim();
-    return res.json({ reply: finalText || 'پاسخ کامل آماده نشد؛ لطفاً پرسش را دقیق‌تر بپرسید.' });
+    return res.json({ reply: finalText || 'پاسخ کامل آماده نشد؛ لطفاً پرسش را دقیق‌تر بپرسید.', pendingConfirmations });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'خطا در ارتباط با سرویس هوش مصنوعی.' });
   }
 });
+
+/** POST /api/copilot/pending/:id/confirm — admin confirms and sends a pending message. */
+app.post('/api/copilot/pending/:id/confirm', requireAdmin, asyncHandler(async (req, res) => {
+  const pendingId = sanitizeString(req.params.id, 64);
+  const pending = pendingMessages.get(pendingId);
+  if (!pending) return res.status(404).json({ error: 'پیام معلق یافت نشد یا منقضی شده است.' });
+  if (pending.createdBy !== (req as any).user.username) {
+    return res.status(403).json({ error: 'فقط سازنده پیام می‌تواند آن را تأیید کند.' });
+  }
+  const sessionUser = (req as any).user || {};
+  const username = String(sessionUser.username || '');
+  const now = Date.now();
+  if (now > pending.expiresAt) {
+    pendingMessages.delete(pendingId);
+    return res.status(410).json({ error: 'پیام منقضی شده است.' });
+  }
+  let result: { ok: boolean; error?: string } = { ok: false, error: 'کانال ناشناخته' };
+  if (pending.channel === 'rubika') {
+    try {
+      const r = await sendRubikaMessage(pending.recipient, pending.text);
+      result = r?.status === 'OK' ? { ok: true } : { ok: false, error: String(r?.status || 'ربات پیام را نپذیرفت') };
+    } catch (err: any) {
+      result = { ok: false, error: err?.message || 'خطا در ارسال' };
+    }
+  } else if (pending.channel === 'telegram') {
+    result = await sendTelegramMessage(pending.recipient, pending.text);
+  }
+  pendingMessages.delete(pendingId);
+  if (result.ok) {
+    void chabokan.insertAudit({
+      username,
+      role: 'admin',
+      method: 'POST',
+      path: `/copilot/pending/${pendingId}/confirm?ch=${pending.channel}&to=${`${pending.label} ${maskChatId(pending.recipient)}`}&ok=${result.ok ? 1 : 0}&text=${pending.text.slice(0, 100).replace(/\s+/g, ' ')}`.slice(0, 255),
+      entity: 'copilot_pending',
+      entity_id: pendingId,
+      status: 200,
+      ip: req.ip || null,
+    });
+    return res.json({ ok: true, message: 'پیام ارسال شد.' });
+  } else {
+    void chabokan.insertAudit({
+      username,
+      role: 'admin',
+      method: 'POST',
+      path: `/copilot/pending/${pendingId}/confirm?ch=${pending.channel}&to=${`${pending.label} ${maskChatId(pending.recipient)}`}&ok=${result.ok ? 1 : 0}&text=${pending.text.slice(0, 100).replace(/\s+/g, ' ')}`.slice(0, 255),
+      entity: 'copilot_pending',
+      entity_id: pendingId,
+      status: 502,
+      ip: req.ip || null,
+    });
+    return res.status(502).json({ ok: false, error: result.error || 'ارسال ناموفق بود.' });
+  }
+}));
+
+/** POST /api/copilot/pending/:id/cancel — admin cancels a pending message. */
+app.post('/api/copilot/pending/:id/cancel', requireAdmin, asyncHandler(async (req, res) => {
+  const pendingId = sanitizeString(req.params.id, 64);
+  const pending = pendingMessages.get(pendingId);
+  if (!pending) return res.status(404).json({ error: 'پیام معلق یافت نشد یا منقضی شده است.' });
+  if (pending.createdBy !== (req as any).user.username) {
+    return res.status(403).json({ error: 'فقط سازنده پیام می‌تواند آن را لغو کند.' });
+  }
+  pendingMessages.delete(pendingId);
+  const sessionUser = (req as any).user || {};
+  const username = String(sessionUser.username || '');
+  void chabokan.insertAudit({
+    username,
+    role: 'admin',
+    method: 'POST',
+    path: `/copilot/pending/${pendingId}/cancel?ch=${pending.channel}&to=${`${pending.label} ${maskChatId(pending.recipient)}`}&text=${pending.text.slice(0, 100).replace(/\s+/g, ' ')}`.slice(0, 255),
+    entity: 'copilot_pending',
+    entity_id: pendingId,
+    status: 200,
+    ip: req.ip || null,
+  });
+  res.json({ ok: true, message: 'پیام لغو شد.' });
+}));
 
 // Rubika bot connectivity test: calls getMe only, never sends a message. Token stays server-side.
 app.post('/api/settings/gateways/rubika-test', (req, res) => {
