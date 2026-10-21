@@ -10,6 +10,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
+import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
@@ -3281,8 +3282,44 @@ function toNumber(value: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-async function runCopilotTool(name: string, args: any): Promise<any> {
+const COPILOT_SQL_ENABLED = String(process.env.COPILOT_SQL_ENABLED || '').trim() === '1';
+
+const COPILOT_SQL_TOOL = {
+  type: 'function',
+  function: {
+    name: 'run_sql_query',
+    description: 'اجرای یک پرس‌وجوی فقط-خواندنی SELECT روی پایگاه crm (MySQL) یا site (SQLite)، فقط وقتی هیچ ابزار دیگری کافی نیست. حداکثر ۲۰۰ ردیف.\n' + COPILOT_SQL_SCHEMA,
+    parameters: {
+      type: 'object',
+      properties: {
+        database: { type: 'string', enum: ['crm', 'site'] },
+        sql: { type: 'string', description: 'یک دستور SELECT بدون ; و بدون کامنت' },
+      },
+      required: ['database', 'sql'],
+    },
+  },
+};
+
+/** Tools offered to this user: run_sql_query only for admins and only when COPILOT_SQL_ENABLED=1. */
+function copilotToolsFor(role: string) {
+  return COPILOT_SQL_ENABLED && role === 'admin' ? [...COPILOT_TOOLS, COPILOT_SQL_TOOL] : COPILOT_TOOLS;
+}
+
+async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
+  try {
+    await chabokan.sqlExec(
+      'INSERT INTO crm_copilot_queries (username, db, sql_text, allowed, reason, row_count, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [username || null, e.db.slice(0, 10), e.sql.slice(0, 8000), e.allowed ? 1 : 0, e.reason ? e.reason.slice(0, 500) : null, e.rows, e.ms]);
+  } catch (err: any) { console.warn('copilot sql audit failed:', err?.message || err); }
+}
+
+async function runCopilotTool(name: string, args: any, ctx: { username: string; role: string } = { username: '', role: '' }): Promise<any> {
   const a = args && typeof args === 'object' ? args : {};
+
+  if (name === 'run_sql_query') {
+    if (!COPILOT_SQL_ENABLED || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
+    return runCopilotSql(a.database, a.sql, (e) => auditCopilotSql(ctx.username, e));
+  }
 
   if (name === 'send_notification') {
     // Disabled: sending must go through a human-confirmed UI flow, never directly from the model.
@@ -3623,7 +3660,7 @@ async function runCopilotTool(name: string, args: any): Promise<any> {
   return { error: `ابزار ناشناخته: ${name}` };
 }
 
-async function callCopilotCompletion(messages: any[], withTools = true) {
+async function callCopilotCompletion(messages: any[], withTools = true, tools: any[] = COPILOT_TOOLS) {
   const response = await fetch(`${COPILOT_API_URL}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -3633,7 +3670,7 @@ async function callCopilotCompletion(messages: any[], withTools = true) {
     body: JSON.stringify({
       model: COPILOT_MODEL,
       messages,
-      ...(withTools ? { tools: COPILOT_TOOLS, tool_choice: 'auto' } : {}),
+      ...(withTools ? { tools, tool_choice: 'auto' } : {}),
       temperature: 0.2,
       max_tokens: 2000,
     }),
@@ -3664,12 +3701,18 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'پیام کاربر ارسال نشده است.' });
   }
 
-  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() }, ...history];
+  const sessionUser = (req as any).user || {};
+  const ctx = { username: String(sessionUser.username || ''), role: String(sessionUser.role || '') };
+  const tools = copilotToolsFor(ctx.role);
+  const sqlRule = tools.length > COPILOT_TOOLS.length
+    ? '\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد run_sql_query را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.'
+    : '';
+  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() + sqlRule }, ...history];
 
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   try {
     for (let iteration = 0; iteration < COPILOT_MAX_ITERATIONS; iteration++) {
-      const completion = await callCopilotCompletion(messages);
+      const completion = await callCopilotCompletion(messages, true, tools);
       const message = completion?.choices?.[0]?.message;
       if (!message) {
         return res.status(502).json({ error: 'پاسخ نامعتبر از سرویس هوش مصنوعی دریافت شد.' });
@@ -3693,7 +3736,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
         let result: any = toolCache.get(cacheKey);
         if (result === undefined || fn.name === 'send_notification') {
           try {
-            result = await runCopilotTool(String(fn.name || ''), args);
+            result = await runCopilotTool(String(fn.name || ''), args, ctx);
           } catch (err: any) {
             result = { error: err?.message || 'اجرای ابزار ناموفق بود.' };
           }
