@@ -12,6 +12,7 @@ import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
+import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
@@ -3319,10 +3320,25 @@ const COPILOT_UMAMI_TOOL = {
   },
 };
 
-/** Tools offered to this user: run_sql_query (COPILOT_SQL_ENABLED=1) and get_site_analytics (UMAMI_* set) only for admins. */
-function copilotToolsFor(role: string) {
+/** run_sql_query limited to the site SQLite (used next to DBHub, which serves the CRM MySQL). */
+const COPILOT_SITE_SQL_TOOL = {
+  type: 'function',
+  function: {
+    ...COPILOT_SQL_TOOL.function,
+    description: 'اجرای یک SELECT فقط-خواندنی روی پایگاه site (SQLite سایت). برای پایگاه CRM از execute_sql_crm و ابزارهای گزارش استفاده کنید.\n' + COPILOT_SQL_SCHEMA,
+    parameters: { ...COPILOT_SQL_TOOL.function.parameters, properties: { ...COPILOT_SQL_TOOL.function.parameters.properties, database: { type: 'string', enum: ['site'] } } },
+  },
+};
+
+/** Tools offered to this user (admin-only extras): SQL via DBHub (COPILOT_DB_BACKEND=dbhub, falls back to builtin when down) or builtin run_sql_query, plus get_site_analytics. */
+async function copilotToolsFor(role: string) {
   if (role !== 'admin') return COPILOT_TOOLS;
-  return [...COPILOT_TOOLS, ...(COPILOT_SQL_ENABLED ? [COPILOT_SQL_TOOL] : []), ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
+  let sqlTools: any[] = [];
+  if (COPILOT_SQL_ENABLED) {
+    const dbhub = dbhubSelected() ? await getDbhubTools() : null;
+    sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
+  }
+  return [...COPILOT_TOOLS, ...sqlTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -3339,6 +3355,11 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   if (name === 'run_sql_query') {
     if (!COPILOT_SQL_ENABLED || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
     return runCopilotSql(a.database, a.sql, (e) => auditCopilotSql(ctx.username, e));
+  }
+
+  if (isDbhubTool(name)) {
+    if (!COPILOT_SQL_ENABLED || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
+    return callDbhubTool(name, a, (e) => auditCopilotSql(ctx.username, e));
   }
 
   if (name === 'get_site_analytics') {
@@ -3728,9 +3749,9 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
 
   const sessionUser = (req as any).user || {};
   const ctx = { username: String(sessionUser.username || ''), role: String(sessionUser.role || '') };
-  const tools = copilotToolsFor(ctx.role);
-  const sqlRule = tools.length > COPILOT_TOOLS.length
-    ? '\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد run_sql_query را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.'
+  const tools = await copilotToolsFor(ctx.role);
+  const sqlRule = tools.some((t: any) => ['run_sql_query', 'execute_sql_crm'].includes(t.function?.name))
+    ? '\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (execute_sql_crm یا run_sql_query) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.'
     : '';
   const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() + sqlRule }, ...history];
 
