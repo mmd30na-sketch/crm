@@ -51,8 +51,14 @@ export const COPILOT_SQL_SCHEMA = [
 
 const parser = new Parser();
 
+/** Quote the identifier after each `AS` outside string literals, so reserved-word aliases parse. Security checks then run on the quoted query. */
+export function quoteBareAliases(sql: string, q: '`' | '"'): string {
+  return sql.split(/('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`[^`]*`)/).map((part, i) =>
+    i % 2 ? part : part.replace(/\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b/gi, (_m, id) => `AS ${q}${id}${q}`)).join('');
+}
+
 export function validateCopilotSql(db: SqlDb, sqlRaw: string): { ok: true; sql: string; bounded: string } | { ok: false; reason: string } {
-  const sql = String(sqlRaw || '').trim().replace(/;\s*$/, '');
+  let sql = String(sqlRaw || '').trim().replace(/;\s*$/, '');
   if (!sql) return { ok: false, reason: 'empty query' };
   if (sql.length > 4000) return { ok: false, reason: 'query too long' };
   if (sql.includes(';')) return { ok: false, reason: 'multiple statements are not allowed' };
@@ -61,12 +67,16 @@ export function validateCopilotSql(db: SqlDb, sqlRaw: string): { ok: true; sql: 
   const opt = { database: db === 'crm' ? 'MySQL' : 'Sqlite' };
   let ast: any;
   let tables: string[]; let columns: string[];
+  const parseAll = (q: string) => { ast = parser.astify(q, opt); tables = parser.tableList(q, opt); columns = parser.columnList(q, opt); };
   try {
-    ast = parser.astify(sql, opt);
-    tables = parser.tableList(sql, opt);
-    columns = parser.columnList(sql, opt);
+    parseAll(sql);
   } catch (e: any) {
-    return { ok: false, reason: `SQL parse error: ${String(e?.message || e).slice(0, 160)}` };
+    // Retry once with bare aliases quoted (e.g. `AS count`), which the parser rejects as reserved words.
+    const quoted = quoteBareAliases(sql, db === 'crm' ? '`' : '"');
+    if (quoted === sql) return { ok: false, reason: `SQL parse error: ${String(e?.message || e).slice(0, 160)}` };
+    try { parseAll(quoted); sql = quoted; } catch {
+      return { ok: false, reason: `SQL parse error: ${String(e?.message || e).slice(0, 160)}` };
+    }
   }
   const stmts = Array.isArray(ast) ? ast : [ast];
   if (stmts.length !== 1 || stmts[0]?.type !== 'select') return { ok: false, reason: 'only a single SELECT statement is allowed' };

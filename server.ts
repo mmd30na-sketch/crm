@@ -3288,7 +3288,7 @@ const COPILOT_SQL_TOOL = {
   type: 'function',
   function: {
     name: 'run_sql_query',
-    description: 'اجرای یک پرس‌وجوی فقط-خواندنی SELECT روی پایگاه crm (MySQL) یا site (SQLite)، فقط وقتی هیچ ابزار دیگری کافی نیست. حداکثر ۲۰۰ ردیف.\n' + COPILOT_SQL_SCHEMA,
+    description: 'اجرای یک پرس‌وجوی فقط-خواندنی SELECT روی پایگاه crm (MySQL) یا site (SQLite)، فقط وقتی هیچ ابزار دیگری کافی نیست. حداکثر ۲۰۰ ردیف. برای نام مستعار از کلمات رزرو‌شده مثل count/date/order استفاده نکنید (مثلاً total_count).\n' + COPILOT_SQL_SCHEMA,
     parameters: {
       type: 'object',
       properties: {
