@@ -3196,22 +3196,6 @@ const COPILOT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'list_exams',
-      description: 'زمان‌بندی آزمون دوره‌ها. نتیجه یا نمره آزمون در CRM ذخیره نمی‌شود؛ تاریخ آزمون بر پایه تاریخ پایان دوره‌ها گزارش می‌شود: دوره، شماره دوره، تاریخ شروع و پایان، تعداد ثبت‌نام‌ها و تعداد کارآموزان دارای مانده بدهی.',
-      parameters: {
-        type: 'object',
-        properties: {
-          course_id: { type: 'integer', description: 'شناسه نوع دوره' },
-          status: { type: 'string', enum: ['active', 'finished'], description: 'فیلتر وضعیت دوره (اختیاری)' },
-          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'list_enrollments',
       description: 'ثبت‌نام‌های کارآموزان در دوره‌ها: کارآموز، دوره، شماره دوره، تاریخ ثبت‌نام، شهریه، پرداختی، مانده و وجود رسید/قرارداد.',
       parameters: {
@@ -3221,22 +3205,6 @@ const COPILOT_TOOLS = [
           course_id: { type: 'integer', description: 'شناسه نوع دوره' },
           course_number: { type: 'integer', description: 'شماره دوره' },
           limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۳۰)' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'list_documents',
-      description: 'مدارک و فایل‌های کارآموزان: رسید پرداخت، قرارداد، کارت ملی، عکس کارت ملی و عکس شخصی. فقط نام فایل، نوع، تاریخ و تعداد برگردانده می‌شود؛ محتوای فایل‌ها هرگز خوانده یا برگردانده نمی‌شود.',
-      parameters: {
-        type: 'object',
-        properties: {
-          student_id: { type: 'integer', description: 'شناسه کارآموز' },
-          kind: { type: 'string', enum: ['documents', 'generated'], description: 'documents (پیش‌فرض) = مدارک ثبت‌نام و عکس‌ها؛ generated = مدارک تولیدشده از الگوها' },
-          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
         },
         required: [],
       },
@@ -3287,21 +3255,6 @@ const COPILOT_TOOLS = [
         properties: {
           kind: { type: 'string', enum: ['threads', 'campaigns'], description: 'پیش‌فرض threads' },
           unread_only: { type: 'boolean', description: 'فقط گفتگوهای دارای پیام خوانده‌نشده' },
-          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'list_sms',
-      description: 'پیامک‌ها: messages = سوابق پیامک‌های ارسالی و وضعیت آن‌ها، templates = الگوهای پیامک آماده، campaigns = کمپین‌های پیامک انبوه و آمار ارسال. فقط خواندنی است و هیچ پیامکی ارسال نمی‌کند.',
-      parameters: {
-        type: 'object',
-        properties: {
-          kind: { type: 'string', enum: ['messages', 'templates', 'campaigns'], description: 'پیش‌فرض messages' },
           limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
         },
         required: [],
@@ -3413,6 +3366,57 @@ const COPILOT_SITE_SQL_TOOL = {
 };
 
 /** Tools offered to this user (admin-only extras): SQL via DBHub (COPILOT_DB_BACKEND=dbhub, falls back to builtin when down) or builtin run_sql_query, plus get_site_analytics. */
+/** Admin-only read-only tools (exams, documents, SMS); offered only to admin and re-checked in runCopilotTool. */
+const COPILOT_ADMIN_READ_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_exams',
+      description: 'زمان‌بندی آزمون دوره‌ها. نتیجه یا نمره آزمون در CRM ذخیره نمی‌شود؛ تاریخ آزمون بر پایه تاریخ پایان دوره‌ها گزارش می‌شود: دوره، شماره دوره، تاریخ شروع و پایان، تعداد ثبت‌نام‌ها و تعداد کارآموزان دارای مانده بدهی.',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer', description: 'شناسه نوع دوره' },
+          status: { type: 'string', enum: ['active', 'finished'], description: 'فیلتر وضعیت دوره (اختیاری)' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_documents',
+      description: 'مدارک و فایل‌های کارآموزان: رسید پرداخت، قرارداد، کارت ملی، عکس کارت ملی و عکس شخصی. فقط نام فایل، نوع، تاریخ و تعداد برگردانده می‌شود؛ محتوای فایل‌ها هرگز خوانده یا برگردانده نمی‌شود.',
+      parameters: {
+        type: 'object',
+        properties: {
+          student_id: { type: 'integer', description: 'شناسه کارآموز' },
+          kind: { type: 'string', enum: ['documents', 'generated'], description: 'documents (پیش‌فرض) = مدارک ثبت‌نام و عکس‌ها؛ generated = مدارک تولیدشده از الگوها' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_sms',
+      description: 'پیامک‌ها: messages = سوابق پیامک‌های ارسالی و وضعیت آن‌ها، templates = الگوهای پیامک آماده، campaigns = کمپین‌های پیامک انبوه و آمار ارسال. فقط خواندنی است و هیچ پیامکی ارسال نمی‌کند.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['messages', 'templates', 'campaigns'], description: 'پیش‌فرض messages' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+];
+
 async function copilotToolsFor(role: string) {
   if (role !== 'admin') return COPILOT_TOOLS;
   let sqlTools: any[] = [];
@@ -3420,7 +3424,7 @@ async function copilotToolsFor(role: string) {
     const dbhub = dbhubSelected() ? await getDbhubTools() : null;
     sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
   }
-  return [...COPILOT_TOOLS, ...sqlTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
+  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -3555,6 +3559,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   }
 
   if (name === 'list_exams') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
     // The CRM stores no exam table: exam timing is read from the course terms (end date) and the trainees' settlement.
     const where: string[] = []; const params: any[] = [];
     const cid = parseInt(String(a.course_id ?? ''), 10);
@@ -3597,6 +3602,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   }
 
   if (name === 'list_documents') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
     // Only file metadata (name, type, date, count); the file contents are never read.
     const limit = copilotLimit(a.limit, 20);
     const sid = parseInt(String(a.student_id ?? ''), 10);
@@ -3724,6 +3730,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   }
 
   if (name === 'list_sms') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
     // Read-only: the SMS log, the stored templates and the bulk-SMS campaign stats. Nothing is ever sent here.
     const limit = copilotLimit(a.limit, 20);
     const kind = String(a.kind || 'messages');
