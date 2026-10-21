@@ -11,3 +11,4 @@ coverage/
 
 ocr-eval-data/
 __pycache__/
+scripts/copilot-eval/.run-eval.cjs
