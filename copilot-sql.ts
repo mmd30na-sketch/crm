@@ -51,7 +51,7 @@ export const COPILOT_SQL_SCHEMA = [
 
 const parser = new Parser();
 
-export function validateCopilotSql(db: SqlDb, sqlRaw: string): { ok: true; sql: string } | { ok: false; reason: string } {
+export function validateCopilotSql(db: SqlDb, sqlRaw: string): { ok: true; sql: string; bounded: string } | { ok: false; reason: string } {
   const sql = String(sqlRaw || '').trim().replace(/;\s*$/, '');
   if (!sql) return { ok: false, reason: 'empty query' };
   if (sql.length > 4000) return { ok: false, reason: 'query too long' };
@@ -98,7 +98,10 @@ export function validateCopilotSql(db: SqlDb, sqlRaw: string): { ok: true; sql: 
     if (SECRET_COL.test(cname)) return { ok: false, reason: `column not allowed: ${cname}` };
     for (const u of used) if ((hidden[u] || []).includes(cname.toLowerCase())) return { ok: false, reason: `column not allowed: ${cname}` };
   }
-  return { ok: true, sql };
+  // Append LIMIT directly when the query has none (keeps ORDER BY reliable); otherwise wrap it.
+  const hasLimit = Boolean(stmts[0]?.limit?.value?.length);
+  const bounded = hasLimit ? `SELECT * FROM (${sql}) AS copilot_q LIMIT ${MAX_ROWS + 1}` : `${sql} LIMIT ${MAX_ROWS + 1}`;
+  return { ok: true, sql, bounded };
 }
 
 let roPool: mysql.Pool | null = null;
@@ -148,11 +151,11 @@ export async function runCopilotSql(
       const conn = await crmPool().getConnection();
       try {
         await conn.query(`SET SESSION MAX_EXECUTION_TIME = ${TIMEOUT_MS}`);
-        const [r] = await conn.query({ sql: `SELECT * FROM (${v.sql}) AS copilot_q LIMIT ${MAX_ROWS + 1}`, timeout: TIMEOUT_MS + 1000 });
+        const [r] = await conn.query({ sql: v.bounded, timeout: TIMEOUT_MS + 1000 });
         rows = r as any[];
       } finally { conn.release(); }
     } else {
-      const stmt = site().prepare(`SELECT * FROM (${v.sql}) AS copilot_q LIMIT ${MAX_ROWS + 1}`);
+      const stmt = site().prepare(v.bounded);
       if (!stmt.reader) throw new Error('not a read statement');
       rows = stmt.all() as any[];
     }
