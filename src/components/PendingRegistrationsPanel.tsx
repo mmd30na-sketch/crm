@@ -3,17 +3,13 @@ import ModalPortal from './ModalPortal';
 import { ClipboardCheck, RefreshCw, Eye, CheckCircle, XCircle, ExternalLink, ImageOff, X, ChevronDown } from 'lucide-react';
 import { useIsDesktop } from './FilterSheet';
 import * as api from '../api/client';
-import { WebsiteRegistration } from '../types';
+import { Course, WebsiteRegistration } from '../types';
+import { registrationCourseName, tehranDate } from '../utils/registrationCategory';
 
 /** Key read by StudentRegistrationForm to preselect a website registration when the register tab opens. */
 export const OPEN_REGISTRATION_KEY = 'crm_open_registration_id';
 
-function faDate(v?: string) {
-  if (!v) return '—';
-  const d = new Date(String(v).replace(' ', 'T'));
-  if (isNaN(d.getTime())) return String(v);
-  return d.toLocaleString('fa-IR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
+const faDate = tehranDate;
 
 type DocKind = 'personal_photo' | 'national_card';
 const DOC_LABEL: Record<DocKind, string> = { personal_photo: 'عکس', national_card: 'کارت ملی' };
@@ -39,7 +35,7 @@ function DocThumb({ r, kind, onOpen }: { r: WebsiteRegistration; kind: DocKind; 
   );
 }
 
-export default function PendingRegistrationsPanel({ onActiveTabChange }: { onActiveTabChange: (tab: string) => void }) {
+export default function PendingRegistrationsPanel({ onActiveTabChange, courses = [] }: { onActiveTabChange: (tab: string) => void; courses?: Course[] }) {
   const [rows, setRows] = useState<WebsiteRegistration[] | null>(null);
   const [reviews, setReviews] = useState<Record<string, api.RegistrationReview>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -121,7 +117,7 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
             <table className="w-full text-xs text-right">
               <thead><tr className="text-slate-500 bg-slate-50 border-b border-slate-200">
                 <th className="p-2 font-semibold">مدارک</th><th className="p-2 font-semibold">نام</th><th className="p-2 font-semibold">موبایل</th>
-                <th className="p-2 font-semibold">تاریخ</th><th className="p-2 font-semibold">دوره / نوع</th>
+                <th className="p-2 font-semibold">تاریخ ثبت</th><th className="p-2 font-semibold">دوره / نوع</th>
                 <th className="p-2 font-semibold">وضعیت</th><th className="p-2 font-semibold text-center">عملیات</th>
               </tr></thead>
               <tbody>
@@ -136,7 +132,7 @@ export default function PendingRegistrationsPanel({ onActiveTabChange }: { onAct
                         ? <div><span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200" title={r.paid_ref ? `کد رهگیری زرین‌پال: ${r.paid_ref}` : ''}>پرداخت آنلاین {Number(r.paid_toman).toLocaleString('fa-IR')} ت</span></div>
                         : <div><span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-50 text-slate-500 border border-slate-200">پرداخت نشده</span></div>}</td>
                       <td className="p-2 text-slate-600 whitespace-nowrap">{faDate(r.created_at)}</td>
-                      <td className="p-2 text-slate-700">{r.category || '—'}</td>
+                      <td className="p-2 text-slate-700">{registrationCourseName(r.category, courses)}</td>
                       <td className="p-2">{rv
                         ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200" title={rv.by ? `توسط ${rv.by}` : ''}>بررسی‌شده</span>
                         : <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">در انتظار</span>}</td>

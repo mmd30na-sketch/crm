@@ -3,18 +3,7 @@ import { History, RefreshCw, Search, UserPlus, Check } from 'lucide-react';
 import * as api from '../api/client';
 import { listLeads, createLead, listLeadSources } from '../api/phase4';
 import { Course, WebsiteRegistration } from '../types';
-
-/** Website category -> CRM course id (same map as StudentRegistrationForm) and a Persian fallback label. */
-const CATEGORY: Record<string, { id: number; label: string }> = {
-  cargo_freight: { id: 1, label: 'رانندگی حمل بار' },
-  hazardous_materials: { id: 2, label: 'حمل مواد خطرناک' },
-  passenger_bus: { id: 3, label: 'رانندگی مسافربری' },
-  passenger_transport: { id: 3, label: 'رانندگی مسافربری' },
-  ceo_company: { id: 4, label: 'مدیر شرکت حمل‌ونقل' },
-  ceo_freight: { id: 4, label: 'مدیر شرکت حمل‌ونقل' },
-  ceo_passenger: { id: 5, label: 'مدیر شرکت مسافربری' },
-  technical_manager: { id: 6, label: 'مسئول فنی' },
-};
+import { REGISTRATION_CATEGORY, registrationCourseName, tehranDate } from '../utils/registrationCategory';
 
 const STATUS: Record<string, { label: string; cls: string }> = {
   pending: { label: 'در انتظار', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
@@ -22,14 +11,8 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   rejected: { label: 'رد‌شده', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
 };
 
-/** MySQL datetimes are UTC; show them as Jalali in Tehran time. */
-function faDate(v?: string | null) {
-  if (!v) return '—';
-  const s = String(v).replace(' ', 'T');
-  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : `${s}Z`);
-  if (isNaN(d.getTime())) return String(v);
-  return d.toLocaleString('fa-IR', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
+const CATEGORY = REGISTRATION_CATEGORY;
+const faDate = tehranDate;
 
 const toLatin = (v: unknown) => String(v ?? '').replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0)).replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660));
 const phoneKey = (v: unknown) => { const d = toLatin(v).replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : ''; };
@@ -53,11 +36,7 @@ export default function SiteRequestsHistory({ courses }: { courses: Course[] }) 
   };
   useEffect(load, []);
 
-  const courseName = (cat?: string) => {
-    const e = CATEGORY[String(cat || '')];
-    if (!e) return cat || '—';
-    return courses.find((c) => Number(c.id) === e.id)?.title || e.label;
-  };
+  const courseName = (cat?: string) => registrationCourseName(cat, courses);
 
   const shown = useMemo(() => {
     const term = toLatin(q).trim().toLowerCase();

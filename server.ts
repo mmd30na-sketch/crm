@@ -3002,9 +3002,10 @@ const COPILOT_SYSTEM_PROMPT = [
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید.',
-  '۶) ابزار send_notification فقط با تأیید صریح کاربر («بله ارسال کن» یا «بفرست») فعال شود.',
-  '۷) برای فهرست دوره‌ها، شهریه/قیمت دوره یا پیدا کردن شناسه دوره از list_courses استفاده کنید؛ برای ثبت‌نام‌های سایت و موارد در انتظار تأیید از list_site_registrations.',
+  '۶) شما فقط می‌خوانید؛ هیچ پیامی ارسال نمی‌کنید و چیزی را تغییر نمی‌دهید. اگر کاربر ارسال پیام خواست، متن پیشنهادی بنویسید و بگویید از بخش «پیام‌رسان» ارسال کند.',
+  '۷) راهنمای ابزارها: قیمت/فهرست دوره‌ها list_courses؛ ثبت‌نام‌های سایت و در انتظار تأیید list_site_registrations؛ سرنخ‌ها list_leads و قیف فروش get_sales_funnel؛ کارهای کارکنان list_tasks؛ دوره‌های در حال برگزاری/شماره دوره و ظرفیت list_course_terms؛ ثبت‌نام کارآموزان در دوره‌ها و مانده هر ثبت‌نام list_enrollments؛ فیش‌ها و دریافتی‌ها list_payments؛ هزینه‌ها، سود و زیان ماهانه، حساب‌های بانکی و اقساط معوق get_financial_report؛ گفتگوهای پیام‌رسان و کمپین‌ها list_messaging؛ سوابق تغییرات و تماس‌ها list_activity_log؛ کارآموز search_student و خلاصه مالی او get_student_financial_summary؛ گردش روزانه get_daily_cashflow؛ بدهکاران get_debtors_list؛ آمار یک دوره get_course_statistics.',
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
+  '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
 ].join('\n');
 
 const COPILOT_TOOLS = [
@@ -3105,20 +3106,171 @@ const COPILOT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'send_notification',
-      description: 'ارسال پیام یادآوری یا اطلاعیه به یک کارآموز از طریق تلگرام یا روبیکا. فقط پس از تأیید صریح کاربر استفاده شود.',
+      name: 'list_leads',
+      description: 'سرنخ‌ها (متقاضیان/تماس‌گیرندگان): نام، موبایل، منبع، دوره مورد علاقه، وضعیت و تاریخ پیگیری بعدی.',
       parameters: {
         type: 'object',
         properties: {
-          channel: { type: 'string', enum: ['telegram', 'rubika'], description: 'کانال ارسال پیام' },
-          recipient: { type: 'string', description: 'شناسه گیرنده: برای تلگرام chat_id عددی، برای روبیکا guid مخاطب' },
-          message: { type: 'string', description: 'متن پیام به فارسی' },
+          status: { type: 'string', enum: ['new', 'contacted', 'in_negotiation', 'converted', 'lost'], description: 'فیلتر وضعیت (اختیاری)' },
+          due_only: { type: 'boolean', description: 'فقط سرنخ‌های باز که تاریخ پیگیری دارند' },
+          query: { type: 'string', description: 'جستجو در نام یا موبایل' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
         },
-        required: ['channel', 'recipient', 'message'],
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_sales_funnel',
+      description: 'قیف فروش به تفکیک منبع سرنخ: تعداد کل، جدید، تماس‌گرفته، در حال پیگیری، تبدیل‌شده، از دست رفته و نرخ تبدیل.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_tasks',
+      description: 'کارهای ارجاع‌شده به کارکنان: عنوان، مسئول، مهلت، اولویت، وضعیت و عقب‌افتاده بودن.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['open', 'done', 'all'], description: 'open (پیش‌فرض) = باز و در حال انجام' },
+          assignee: { type: 'string', description: 'نام کاربری مسئول (اختیاری)' },
+          overdue_only: { type: 'boolean', description: 'فقط کارهای عقب‌افتاده' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_course_terms',
+      description: 'دوره‌های برگزارشده/در حال برگزاری (شماره دوره، کلاس‌ها): تاریخ شروع و پایان، ظرفیت، تعداد ثبت‌نام و وضعیت.',
+      parameters: {
+        type: 'object',
+        properties: {
+          course_id: { type: 'integer', description: 'شناسه نوع دوره (از list_courses)' },
+          status: { type: 'string', description: 'فیلتر وضعیت (اختیاری)' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_enrollments',
+      description: 'ثبت‌نام‌های کارآموزان در دوره‌ها: کارآموز، دوره، شماره دوره، تاریخ ثبت‌نام، شهریه، پرداختی، مانده و وجود رسید/قرارداد.',
+      parameters: {
+        type: 'object',
+        properties: {
+          student_id: { type: 'integer', description: 'شناسه کارآموز' },
+          course_id: { type: 'integer', description: 'شناسه نوع دوره' },
+          course_number: { type: 'integer', description: 'شماره دوره' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۳۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_payments',
+      description: 'پرداخت‌های دریافتی (فیش‌ها): تاریخ، مبلغ، روش پرداخت، کارآموز و دوره، به همراه جمع کل.',
+      parameters: {
+        type: 'object',
+        properties: {
+          date_from: { type: 'string', description: 'از تاریخ شمسی YYYY/MM/DD' },
+          date_to: { type: 'string', description: 'تا تاریخ شمسی YYYY/MM/DD' },
+          student_id: { type: 'integer', description: 'شناسه کارآموز' },
+          course_id: { type: 'integer', description: 'شناسه نوع دوره' },
+          limit: { type: 'integer', description: 'حداکثر تعداد ردیف (پیش‌فرض ۳۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_financial_report',
+      description: 'گزارش‌های مالی: expenses = هزینه‌ها (با بازه تاریخ)، expenses_by_category = هزینه به تفکیک دسته، profit_loss_monthly = سود و زیان ماهانه، bank_accounts = حساب‌های بانکی، overdue_installments = اقساط سررسیدگذشته.',
+      parameters: {
+        type: 'object',
+        properties: {
+          report: { type: 'string', enum: ['expenses', 'expenses_by_category', 'profit_loss_monthly', 'bank_accounts', 'overdue_installments'] },
+          date_from: { type: 'string', description: 'از تاریخ شمسی YYYY/MM/DD (برای expenses)' },
+          date_to: { type: 'string', description: 'تا تاریخ شمسی YYYY/MM/DD (برای expenses)' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۳۰)' },
+        },
+        required: ['report'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_messaging',
+      description: 'پیام‌رسان و کمپین‌ها: threads = گفتگوها (کانال، نام، تعداد خوانده‌نشده، آخرین پیام)، campaigns = کمپین‌های پیام انبوه و آمار ارسال.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['threads', 'campaigns'], description: 'پیش‌فرض threads' },
+          unread_only: { type: 'boolean', description: 'فقط گفتگوهای دارای پیام خوانده‌نشده' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_activity_log',
+      description: 'سوابق فعالیت: audit = گزارش تغییرات کاربران CRM (چه کسی، چه زمانی، چه بخشی)، activities = تماس‌ها و یادداشت‌های ثبت‌شده برای کارآموز یا سرنخ.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['audit', 'activities'], description: 'پیش‌فرض audit' },
+          username: { type: 'string', description: 'نام کاربری (اختیاری)' },
+          entity: { type: 'string', description: 'برای audit: بخش (مثل payments)؛ برای activities: student یا lead' },
+          entity_id: { type: 'integer', description: 'برای activities: شناسه کارآموز یا سرنخ' },
+          limit: { type: 'integer', description: 'حداکثر تعداد (پیش‌فرض ۲۰)' },
+        },
+        required: [],
       },
     },
   },
 ];
+
+const LEAD_STATUS_FA: Record<string, string> = { new: 'جدید', contacted: 'تماس گرفته شد', in_negotiation: 'در حال پیگیری', converted: 'تبدیل‌شده', lost: 'از دست رفته' };
+
+/** Bounded LIMIT for Copilot tools (1..50). */
+function copilotLimit(v: any, def: number): number {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 50) : def;
+}
+
+/** UTC datetime (Date or 'YYYY-MM-DD HH:MM:SS' without zone) -> Jalali date/time in Tehran, e.g. 1405/07/29 14:05. */
+function copilotTehran(v: any): string | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(String(v)) ? String(v) : `${String(v).replace(' ', 'T')}Z`);
+  if (isNaN(d.getTime())) return String(v);
+  return d.toLocaleString('fa-IR-u-ca-persian-nu-latn', { timeZone: 'Asia/Tehran', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+/** Normalizes a Jalali date argument to zero-padded YYYY/MM/DD (Latin digits), or null. */
+function copilotJalali(v: any): string | null {
+  const t = String(v ?? '').replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06F0)).replace(/[-.]/g, '/').trim();
+  const m = t.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  return m ? `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}` : null;
+}
 
 function toNumber(value: any): number {
   const n = Number(value);
@@ -3129,48 +3281,8 @@ async function runCopilotTool(name: string, args: any): Promise<any> {
   const a = args && typeof args === 'object' ? args : {};
 
   if (name === 'send_notification') {
-    const channel = String(a.channel || '').trim();
-    const recipient = String(a.recipient || '').trim();
-    const message = String(a.message || '').trim();
-
-    if (!channel || !recipient || !message) {
-      return { error: 'channel، recipient و message همگی الزامی هستند.' };
-    }
-    if (message.length > 3000) {
-      return { error: 'متن پیام بیش از ۳۰۰۰ کاراکتر است.' };
-    }
-
-    if (channel === 'telegram') {
-      const tgToken = String(process.env.TELEGRAM_BOT_TOKEN || '').trim();
-      if (!tgToken) return { error: 'TELEGRAM_BOT_TOKEN تنظیم نشده است.' };
-      try {
-        const tgRes = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: recipient, text: message }),
-          signal: AbortSignal.timeout(15000),
-        });
-        const tgData: any = await tgRes.json().catch(() => ({}));
-        if (!tgRes.ok || !tgData?.ok) {
-          return { sent: false, channel: 'telegram', error: tgData?.description || `Telegram API error ${tgRes.status}` };
-        }
-        return { sent: true, channel: 'telegram', message_id: tgData?.result?.message_id, recipient };
-      } catch (err: any) {
-        return { sent: false, channel: 'telegram', error: err?.message || 'خطا در ارسال به تلگرام' };
-      }
-    }
-
-    if (channel === 'rubika') {
-      try {
-        const r = await sendRubikaMessage(recipient, message);
-        if (r?.status === 'OK') return { sent: true, channel: 'rubika', recipient };
-        return { sent: false, channel: 'rubika', error: String(r?.status || r?.raw || 'نامشخص').slice(0, 120) };
-      } catch (err: any) {
-        return { sent: false, channel: 'rubika', error: err?.message || 'خطا در ارسال پیام روبیکا' };
-      }
-    }
-
-    return { error: `کانال نامعتبر: ${channel}. مقادیر مجاز: telegram یا rubika` };
+    // Disabled: sending must go through a human-confirmed UI flow, never directly from the model.
+    return { error: 'ارسال پیام از طریق دستیار غیرفعال است؛ از بخش پیام‌رسان استفاده کنید.' };
   }
 
   if (!chabokan.isMysqlEnabled()) {
@@ -3201,10 +3313,191 @@ async function runCopilotTool(name: string, args: any): Promise<any> {
         phone_number: r.phone_number,
         category: r.category,
         status: r.status,
-        created_at: r.created_at,
+        created_at: copilotTehran(r.created_at),
+        approved_or_rejected_at: copilotTehran(r.approved_at),
         paid_online_toman: toNumber(r.paid_toman),
       })),
     };
+  }
+
+  if (name === 'list_leads') {
+    const where: string[] = []; const params: any[] = [];
+    const st = String(a.status || '');
+    if (['new', 'contacted', 'in_negotiation', 'converted', 'lost'].includes(st)) { where.push('l.status = ?'); params.push(st); }
+    if (a.due_only === true) where.push("l.next_followup_date_jalali IS NOT NULL AND l.status NOT IN ('converted','lost')");
+    const q = String(a.query || '').trim();
+    if (q) { where.push("(CONCAT(COALESCE(l.first_name,''),' ',l.last_name) LIKE ? OR l.phone_number LIKE ?)"); params.push(`%${q}%`, `%${q.replace(/\D/g, '') || q}%`); }
+    const rows = await chabokan.sql<any>(
+      `SELECT l.lead_id, l.first_name, l.last_name, l.phone_number, ls.title AS source, c.title AS course, l.status,
+              l.next_followup_date_jalali, l.loss_reason, l.notes, l.converted_student_id, l.created_at
+       FROM leads l LEFT JOIN lead_sources ls ON ls.source_id = l.source_id LEFT JOIN courses c ON c.course_id = l.interested_course_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY l.lead_id DESC LIMIT ?`, [...params, copilotLimit(a.limit, 20)]);
+    return { count: rows.length, leads: rows.map((r) => ({
+      lead_id: r.lead_id, name: `${r.first_name || ''} ${r.last_name || ''}`.trim(), phone_number: r.phone_number, source: r.source,
+      course: r.course, status: LEAD_STATUS_FA[r.status] || r.status, next_followup: r.next_followup_date_jalali,
+      loss_reason: r.loss_reason, notes: r.notes ? String(r.notes).slice(0, 200) : null, converted_student_id: r.converted_student_id,
+      created_at: copilotTehran(r.created_at),
+    })) };
+  }
+
+  if (name === 'get_sales_funnel') {
+    const rows = await chabokan.sql<any>('SELECT * FROM v_sales_funnel_summary ORDER BY total_leads DESC');
+    return { sources: rows.map((r) => ({
+      source: r.source_title, total: toNumber(r.total_leads), new: toNumber(r.count_new), contacted: toNumber(r.count_contacted),
+      in_negotiation: toNumber(r.count_in_negotiation), converted: toNumber(r.count_converted), lost: toNumber(r.count_lost),
+      conversion_rate_percent: toNumber(r.conversion_rate_percent),
+    })) };
+  }
+
+  if (name === 'list_tasks') {
+    const where: string[] = []; const params: any[] = [];
+    const st = String(a.status || 'open');
+    if (st === 'open') where.push("t.status IN ('open','in_progress')");
+    else if (st === 'done') where.push("t.status IN ('done','cancelled')");
+    if (a.assignee) { where.push('t.assignee_username = ?'); params.push(String(a.assignee).trim()); }
+    if (a.overdue_only === true) where.push("t.due_at IS NOT NULL AND t.due_at < UTC_TIMESTAMP() AND t.status IN ('open','in_progress')");
+    const rows = await chabokan.sql<any>(
+      `SELECT t.id, t.title, t.description, t.assignee_username, t.created_by, t.due_at, t.priority, t.status, t.entity_type, t.entity_id, t.completed_at,
+              (t.due_at IS NOT NULL AND t.due_at < UTC_TIMESTAMP() AND t.status IN ('open','in_progress')) AS overdue
+       FROM crm_tasks t ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY t.due_at IS NULL, t.due_at, t.id DESC LIMIT ?`, [...params, copilotLimit(a.limit, 20)]);
+    return { count: rows.length, tasks: rows.map((r) => ({
+      id: r.id, title: r.title, description: r.description ? String(r.description).slice(0, 200) : null,
+      assignee: r.assignee_username, created_by: r.created_by, due: copilotTehran(r.due_at), priority: r.priority, status: r.status,
+      overdue: Boolean(Number(r.overdue)), related: r.entity_type ? `${r.entity_type}#${r.entity_id}` : null, completed_at: copilotTehran(r.completed_at),
+    })) };
+  }
+
+  if (name === 'list_course_terms') {
+    const where: string[] = []; const params: any[] = [];
+    const cid = parseInt(String(a.course_id ?? ''), 10);
+    if (Number.isFinite(cid)) { where.push('t.course_id = ?'); params.push(cid); }
+    if (a.status) { where.push('t.status = ?'); params.push(String(a.status).trim()); }
+    const rows = await chabokan.sql<any>(
+      `SELECT t.id, t.course_id, c.title AS course, t.course_number, t.title, t.start_date, t.end_date, t.capacity, t.status, t.notes,
+              (SELECT COUNT(*) FROM enrollments e WHERE e.course_id = t.course_id AND e.course_number = t.course_number) AS enrolled
+       FROM crm_course_terms t LEFT JOIN courses c ON c.course_id = t.course_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY t.id DESC LIMIT ?`, [...params, copilotLimit(a.limit, 20)]);
+    return { count: rows.length, terms: rows.map((r) => ({
+      id: r.id, course_id: r.course_id, course: r.course, course_number: r.course_number, title: r.title,
+      start_date: r.start_date, end_date: r.end_date, capacity: r.capacity, enrolled: toNumber(r.enrolled), status: r.status,
+      notes: r.notes ? String(r.notes).slice(0, 200) : null,
+    })) };
+  }
+
+  if (name === 'list_enrollments') {
+    const where: string[] = []; const params: any[] = [];
+    for (const [k, col] of [['student_id', 'e.student_id'], ['course_id', 'e.course_id'], ['course_number', 'e.course_number']] as const) {
+      const v = parseInt(String(a[k] ?? ''), 10);
+      if (Number.isFinite(v)) { where.push(`${col} = ?`); params.push(v); }
+    }
+    const rows = await chabokan.sql<any>(
+      `SELECT e.enrollment_id, e.student_id, s.first_name, s.last_name, s.phone_number, c.title AS course, e.course_number, e.signup_date_jalali,
+              b.final_price, b.amount_paid_from_payments AS paid, b.balance_due,
+              (e.receipt_pdf_path IS NOT NULL) AS has_receipt, (e.contract_pdf_path IS NOT NULL) AS has_contract, (e.idcard_pdf_path IS NOT NULL) AS has_idcard
+       FROM enrollments e JOIN students s ON s.student_id = e.student_id LEFT JOIN courses c ON c.course_id = e.course_id
+       LEFT JOIN v_enrollment_balances b ON b.enrollment_id = e.enrollment_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY e.enrollment_id DESC LIMIT ?`, [...params, copilotLimit(a.limit, 30)]);
+    return { count: rows.length, enrollments: rows.map((r) => ({
+      enrollment_id: r.enrollment_id, student_id: r.student_id, name: `${r.first_name || ''} ${r.last_name || ''}`.trim(), phone_number: r.phone_number,
+      course: r.course, course_number: r.course_number, signup_date: r.signup_date_jalali, final_price: toNumber(r.final_price),
+      paid: toNumber(r.paid), remaining: toNumber(r.balance_due),
+      documents: { receipt: Boolean(Number(r.has_receipt)), contract: Boolean(Number(r.has_contract)), id_card: Boolean(Number(r.has_idcard)) },
+    })) };
+  }
+
+  if (name === 'list_payments') {
+    const where: string[] = []; const params: any[] = [];
+    const from = copilotJalali(a.date_from); const to = copilotJalali(a.date_to);
+    if (from) { where.push('p.pay_date_jalali >= ?'); params.push(from); }
+    if (to) { where.push('p.pay_date_jalali <= ?'); params.push(to); }
+    const sid = parseInt(String(a.student_id ?? ''), 10);
+    if (Number.isFinite(sid)) { where.push('p.student_id = ?'); params.push(sid); }
+    const cid = parseInt(String(a.course_id ?? ''), 10);
+    if (Number.isFinite(cid)) { where.push('e.course_id = ?'); params.push(cid); }
+    const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const base = 'FROM payments p LEFT JOIN enrollments e ON e.enrollment_id = p.enrollment_id LEFT JOIN students s ON s.student_id = p.student_id LEFT JOIN courses c ON c.course_id = e.course_id';
+    const [tot] = await chabokan.sql<any>(`SELECT COUNT(*) AS n, CAST(COALESCE(SUM(p.amount),0) AS DECIMAL(15,2)) AS total ${base} ${w}`, params);
+    const rows = await chabokan.sql<any>(
+      `SELECT p.payment_id, p.pay_date_jalali, p.amount, p.pay_method, p.payment_kind, p.ref_id, s.first_name, s.last_name, c.title AS course, e.course_number
+       ${base} ${w} ORDER BY p.pay_date_jalali DESC, p.payment_id DESC LIMIT ?`, [...params, copilotLimit(a.limit, 30)]);
+    return { date_from: from, date_to: to, payment_count: toNumber(tot?.n), total_amount: toNumber(tot?.total), shown: rows.length,
+      payments: rows.map((r) => ({ payment_id: r.payment_id, date: r.pay_date_jalali, amount: toNumber(r.amount), method: r.pay_method,
+        kind: r.payment_kind, ref_id: r.ref_id, student: `${r.first_name || ''} ${r.last_name || ''}`.trim(), course: r.course, course_number: r.course_number })) };
+  }
+
+  if (name === 'get_financial_report') {
+    const report = String(a.report || '');
+    const limit = copilotLimit(a.limit, 30);
+    if (report === 'expenses') {
+      const where: string[] = []; const params: any[] = [];
+      const from = copilotJalali(a.date_from); const to = copilotJalali(a.date_to);
+      if (from) { where.push('x.expense_date_jalali >= ?'); params.push(from); }
+      if (to) { where.push('x.expense_date_jalali <= ?'); params.push(to); }
+      const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const [tot] = await chabokan.sql<any>(`SELECT COUNT(*) AS n, CAST(COALESCE(SUM(x.amount),0) AS DECIMAL(15,2)) AS total FROM expenses x ${w}`, params);
+      const rows = await chabokan.sql<any>(
+        `SELECT x.expense_id, x.expense_date_jalali, x.title, x.amount, ec.title AS category, x.vendor_name, x.description
+         FROM expenses x LEFT JOIN expense_categories ec ON ec.category_id = x.category_id ${w}
+         ORDER BY x.expense_date_jalali DESC, x.expense_id DESC LIMIT ?`, [...params, limit]);
+      return { report, date_from: from, date_to: to, count: toNumber(tot?.n), total_amount: toNumber(tot?.total),
+        expenses: rows.map((r) => ({ id: r.expense_id, date: r.expense_date_jalali, title: r.title, amount: toNumber(r.amount), category: r.category, vendor: r.vendor_name, description: r.description })) };
+    }
+    if (report === 'expenses_by_category') {
+      const rows = await chabokan.sql<any>('SELECT * FROM v_expenses_by_category ORDER BY total_expense_amount DESC LIMIT ?', [limit]);
+      return { report, categories: rows.map((r) => ({ category: r.category_title, count: toNumber(r.total_expense_count), total_amount: toNumber(r.total_expense_amount) })) };
+    }
+    if (report === 'profit_loss_monthly') {
+      const rows = await chabokan.sql<any>('SELECT * FROM v_profit_and_loss_monthly ORDER BY jalali_month DESC LIMIT ?', [limit]);
+      return { report, months: rows.map((r) => ({ month: r.jalali_month, income: toNumber(r.total_income), expenses: toNumber(r.total_expenses), net_profit: toNumber(r.net_profit) })) };
+    }
+    if (report === 'bank_accounts') {
+      const rows = await chabokan.sql<any>('SELECT account_id, title, bank_name, card_number, initial_balance, is_active FROM bank_accounts ORDER BY account_id LIMIT ?', [limit]);
+      return { report, accounts: rows.map((r) => ({ id: r.account_id, title: r.title, bank: r.bank_name,
+        card_last4: r.card_number ? String(r.card_number).replace(/\D/g, '').slice(-4) : null, initial_balance: toNumber(r.initial_balance), active: Boolean(Number(r.is_active)) })) };
+    }
+    if (report === 'overdue_installments') {
+      const rows = await chabokan.sql<any>('SELECT * FROM v_overdue_installments ORDER BY due_date_jalali LIMIT ?', [limit]);
+      return { report, count: rows.length, installments: rows.map((r) => ({ student: r.student_full_name, phone_number: r.student_phone, course: r.course_title,
+        installment_number: r.installment_number, due_date: r.due_date_jalali, amount: toNumber(r.amount), status: r.status })) };
+    }
+    return { error: 'گزارش نامعتبر. مقادیر مجاز: expenses، expenses_by_category، profit_loss_monthly، bank_accounts، overdue_installments' };
+  }
+
+  if (name === 'list_messaging') {
+    const limit = copilotLimit(a.limit, 20);
+    if (String(a.kind || 'threads') === 'campaigns') {
+      const rows = await chabokan.sql<any>(
+        'SELECT id, name, status, dry_run, created_by, total, sent, failed, skipped, created_at, finished_at FROM crm_campaigns ORDER BY id DESC LIMIT ?', [limit]);
+      return { kind: 'campaigns', count: rows.length, campaigns: rows.map((r) => ({ id: r.id, name: r.name, status: r.status, dry_run: Boolean(Number(r.dry_run)),
+        created_by: r.created_by, total: toNumber(r.total), sent: toNumber(r.sent), failed: toNumber(r.failed), skipped: toNumber(r.skipped),
+        created_at: copilotTehran(r.created_at), finished_at: copilotTehran(r.finished_at) })) };
+    }
+    const rows = await chabokan.sql<any>(
+      `SELECT * FROM v_messenger_thread_summary ${a.unread_only === true ? 'WHERE unread_count > 0' : ''} ORDER BY last_message_at DESC LIMIT ?`, [limit]);
+    return { kind: 'threads', count: rows.length, threads: rows.map((r) => ({ thread_id: r.thread_id, channel: r.channel, name: r.display_name,
+      student_id: r.student_id, lead_id: r.lead_id, unread: toNumber(r.unread_count), last_message_at: copilotTehran(r.last_message_at),
+      last_message: r.last_message_preview ? String(r.last_message_preview).slice(0, 150) : null, last_direction: r.last_message_direction })) };
+  }
+
+  if (name === 'list_activity_log') {
+    const limit = copilotLimit(a.limit, 20);
+    if (String(a.kind || 'audit') === 'activities') {
+      const where: string[] = []; const params: any[] = [];
+      if (a.entity === 'student' || a.entity === 'lead') { where.push('entity_type = ?'); params.push(a.entity); }
+      const eid = parseInt(String(a.entity_id ?? ''), 10);
+      if (Number.isFinite(eid)) { where.push('entity_id = ?'); params.push(eid); }
+      if (a.username) { where.push('staff_username = ?'); params.push(String(a.username).trim()); }
+      const rows = await chabokan.sql<any>(
+        `SELECT id, entity_type, entity_id, kind, outcome, body, staff_username, occurred_at FROM crm_activities
+         ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY occurred_at DESC, id DESC LIMIT ?`, [...params, limit]);
+      return { kind: 'activities', count: rows.length, activities: rows.map((r) => ({ id: r.id, related: `${r.entity_type}#${r.entity_id}`, kind: r.kind,
+        outcome: r.outcome, body: r.body ? String(r.body).slice(0, 200) : null, staff: r.staff_username, at: copilotTehran(r.occurred_at) })) };
+    }
+    const rows = await chabokan.listAudit({ limit, username: a.username ? String(a.username).trim() : undefined, entity: a.entity ? String(a.entity).trim() : undefined });
+    const list: any[] = Array.isArray(rows) ? rows : ((rows as any)?.rows || (rows as any)?.items || []);
+    return { kind: 'audit', count: list.length, entries: list.slice(0, limit).map((r: any) => ({ at: copilotTehran(r.created_at), username: r.username, role: r.role,
+      method: r.method, path: r.path, entity: r.entity, entity_id: r.entity_id, status: r.status })) };
   }
 
   if (name === 'search_student') {

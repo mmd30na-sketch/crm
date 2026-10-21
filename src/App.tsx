@@ -497,7 +497,7 @@ export default function App() {
               {activeTab === 'supervisor' && role === 'admin' && (
                 <div className="space-y-5">
                   <CopilotBar />
-                  <PendingRegistrationsPanel onActiveTabChange={handleActiveTabChange} />
+                  <PendingRegistrationsPanel onActiveTabChange={handleActiveTabChange} courses={courses} />
                   <SupervisorDashboard
                     students={students}
                     courses={courses}
