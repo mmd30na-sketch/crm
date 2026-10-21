@@ -80,7 +80,7 @@ const NAV_ITEMS = [
   },
   {
     id: 'copilot',
-    label: 'دستیار مالی',
+    label: 'دستیار هوشمند',
     sublabel: 'همان گفتگوی داشبورد',
     icon: Bot,
     color: 'brand',

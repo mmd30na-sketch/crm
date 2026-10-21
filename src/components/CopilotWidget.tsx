@@ -187,7 +187,7 @@ function MessageList({
           </div>
           <div className="flex items-center gap-2 rounded-2xl rounded-br-sm bg-slate-100 px-3 py-2 text-slate-500">
             <Loader2 size={16} className="animate-spin" />
-            <span className="text-sm">در حال محاسبه...</span>
+            <span className="text-sm">در حال بررسی...</span>
           </div>
         </div>
       )}
@@ -220,7 +220,7 @@ export function CopilotBar() {
   const preview = showErrorInBar
     ? error
     : isLoading
-      ? 'در حال محاسبه...'
+      ? 'در حال بررسی...'
       : last
         ? last.content.replace(/\s+/g, ' ')
         : '';
@@ -231,7 +231,7 @@ export function CopilotBar() {
       className={`flex flex-col rounded-2xl border border-slate-200 bg-white shadow-sm ${
         expanded ? 'max-h-[40vh] sm:max-h-[320px]' : 'h-12'
       }`}
-      aria-label="دستیار مالی"
+      aria-label="دستیار هوشمند"
     >
       <div className="flex h-12 shrink-0 items-center gap-2 px-3">
         <button
@@ -243,7 +243,7 @@ export function CopilotBar() {
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
             <Bot size={16} />
           </span>
-          <span className="shrink-0 text-sm font-bold text-slate-800">دستیار مالی</span>
+          <span className="shrink-0 text-sm font-bold text-slate-800">دستیار هوشمند</span>
           {preview && (
             <span className={`min-w-0 flex-1 truncate text-xs ${showErrorInBar ? 'text-rose-700' : 'text-slate-500'}`}>
               {preview}
@@ -302,7 +302,7 @@ export function CopilotBar() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="پرسش مالی..."
+              placeholder="پرسش خود را بنویسید..."
               disabled={isLoading}
               dir="rtl"
               className="h-9 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-60"
@@ -332,13 +332,13 @@ export function CopilotPage() {
   }, [messages, isLoading]);
 
   return (
-    <section dir="rtl" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="دستیار مالی">
+    <section dir="rtl" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="دستیار هوشمند">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-100 px-4">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
           <Bot size={16} />
         </span>
         <div className="min-w-0 text-right">
-          <h2 className="text-sm font-bold text-slate-800">دستیار مالی</h2>
+          <h2 className="text-sm font-bold text-slate-800">دستیار هوشمند</h2>
           <p className="truncate text-[11px] text-slate-500">همان گفتگوی داشبورد، این‌جا کامل است.</p>
         </div>
       </div>
@@ -388,7 +388,7 @@ export function CopilotPage() {
             }}
             rows={2}
             disabled={isLoading}
-            placeholder="پرسش مالی...  Enter ارسال، Shift+Enter خط جدید"
+            placeholder="پرسش خود را بنویسید...  Enter ارسال، Shift+Enter خط جدید"
             dir="rtl"
             className="max-h-28 min-h-10 flex-1 resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-60"
           />

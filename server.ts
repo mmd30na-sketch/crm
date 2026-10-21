@@ -3002,8 +3002,29 @@ function academyDisplayName(): string {
   try { return String((readDb().settings as any)?.academy_name || '').trim(); } catch { return ''; }
 }
 
-const copilotSystemPrompt = () => [
-  `شما «دستیار هوشمند مالی»${academyDisplayName() ? ` ${academyDisplayName()}` : ' آموزشگاه'} هستید؛ یک دستیار حسابداری فارسی‌زبان، دقیق و حرفه‌ای. کارآموزان این آموزشگاه همه آقا هستند و دوره‌ها آموزش کارت هوشمند (رانندگان و مدیران حمل‌ونقل) است، نه آموزش رانندگی.`,
+/** Rule 7, built from the tools actually offered to this user (non-admins are not told about admin tools). */
+const COPILOT_TOOL_GUIDE: [string, string][] = [
+  ['list_courses', 'قیمت/فهرست دوره‌ها'], ['list_site_registrations', 'ثبت‌نام‌های سایت و در انتظار تأیید'],
+  ['pending_site_registrations', 'فهرست سریع ثبت‌نام‌های در انتظار بررسی'], ['site_registrations_by_status', 'تعداد ثبت‌نام‌های سایت به تفکیک وضعیت'],
+  ['list_leads', 'سرنخ‌ها'], ['get_sales_funnel', 'قیف فروش'], ['list_tasks', 'کارهای کارکنان'],
+  ['list_course_terms', 'دوره‌های در حال برگزاری/شماره دوره و ظرفیت'], ['list_enrollments', 'ثبت‌نام کارآموزان در دوره‌ها و مانده هر ثبت‌نام'],
+  ['list_payments', 'فیش‌ها و دریافتی‌ها'], ['monthly_income', 'درآمد یک ماه شمسی'],
+  ['get_financial_report', 'هزینه‌ها، سود و زیان ماهانه، حساب‌های بانکی و اقساط معوق'], ['list_messaging', 'گفتگوهای پیام‌رسان و کمپین‌ها'],
+  ['list_activity_log', 'سوابق تغییرات و تماس‌ها'], ['search_student', 'جست‌وجوی کارآموز'], ['trainee_count', 'تعداد کل کارآموزان'],
+  ['get_student_financial_summary', 'خلاصه مالی یک کارآموز'], ['get_daily_cashflow', 'گردش روزانه'],
+  ['get_debtors_list', 'بدهکاران'], ['top_debtors', 'بیشترین بدهکاران'], ['get_course_statistics', 'آمار یک دوره'],
+  ['get_site_analytics', 'آمار بازدید سایت (بازدیدکننده، صفحه‌ها، ارجاع‌ها، دستگاه‌ها)'],
+  ['execute_sql_crm', 'پرس‌وجوی SELECT دلخواه روی پایگاه CRM (فقط اگر ابزار دیگری کافی نیست)'],
+  ['run_sql_query', 'پرس‌وجوی SELECT دلخواه (فقط اگر ابزار دیگری کافی نیست)'],
+];
+function copilotToolGuide(tools: any[]): string {
+  const offered = new Set(tools.map((t: any) => t?.function?.name));
+  const parts = COPILOT_TOOL_GUIDE.filter(([n]) => offered.has(n)).map(([n, d]) => `${d} ${n}`);
+  return `۷) راهنمای ابزارها: ${parts.join('؛ ')}.`;
+}
+
+const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
+  `شما «دستیار هوشمند»${academyDisplayName() ? ` ${academyDisplayName()}` : ' آموزشگاه'} هستید؛ دستیار عمومی CRM آموزشگاه، فارسی‌زبان، دقیق و حرفه‌ای، برای امور مالی، کارآموزان، سرنخ‌ها، کلاس‌ها و دوره‌ها، کارهای کارکنان، پیام‌رسان، ثبت‌نام‌های سایت و آمار بازدید سایت. کارآموزان این آموزشگاه همه آقا هستند و دوره‌ها آموزش کارت هوشمند (رانندگان و مدیران حمل‌ونقل) است، نه آموزش رانندگی.`,
   'قوانین کار:',
   '۱) برای هر عدد، آمار، موجودی، بدهی یا گردش مالی حتماً از ابزارهای در دسترس استفاده کنید و هرگز عددی را حدس نزنید.',
   '۲) اگر پرسش کاربر نیازمند داده‌ای است که ابزاری برای آن وجود ندارد، صادقانه بگویید داده در دسترس نیست.',
@@ -3011,7 +3032,7 @@ const copilotSystemPrompt = () => [
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید.',
   '۶) شما فقط می‌خوانید؛ هیچ پیامی ارسال نمی‌کنید و چیزی را تغییر نمی‌دهید. اگر کاربر ارسال پیام خواست، متن پیشنهادی بنویسید و بگویید از بخش «پیام‌رسان» ارسال کند.',
-  '۷) راهنمای ابزارها: قیمت/فهرست دوره‌ها list_courses؛ ثبت‌نام‌های سایت و در انتظار تأیید list_site_registrations؛ سرنخ‌ها list_leads و قیف فروش get_sales_funnel؛ کارهای کارکنان list_tasks؛ دوره‌های در حال برگزاری/شماره دوره و ظرفیت list_course_terms؛ ثبت‌نام کارآموزان در دوره‌ها و مانده هر ثبت‌نام list_enrollments؛ فیش‌ها و دریافتی‌ها list_payments؛ هزینه‌ها، سود و زیان ماهانه، حساب‌های بانکی و اقساط معوق get_financial_report؛ گفتگوهای پیام‌رسان و کمپین‌ها list_messaging؛ سوابق تغییرات و تماس‌ها list_activity_log؛ کارآموز search_student و خلاصه مالی او get_student_financial_summary؛ گردش روزانه get_daily_cashflow؛ بدهکاران get_debtors_list؛ آمار یک دوره get_course_statistics.',
+  copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
   '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
 ].join('\n');
@@ -3755,7 +3776,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const sqlRule = sqlNames.length
     ? `\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
     : '';
-  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() + sqlRule + '\n' + copilotDateRule() }, ...history];
+  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt(tools) + sqlRule + '\n' + copilotDateRule() }, ...history];
 
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   try {
