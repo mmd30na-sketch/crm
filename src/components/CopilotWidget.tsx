@@ -1,6 +1,29 @@
 import React, { createContext, useContext, useRef, useState } from 'react';
 import { Bot, Send, Loader2, PanelRightOpen, ChevronDown, ChevronUp } from 'lucide-react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { getAuthToken } from '../api/client';
+
+/** Assistant replies as Markdown (GFM tables); raw HTML is not rendered (no rehype-raw), links open safely. */
+const MD_COMPONENTS: Components = {
+  p: ({ children }) => <p className="my-1">{children}</p>,
+  ul: ({ children }) => <ul className="my-1 list-disc pr-5">{children}</ul>,
+  ol: ({ children }) => <ol className="my-1 list-decimal pr-5">{children}</ol>,
+  li: ({ children }) => <li className="my-0.5">{children}</li>,
+  strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+  h1: ({ children }) => <h3 className="my-1 text-sm font-bold">{children}</h3>,
+  h2: ({ children }) => <h3 className="my-1 text-sm font-bold">{children}</h3>,
+  h3: ({ children }) => <h4 className="my-1 text-sm font-bold">{children}</h4>,
+  a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer nofollow" className="text-sky-700 underline">{children}</a>,
+  code: ({ children }) => <code dir="ltr" className="rounded bg-slate-200 px-1 font-mono text-[12px]">{children}</code>,
+  table: ({ children }) => <div className="my-2 overflow-x-auto"><table className="w-full border-collapse text-xs">{children}</table></div>,
+  th: ({ children }) => <th className="border border-slate-300 bg-slate-200/60 px-2 py-1 text-right font-bold">{children}</th>,
+  td: ({ children }) => <td className="border border-slate-300 px-2 py-1 text-right">{children}</td>,
+};
+
+function AssistantMarkdown({ text }: { text: string }) {
+  return <div dir="rtl" className="text-right"><ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS} skipHtml>{text}</ReactMarkdown></div>;
+}
 
 interface Message {
   role: 'user' | 'assistant';
@@ -147,13 +170,13 @@ function MessageList({
             </div>
           )}
           <div
-            className={`whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-6 ${
+            className={`min-w-0 rounded-2xl px-3 py-2 text-sm leading-6 ${
               msg.role === 'user'
-                ? 'rounded-bl-sm bg-sky-600 text-white'
+                ? 'whitespace-pre-wrap rounded-bl-sm bg-sky-600 text-white'
                 : 'rounded-br-sm bg-slate-100 text-slate-800'
             }`}
           >
-            {msg.content}
+            {msg.role === 'assistant' ? <AssistantMarkdown text={msg.content} /> : msg.content}
           </div>
         </div>
       ))}

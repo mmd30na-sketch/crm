@@ -300,7 +300,7 @@ export function registerPhase4(app: express.Express, deps: Phase4Deps) {
     if (!l) return res.status(404).json({ error: 'سرنخ پیدا نشد' });
     if (l.converted_student_id) return res.json({ student_id: l.converted_student_id, alreadyConverted: true });
     const nationalCode = deps.sanitize(req.body?.national_code ?? l.national_code, 10).replace(/\D/g, '');
-    if (!/^\d{10}$/.test(nationalCode)) return res.status(400).json({ error: 'برای تبدیل به هنرجو، کد ملی ۱۰ رقمی لازم است.' });
+    if (!/^\d{10}$/.test(nationalCode)) return res.status(400).json({ error: 'برای تبدیل به کارآموز، کد ملی ۱۰ رقمی لازم است.' });
     const { student, alreadyExists } = await db.insertStudent({ first_name: l.first_name || '', last_name: l.last_name, phone_number: l.phone_number, national_code: nationalCode });
     const sid = Number(student?.id ?? student?.student_id);
     await db.sqlExec("UPDATE leads SET status = 'converted', converted_student_id = ?, national_code = COALESCE(national_code, ?) WHERE lead_id = ?", [sid, nationalCode, id]);

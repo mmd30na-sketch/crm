@@ -299,8 +299,8 @@ export default function StudentsList({
     const fin = getStudentFinance(student.id);
     setMessagingStudent(student);
     setMessageText(fin.debt > 0
-      ? `هنرجوی گرامی ${student.first_name} ${student.last_name}؛ با سلام، خواهشمند است نسبت به تسویه مانده بدهی شهریه خود به مبلغ ${formatToman(fin.debt)} اقدام فرمایید.\nآموزشگاه رانندگی کارلا`
-      : `هنرجوی گرامی ${student.first_name} ${student.last_name}؛ پرونده آموزشی و مالی شما با موفقیت تسویه گردید.\nآموزشگاه رانندگی کارلا`);
+      ? `آقای ${student.first_name} ${student.last_name}؛ با سلام، خواهشمند است نسبت به تسویه مانده بدهی شهریه خود به مبلغ ${formatToman(fin.debt)} اقدام فرمایید.`
+      : `آقای ${student.first_name} ${student.last_name}؛ پرونده آموزشی و مالی شما با موفقیت تسویه گردید.`);
     setMessageSent(false); setMessageError(null); setMessageResult('');
   };
 

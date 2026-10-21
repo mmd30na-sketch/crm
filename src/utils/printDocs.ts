@@ -142,7 +142,6 @@ export function paymentSummary(tuition: number, paid: number) {
   return { tuition: t, paid: p, remaining, settled, statusText: settled ? 'تسویه کامل' : `مانده: ${formatAmount(remaining)} تومان` };
 }
 
-export const DEFAULT_ACADEMY_NAME = 'آموزشگاه رانندگی کارلا';
 
 export function buildDocData(input: BuildDocInput): DocData {
   const { student, enrollment, course, settings, images } = input;
@@ -153,7 +152,7 @@ export function buildDocData(input: BuildDocInput): DocData {
   const paid = input.paid ?? (input.payments ?? []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const money = paymentSummary(tuition, paid);
   const courseNumber = enrollment.course_number != null && String(enrollment.course_number) !== '' ? String(enrollment.course_number) : '';
-  const academyName = String(settings?.academy_name ?? '').trim() || DEFAULT_ACADEMY_NAME;
+  const academyName = String(settings?.academy_name ?? '').trim();
   const courseTitle = String(course?.title ?? '').trim();
   const nationalCode = String(student.national_code ?? '').trim();
   return {

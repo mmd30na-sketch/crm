@@ -81,7 +81,7 @@ export default function BulkMessaging({ courses }: { courses: Course[] }) {
           <div className="grid grid-cols-2 gap-2">
             <label className="space-y-1">گروه
               <select value={filters.target} onChange={(e) => setFilters({ target: e.target.value as any, channel: filters.channel })} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
-                <option value="students">هنرجویان</option><option value="term">همه افراد یک دوره</option><option value="leads">سرنخ‌ها</option>
+                <option value="students">کارآموزان</option><option value="term">همه افراد یک دوره</option><option value="leads">سرنخ‌ها</option>
               </select></label>
             <label className="space-y-1">کانال
               <select value={channel} onChange={(e) => setFilters({ ...filters, channel: e.target.value as p4.CampaignChannel })} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 bg-white">

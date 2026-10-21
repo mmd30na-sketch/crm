@@ -27,7 +27,7 @@ export default function LoginScreen({ onLoggedIn }: { onLoggedIn: (user?: { user
       <form onSubmit={handleSubmit} className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-2xl p-6 shadow-2xl">
         <div className="text-center mb-6">
           <div className="mx-auto mb-3 h-12 w-12 rounded-2xl bg-sky-500 text-white flex items-center justify-center font-black text-xl">C</div>
-          <h1 className="text-white text-lg font-bold">Carla CRM</h1>
+          <h1 className="text-white text-lg font-bold">سامانه CRM</h1>
           <p className="text-slate-400 text-xs mt-1">ورود به پنل آموزشگاه</p>
         </div>
         {error && (

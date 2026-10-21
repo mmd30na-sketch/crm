@@ -160,12 +160,12 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
         code = check.code;
       }
       const res = await convertLead(selectedLead.id, code);
-      setConvertMsg(`به هنرجو تبدیل شد (پرونده #${res.student_id})`);
+      setConvertMsg(`به کارآموز تبدیل شد (پرونده #${res.student_id})`);
       setSelectedLead(prev => prev ? { ...prev, status: 'converted', converted_student_id: res.student_id } : prev);
       props.onConverted?.(res.student_id);
       load();
     } catch (err: any) {
-      setConvertError(err?.message || 'تبدیل به هنرجو ناموفق بود.');
+      setConvertError(err?.message || 'تبدیل به کارآموز ناموفق بود.');
     } finally {
       setConverting(false);
     }
@@ -362,7 +362,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
 
                 {selectedLead.status === 'converted' ? (
                   <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
-                    تبدیل‌شده به هنرجو #{selectedLead.converted_student_id}
+                    تبدیل‌شده به کارآموز #{selectedLead.converted_student_id}
                   </span>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -372,7 +372,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
                     )}
                     <button type="button" disabled={converting} onClick={doConvert}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 inline-flex items-center gap-1 cursor-pointer">
-                      <UserCheck className="w-3.5 h-3.5" />{converting ? 'در حال تبدیل...' : 'تبدیل به هنرجو'}
+                      <UserCheck className="w-3.5 h-3.5" />{converting ? 'در حال تبدیل...' : 'تبدیل به کارآموز'}
                     </button>
                   </div>
                 )}

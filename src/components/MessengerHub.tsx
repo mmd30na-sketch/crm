@@ -92,25 +92,25 @@ const DEFAULT_TEMPLATES = [
   {
     id: 'welcome',
     title: 'خوش‌آمدگویی و ثبت‌نام',
-    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. کلاس‌های آیین‌نامه از شنبه شروع می‌شود. کارلا CRM',
+    body: 'آقای [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. زمان شروع کلاس‌ها به شما اطلاع داده می‌شود.',
     color: 'sky',
   },
   {
     id: 'debt_warning',
     title: 'یادآوری بدهی مالی',
-    body: 'کارآموز گرامی [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید. آموزشگاه کارلا',
+    body: 'آقای [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید.',
     color: 'rose',
   },
   {
     id: 'exam_schedule',
     title: 'زمان‌بندی آزمون',
-    body: 'هنرجو [نام] [خانوادگی]؛ آزمون عملی رانندگی شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
+    body: 'آقای [نام] [خانوادگی]؛ آزمون شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
     color: 'teal',
   },
   {
     id: 'class_change',
-    title: 'تغییر زمان کلاس عملی',
-    body: 'هنرجوی گرامی [نام]؛ جلسه کلاس عملی رانندگی شما تغییر یافت. جهت هماهنگی زمان جدید با مربی تماس بگیرید.',
+    title: 'تغییر زمان کلاس',
+    body: 'آقای [نام]؛ زمان جلسه کلاس شما تغییر یافت. جهت هماهنگی زمان جدید با آموزشگاه تماس بگیرید.',
     color: 'amber',
   },
 ];
@@ -486,7 +486,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-black text-slate-900">مرکز ارتباطی و پیام‌رسان کارلا</h2>
+              <h2 className="text-base font-black text-slate-900">مرکز ارتباطی و پیام‌رسان</h2>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">گفتگوهای روبیکا و ارسال پیامک تکی</p>
           </div>
@@ -545,7 +545,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="جستجوی گفتگوی هنرجو..."
+                  placeholder="جستجوی گفتگوی کارآموز..."
                   value={chatSearch}
                   onChange={e => setChatSearch(e.target.value)}
                   className="w-full pr-8 pl-3 py-1.5 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:border-sky-400 focus:bg-white transition"
@@ -617,7 +617,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                         <ChannelBadge channel={thread.channel} />
                         {thread.person && (
                           <span title={thread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${thread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[thread.person.kind] || 'مرتبط'}
+                            {({ student: 'کارآموز', registration: 'ثبت‌نام', legacy: 'کارآموز قدیمی', lead: 'سرنخ' } as Record<string, string>)[thread.person.kind] || 'مرتبط'}
                           </span>
                         )}
                       </div>
@@ -651,7 +651,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                         <ChannelBadge channel={activeThread.channel} />
                         {activeThread.person && (
                           <span title={activeThread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${activeThread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[activeThread.person.kind] || 'مرتبط'}
+                            {({ student: 'کارآموز', registration: 'ثبت‌نام', legacy: 'کارآموز قدیمی', lead: 'سرنخ' } as Record<string, string>)[activeThread.person.kind] || 'مرتبط'}
                           </span>
                         )}
                       </div>
@@ -687,7 +687,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                           <Avatar name={activeThread.senderName} className="w-7 h-7 rounded-lg border border-slate-200 mt-1 text-[11px]" />
                         ) : (
                           <div className="w-7 h-7 rounded-lg bg-sky-600 text-white font-bold text-[10px] flex items-center justify-center mt-1 shrink-0 shadow-xs">
-                            کارلا
+                            CRM
                           </div>
                         )}
 
@@ -846,7 +846,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* Select Student */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">انتخاب هنرجو از دفترچه پرونده‌ها</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">انتخاب کارآموز از دفترچه پرونده‌ها</label>
                     <div className="relative">
                       <User className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <select

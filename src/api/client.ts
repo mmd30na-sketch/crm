@@ -667,7 +667,7 @@ export async function ocrNationalCard(file: File): Promise<NationalCardOcrResult
 function normaliseReceiptSettings(raw: any): ReceiptSettings {
   const d = raw?.data ?? raw ?? {};
   return {
-    academy_name: d.academy_name ?? d.name ?? 'آموزشگاه رانندگی کارلا',
+    academy_name: d.academy_name ?? d.name ?? '',
     logo_url:     d.logo_url ?? '',
     phone_number: d.phone_number ?? d.phone ?? '',
     address:      d.address ?? '',

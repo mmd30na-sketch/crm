@@ -306,11 +306,11 @@ interface DatabaseSchema {
 // Initial Seed Data
 const initialDb: DatabaseSchema = {
   settings: {
-    academy_name: 'آموزشگاه رانندگی کارلا (Carla)',
+    academy_name: '',
     logo_url: '',
     phone_number: '',
     address: '',
-    header_text: 'رسید رسمی ثبت‌نام کارآموز - سیستم جامع مدیریت رانندگی کارلا',
+    header_text: '',
     footer_text: 'خواهشمند است جهت هماهنگی کلاس‌ها و آزمون‌ها ۲۴ ساعت قبل با آموزشگاه تماس بگیرید.',
   },
   courses: [
@@ -1671,25 +1671,25 @@ const DEFAULT_MESSAGE_TEMPLATES = [
   {
     id: 'welcome',
     title: 'خوش‌آمدگویی و ثبت‌نام',
-    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. کلاس‌های آیین‌نامه از شنبه شروع می‌شود. کارلا CRM',
+    body: 'آقای [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. زمان شروع کلاس‌ها به شما اطلاع داده می‌شود.',
     color: 'sky',
   },
   {
     id: 'debt_warning',
     title: 'یادآوری بدهی مالی',
-    body: 'کارآموز گرامی [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید. آموزشگاه کارلا',
+    body: 'آقای [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید.',
     color: 'rose',
   },
   {
     id: 'exam_schedule',
     title: 'زمان‌بندی آزمون',
-    body: 'هنرجو [نام] [خانوادگی]؛ آزمون عملی رانندگی شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
+    body: 'آقای [نام] [خانوادگی]؛ آزمون شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
     color: 'teal',
   },
   {
     id: 'class_change',
-    title: 'تغییر زمان کلاس عملی',
-    body: 'هنرجوی گرامی [نام]؛ جلسه کلاس عملی رانندگی شما تغییر یافت. جهت هماهنگی زمان جدید با مربی تماس بگیرید.',
+    title: 'تغییر زمان کلاس',
+    body: 'آقای [نام]؛ زمان جلسه کلاس شما تغییر یافت. جهت هماهنگی زمان جدید با آموزشگاه تماس بگیرید.',
     color: 'amber',
   },
 ];
@@ -2177,11 +2177,10 @@ async function notifyRegistration(student: any, course: any) {
     if (!student || !g.sms_auto_register || !g.sms_api_key || !g.sms_sender_line) return;
     const phone = normalizeMobile(student.phone_number);
     if (!/^09\d{9}$/.test(phone)) return;
-    let academy = 'آموزشگاه';
-    try { academy = (readDb().settings as any)?.academy_name || academy; } catch {}
+    const academy = academyDisplayName();
     await deliverMessage({
       channel: 'sms', recipient: phone, studentId: student.id,
-      message: `${student.first_name} ${student.last_name} عزیز، ثبت‌نام شما در دوره «${course?.title || ''}» با موفقیت انجام شد.\n${academy}`,
+      message: `آقای ${student.first_name} ${student.last_name}، ثبت‌نام شما در دوره «${course?.title || ''}» با موفقیت انجام شد.${academy ? `\n${academy}` : ''}`,
     });
   } catch (err: any) { console.warn('Registration SMS failed:', err?.message || err); }
 }
@@ -2994,8 +2993,13 @@ const COPILOT_API_KEY = String(process.env.COPILOT_API_KEY || '').trim();
 const COPILOT_MODEL = String(process.env.COPILOT_MODEL || 'gpt-4o-mini').trim();
 const COPILOT_MAX_ITERATIONS = 6;
 
-const COPILOT_SYSTEM_PROMPT = [
-  'شما «دستیار هوشمند مالی» آموزشگاه کارلا هستید؛ یک دستیار حسابداری فارسی‌زبان، دقیق و حرفه‌ای.',
+/** Academy display name from the CRM settings only (no hardcoded default); '' when not set. */
+function academyDisplayName(): string {
+  try { return String((readDb().settings as any)?.academy_name || '').trim(); } catch { return ''; }
+}
+
+const copilotSystemPrompt = () => [
+  `شما «دستیار هوشمند مالی»${academyDisplayName() ? ` ${academyDisplayName()}` : ' آموزشگاه'} هستید؛ یک دستیار حسابداری فارسی‌زبان، دقیق و حرفه‌ای. کارآموزان این آموزشگاه همه آقا هستند و دوره‌ها آموزش کارت هوشمند (رانندگان و مدیران حمل‌ونقل) است، نه آموزش رانندگی.`,
   'قوانین کار:',
   '۱) برای هر عدد، آمار، موجودی، بدهی یا گردش مالی حتماً از ابزارهای در دسترس استفاده کنید و هرگز عددی را حدس نزنید.',
   '۲) اگر پرسش کاربر نیازمند داده‌ای است که ابزاری برای آن وجود ندارد، صادقانه بگویید داده در دسترس نیست.',
@@ -3660,7 +3664,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'پیام کاربر ارسال نشده است.' });
   }
 
-  const messages: any[] = [{ role: 'system', content: COPILOT_SYSTEM_PROMPT }, ...history];
+  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() }, ...history];
 
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   try {

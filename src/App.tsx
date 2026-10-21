@@ -49,7 +49,7 @@ const NAV_ITEMS = [
   {
     id: 'students',
     label: 'کارآموزان',
-    sublabel: 'مدیریت هنرجویان',
+    sublabel: 'مدیریت کارآموزان',
     icon: Users,
     color: 'teal',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
@@ -88,7 +88,7 @@ const NAV_ITEMS = [
   },
   {
     id: 'messenger',
-    label: 'پیام‌رسان کارلا',
+    label: 'پیام‌رسان',
     sublabel: 'مرکز ارتباطی',
     icon: MessageSquare,
     color: 'rose',
@@ -331,7 +331,7 @@ export default function App() {
               <span className="text-white font-black text-base leading-none">C</span>
             </div>
             <div>
-              <h1 className="text-white text-base font-bold tracking-tight leading-tight">Carla CRM</h1>
+              <h1 className="text-white text-base font-bold tracking-tight leading-tight">سامانه CRM</h1>
             </div>
           </div>
         </div>

@@ -201,7 +201,7 @@ export default function SupervisorDashboard({
     return {
       name: course.title.length > 14 ? course.title.slice(0, 13) + '…' : course.title,
       fullTitle: course.title,
-      'تعداد هنرجو': count,
+      'تعداد کارآموز': count,
     };
   });
 
@@ -218,7 +218,7 @@ export default function SupervisorDashboard({
             <Sparkles className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-base font-black text-slate-900">داشبورد نظارت و مدیریت ارشد کارلا</h2>
+            <h2 className="text-base font-black text-slate-900">داشبورد نظارت و مدیریت ارشد</h2>
             <p className="text-xs text-slate-400 mt-0.5">خلاصه آماری ثبت‌نام‌ها، درآمد نقدینگی، توزیع دوره‌ها و تقویم آموزشی</p>
           </div>
         </div>
@@ -400,7 +400,7 @@ export default function SupervisorDashboard({
                 <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={50} />
                 <YAxis stroke="#94a3b8" tick={{ fontSize: 10 }} allowDecimals={false} />
                 <Tooltip formatter={(value: any, name: any, props: any) => [value, props.payload.fullTitle]} />
-                <Bar dataKey="تعداد هنرجو" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={35} />
+                <Bar dataKey="تعداد کارآموز" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={35} />
               </BarChart>
             </ResponsiveContainer>
           </div>

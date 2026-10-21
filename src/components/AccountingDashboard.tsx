@@ -241,7 +241,7 @@ export default function AccountingDashboard({
               const stu = new Map(students.map((st) => [st.id, st]));
               downloadCsv<Payment>(`payments-${new Date().toISOString().slice(0, 10)}`, filteredPayments, [
                 { header: 'تاریخ', value: (p) => p.pay_date_jalali },
-                { header: 'هنرجو', value: (p) => { const st = stu.get(p.student_id); return st ? `${st.first_name} ${st.last_name}` : p.student_id; } },
+                { header: 'کارآموز', value: (p) => { const st = stu.get(p.student_id); return st ? `${st.first_name} ${st.last_name}` : p.student_id; } },
                 { header: 'کد ملی', value: (p) => stu.get(p.student_id)?.national_code },
                 { header: 'مبلغ', value: (p) => p.amount }, { header: 'روش', value: (p) => p.pay_method },
                 { header: 'نوع', value: (p) => p.payment_kind }, { header: 'توضیحات', value: (p) => p.description },

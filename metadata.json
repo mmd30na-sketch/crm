@@ -1,6 +1,6 @@
 {
-  "name": "Remix Carla CRM",
-  "description": "سامانه مدیریت جامع هنرجویان، امور مالی، ثبت‌نام و دوره‌های آموزشگاه رانندگی کارلا به همراه اسکن هوشمند با هوش مصنوعی",
+  "name": "CRM",
+  "description": "سامانه مدیریت کارآموزان، امور مالی، ثبت‌نام و دوره‌های آموزشگاه",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

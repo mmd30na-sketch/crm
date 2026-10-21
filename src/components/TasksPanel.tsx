@@ -94,7 +94,7 @@ export default function TasksPanel({ username, isAdmin, onCountsChange }: Props)
                 <td className="p-3">{nameOf(t.assignee_username)}</td>
                 <td className={`p-3 whitespace-nowrap ${t.overdue ? 'text-rose-700 font-bold' : ''}`}>{fmt(t.due_at)}{t.overdue && <span className="mr-1 text-[10px] bg-rose-600 text-white rounded px-1">عقب‌افتاده</span>}</td>
                 <td className="p-3"><span className={`px-2 py-0.5 rounded ${PRIO_CLS[t.priority]}`}>{p4.TASK_PRIORITY_LABEL[t.priority]}</span></td>
-                <td className="p-3">{t.entity_type ? `${t.entity_type === 'lead' ? 'سرنخ' : 'هنرجو'}: ${t.entity_name || `#${t.entity_id}`}` : '—'}</td>
+                <td className="p-3">{t.entity_type ? `${t.entity_type === 'lead' ? 'سرنخ' : 'کارآموز'}: ${t.entity_name || `#${t.entity_id}`}` : '—'}</td>
                 <td className="p-3">
                   <select value={t.status} onChange={(e) => quickStatus(t, e.target.value as p4.TaskStatus)} className="border border-slate-200 rounded-lg px-1.5 py-1 bg-white">
                     {Object.entries(p4.TASK_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -131,7 +131,7 @@ export default function TasksPanel({ username, isAdmin, onCountsChange }: Props)
                 </select></label>
               <label className="space-y-1">مرتبط با
                 <select value={draft.entity_type || ''} onChange={(e) => setDraft({ ...draft, entity_type: (e.target.value || null) as any })} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
-                  <option value="">هیچ‌کدام</option><option value="student">هنرجو</option><option value="lead">سرنخ</option>
+                  <option value="">هیچ‌کدام</option><option value="student">کارآموز</option><option value="lead">سرنخ</option>
                 </select></label>
               <label className="space-y-1">شماره پرونده
                 <input type="number" disabled={!draft.entity_type} value={draft.entity_id || ''} onChange={(e) => setDraft({ ...draft, entity_id: Number(e.target.value) || null })} className="w-full border border-slate-200 rounded-lg px-2 py-1.5" dir="ltr" /></label>
