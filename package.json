@@ -39,6 +39,7 @@
     "node-sql-parser": "^5.4.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "react-easy-crop": "^5.5.7",
     "react-is": "^19.2.8",
     "react-markdown": "^10.1.0",
     "recharts": "^3.10.0",

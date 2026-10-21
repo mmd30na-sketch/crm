@@ -317,7 +317,7 @@ export async function deleteStudentCascade(studentId: number): Promise<{ success
  */
 export async function uploadStudentPhotos(
   studentId: number,
-  files: { idCard?: File | null; personal?: File | null },
+  files: { idCard?: File | null; personal?: File | null; idCardOriginal?: File | null; personalOriginal?: File | null },
   meta?: { last_name?: string; course_number?: number | null }
 ): Promise<Student> {
   const formData = new FormData();
@@ -326,6 +326,8 @@ export async function uploadStudentPhotos(
   if (meta?.course_number != null) formData.append('course_number', String(meta.course_number));
   if (files.idCard)   formData.append('idCard',    files.idCard);
   if (files.personal) formData.append('personal',  files.personal);
+  if (files.idCardOriginal)   formData.append('idCardOriginal',   files.idCardOriginal);
+  if (files.personalOriginal) formData.append('personalOriginal', files.personalOriginal);
 
   const res = await apiFetch(`/students/${studentId}/photos`, {
     method: 'POST',

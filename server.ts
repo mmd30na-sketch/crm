@@ -130,9 +130,11 @@ const studentPhotoStorage = multer.diskStorage({
   filename: (req, file, cb) => {
     const lastName = safeSegment(req.body.last_name, 'Student');
     const studentId = safeSegment(req.params.id || req.body.student_id, String(Date.now()));
-    const isIdCard = file.fieldname === 'idCard' || file.fieldname === 'id_card_photo';
+    const isIdCard = file.fieldname === 'idCard' || file.fieldname === 'id_card_photo' || file.fieldname === 'idCardOriginal';
+    // Originals are kept on disk next to the cropped file (no DB column), e.g. Name_12_Photo_orig.jpg.
+    const orig = file.fieldname.endsWith('Original') ? '_orig' : '';
     const ext = (path.extname(file.originalname) || '.jpg').toLowerCase();
-    cb(null, freeFileName(studentUploadDir(req), `${lastName}_${studentId}_${isIdCard ? 'ID' : 'Photo'}`, ext));
+    cb(null, freeFileName(studentUploadDir(req), `${lastName}_${studentId}_${isIdCard ? 'ID' : 'Photo'}${orig}`, ext));
   },
 });
 class UploadError extends Error {
@@ -177,6 +179,9 @@ function unlinkStoredFile(publicPath: unknown, baseDir: string) {
 function removeStudentFiles(student: any, enrollments: any[]) {
   for (const key of ['id_card_photo_url', 'personal_photo_url', 'national_card_path', 'personal_photo_path']) {
     unlinkStoredFile(student?.[key], studentFilesBase);
+    // Uncropped original saved beside the photo (see studentPhotoStorage).
+    const orig = typeof student?.[key] === 'string' ? student[key].replace(/(_ID|_Photo)(\.[a-z]+)$/i, '$1_orig$2') : '';
+    if (orig && orig !== student[key]) unlinkStoredFile(orig, studentFilesBase);
   }
   for (const e of enrollments) {
     for (const kind of DOC_KINDS) {
@@ -191,7 +196,7 @@ function removeStudentFiles(student: any, enrollments: any[]) {
 const uploadStudentMedia = multer({
   storage: studentPhotoStorage,
   fileFilter: imageFileFilter,
-  limits: { fileSize: 8 * 1024 * 1024, files: 2 },
+  limits: { fileSize: 8 * 1024 * 1024, files: 4 },
 });
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -2167,7 +2172,9 @@ const requireExistingStudent = asyncHandler(async (req, res, next) => {
 
 app.post('/api/students/:id/photos', requireExistingStudent, uploadStudentMedia.fields([
   { name: 'idCard', maxCount: 1 },
-  { name: 'personal', maxCount: 1 }
+  { name: 'personal', maxCount: 1 },
+  { name: 'idCardOriginal', maxCount: 1 },
+  { name: 'personalOriginal', maxCount: 1 }
 ]), async (req, res) => {
   const files = req.files as { [fieldname: string]: Express.Multer.File[] };
   try {

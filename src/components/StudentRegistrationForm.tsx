@@ -28,6 +28,7 @@ import { checkScanner, scanWithScanner, ScannerState } from '../api/scanner';
 import { analyzeCardImage, rotateImage90, CardImageQuality } from '../utils/cardImageQuality';
 import { jalaliToday } from '../utils/normalize';
 import ModalPortal from './ModalPortal';
+import PhotoCropModal from './PhotoCropModal';
 import RegistrationDocsPanel, { DocsInput, toBuildInput } from './print/RegistrationDocsPanel';
 import { toDataUrl, uploadAllDocs } from './print/docService';
 import { buildDocData, downloadFileName, DOC_LABELS } from '../utils/printDocs';
@@ -333,6 +334,10 @@ export default function StudentRegistrationForm({
 
   const [personalPhotoFile,    setPersonalPhotoFile]    = useState<File | null>(null);
   const [personalPhotoPreview, setPersonalPhotoPreview] = useState<string | null>(null);
+  /** Untouched originals, kept so staff can re-crop and so the server keeps a copy next to the cropped file. */
+  const [personalPhotoOriginal, setPersonalPhotoOriginal] = useState<File | null>(null);
+  const [idCardOriginal, setIdCardOriginal] = useState<File | null>(null);
+  const [cropTarget, setCropTarget] = useState<'idCard' | 'personal' | null>(null);
 
   /* Camera Modal State */
   const [activeCameraTarget, setActiveCameraTarget] = useState<'idCard' | 'personal' | null>(null);
@@ -505,10 +510,12 @@ export default function StudentRegistrationForm({
       const file = new File([blob], `${target}_capture.jpg`, { type: 'image/jpeg' });
       const previewUrl = URL.createObjectURL(blob);
       if (target === 'idCard') {
+        setIdCardOriginal(file);
         setIdCardFile(file);
         setIdCardPreview(previewUrl);
         void prepareIdCard(file);
       } else {
+        setPersonalPhotoOriginal(file);
         setPersonalPhotoFile(file);
         setPersonalPhotoPreview(previewUrl);
       }
@@ -562,7 +569,8 @@ export default function StudentRegistrationForm({
     void runOcr(file);
   };
 
-  const assignIdCard = (file: File) => {
+  const assignIdCard = (file: File, keepOriginal = false) => {
+    if (!keepOriginal) setIdCardOriginal(file);
     setIdCardFile(file);
     setIdCardPreview(URL.createObjectURL(file));
     void prepareIdCard(file);
@@ -592,9 +600,23 @@ export default function StudentRegistrationForm({
   };
 
   const assignPersonalPhoto = async (file: File) => {
+    // Auto center-crop is only a first guess; open the manual cropper on the original right away.
+    setPersonalPhotoOriginal(file);
     const cropped = await cropImageFileToRatio(file, PHOTO_3X4_RATIO);
     setPersonalPhotoFile(cropped);
     setPersonalPhotoPreview(URL.createObjectURL(cropped));
+    setCropTarget('personal');
+  };
+
+  const applyManualCrop = (cropped: File) => {
+    const target = cropTarget;
+    setCropTarget(null);
+    if (target === 'personal') {
+      setPersonalPhotoFile(cropped);
+      setPersonalPhotoPreview(URL.createObjectURL(cropped));
+    } else if (target === 'idCard') {
+      assignIdCard(cropped, true);
+    }
   };
 
   /* OCR handler */
@@ -705,7 +727,9 @@ export default function StudentRegistrationForm({
           try {
             const uploaded = await api.uploadStudentPhotos(
               studentObj.id,
-              { idCard: idCardFile, personal: personalPhotoFile },
+              { idCard: idCardFile, personal: personalPhotoFile,
+                idCardOriginal: idCardOriginal !== idCardFile ? idCardOriginal : null,
+                personalOriginal: personalPhotoOriginal !== personalPhotoFile ? personalPhotoOriginal : null },
               { last_name: lastName, course_number: courseNumber },
             );
             studentObj = { ...studentObj, id_card_photo_url: uploaded.id_card_photo_url ?? studentObj.id_card_photo_url, personal_photo_url: uploaded.personal_photo_url ?? studentObj.personal_photo_url };
@@ -744,7 +768,9 @@ export default function StudentRegistrationForm({
           try {
             const uploaded = await api.uploadStudentPhotos(
               studentObj.id,
-              { idCard: idCardFile, personal: personalPhotoFile },
+              { idCard: idCardFile, personal: personalPhotoFile,
+                idCardOriginal: idCardOriginal !== idCardFile ? idCardOriginal : null,
+                personalOriginal: personalPhotoOriginal !== personalPhotoFile ? personalPhotoOriginal : null },
               { last_name: lastName, course_number: courseNumber },
             );
             studentObj = {
@@ -988,7 +1014,7 @@ export default function StudentRegistrationForm({
                 
                 <div className={`w-full max-w-lg mx-auto aspect-[85.6/53.98] rounded-[14px] border-2 overflow-hidden mb-3 flex items-center justify-center ${idCardPreview ? 'border-sky-400 bg-white' : 'border-dashed border-sky-300 bg-sky-50/50'}`}>
                   {idCardPreview ? (
-                    <img src={idCardPreview} alt="کارت ملی" className="w-full h-full object-cover" />
+                    <img src={idCardPreview} alt="کارت ملی" className="w-full h-full object-contain" />
                   ) : (
                     <div className="text-center text-sky-400 px-4">
                       <CreditCard className="w-10 h-10 mx-auto mb-1" />
@@ -997,6 +1023,12 @@ export default function StudentRegistrationForm({
                     </div>
                   )}
                 </div>
+                {idCardOriginal && (
+                  <button type="button" onClick={() => setCropTarget('idCard')}
+                    className="mb-2 w-full py-2 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-1.5">
+                    <RotateCw className="w-3.5 h-3.5" />برش و چرخش دستی
+                  </button>
+                )}
                 <input type="file" id="idCardFirstUpload" accept="image/*"
                   onChange={e => { const f = e.target.files?.[0]; e.target.value=''; if (f) assignIdCard(f); }} className="hidden" />
                 {isMobile ? (
@@ -1094,6 +1126,21 @@ export default function StudentRegistrationForm({
                     </div>
                   )}
                 </div>
+                {personalPhotoOriginal && (
+                  <button type="button" onClick={() => setCropTarget('personal')}
+                    className="mb-2 w-full py-2 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 flex items-center justify-center gap-1.5">
+                    <RotateCw className="w-3.5 h-3.5" />برش و چرخش دستی
+                  </button>
+                )}
+                {cropTarget && (cropTarget === 'personal' ? personalPhotoOriginal : idCardOriginal) && (
+                  <PhotoCropModal
+                    file={(cropTarget === 'personal' ? personalPhotoOriginal : idCardOriginal)!}
+                    aspect={cropTarget === 'personal' ? PHOTO_3X4_RATIO : IRAN_ID_CARD_RATIO}
+                    title={cropTarget === 'personal' ? 'برش عکس پرسنلی ۳×۴' : 'برش کارت ملی'}
+                    onCancel={() => setCropTarget(null)}
+                    onDone={applyManualCrop}
+                  />
+                )}
                 <input type="file" id="personalPhotoFirstUpload" accept="image/*"
                   onChange={e => { const f = e.target.files?.[0]; e.target.value=''; if (f) void assignPersonalPhoto(f); }} className="hidden" />
                 {isMobile ? (
