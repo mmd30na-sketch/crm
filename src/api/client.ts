@@ -361,6 +361,9 @@ export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
     source: r.source ?? 'website',
     student_id: r.student_id ?? null,
     created_at: r.created_at,
+    approved_at: r.approved_at ?? null,
+    paid_toman: r.paid_toman,
+    paid_ref: r.paid_ref ?? null,
   }));
 }
 

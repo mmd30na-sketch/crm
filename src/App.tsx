@@ -15,6 +15,7 @@ import {
   Megaphone,
   CalendarRange,
   Bot,
+  History,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -33,6 +34,7 @@ import LeadsPanel from './components/LeadsPanel';
 import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
+import SiteRequestsHistory from './components/SiteRequestsHistory';
 import { taskSummary } from './api/phase4';
 
 const NAV_ITEMS = [
@@ -99,6 +101,14 @@ const NAV_ITEMS = [
     sublabel: 'تماس‌گیرندگان و پیگیری',
     icon: Contact,
     color: 'teal',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'site-requests',
+    label: 'تاریخچه درخواست‌های سایت',
+    sublabel: 'همه ثبت‌نام‌های آنلاین',
+    icon: History,
+    color: 'purple',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -542,6 +552,9 @@ export default function App() {
               )}
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />
+              )}
+              {activeTab === 'site-requests' && (role === 'admin' || role === 'cashier') && (
+                <SiteRequestsHistory courses={courses} />
               )}
               {activeTab === 'tasks' && currentUser && (
                 <TasksPanel username={currentUser.username} isAdmin={role === 'admin'} onCountsChange={refreshTaskCounts} />
