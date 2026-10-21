@@ -145,6 +145,11 @@ function capRows(rows: any[]) {
   return { rows: out, truncated: truncatedRows || out.length < Math.min(rows.length, MAX_ROWS) };
 }
 
+/** Audit entry for a query that passed validation but failed in the database: logged as not allowed, with the error. */
+export function executionErrorAudit(db: string, sql: string, msg: string, ms: number | null) {
+  return { db, sql, allowed: false, reason: `execution error: ${String(msg).slice(0, 300)}`, rows: null, ms };
+}
+
 export async function runCopilotSql(
   dbArg: unknown, sqlArg: unknown,
   audit: (e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) => Promise<void>,
@@ -176,7 +181,7 @@ export async function runCopilotSql(
   } catch (e: any) {
     const ms = Date.now() - t0;
     const msg = String(e?.sqlMessage || e?.message || e).slice(0, 300);
-    await audit({ db, sql: v.sql, allowed: true, reason: `execution error: ${msg}`, rows: null, ms });
+    await audit(executionErrorAudit(db, v.sql, msg, ms));
     return { error: `اجرای پرس‌وجو ناموفق بود: ${msg}` };
   }
 }

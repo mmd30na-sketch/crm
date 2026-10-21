@@ -5,6 +5,7 @@
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { executionErrorAudit } from './copilot-sql';
 
 const TIMEOUT_MS = 8000;
 const TOOLS_TTL_MS = 5 * 60 * 1000;
@@ -62,6 +63,14 @@ export function isDbhubTool(name: string) {
   return Boolean(tools?.some((t) => t.function.name === name));
 }
 
+/** Classify a DBHub tool result: failed (isError / success:false) with its message, or the rows of all statements. */
+export function dbhubOutcome(res: any, text: string, parsed: any): { failed: boolean; error: string; stmts: any[]; rows: any[] } {
+  const failed = Boolean(res?.isError) || parsed?.success === false;
+  const stmts: any[] = Array.isArray(parsed?.data?.statements) ? parsed.data.statements : [];
+  const rows: any[] = stmts.flatMap((st) => (Array.isArray(st?.rows) ? st.rows : []));
+  return { failed, error: failed ? String(parsed?.error || text).slice(0, 500) : '', stmts, rows };
+}
+
 type Audit = (e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) => Promise<void> | void;
 
 export async function callDbhubTool(name: string, args: any, audit: Audit): Promise<any> {
@@ -73,16 +82,16 @@ export async function callDbhubTool(name: string, args: any, audit: Audit): Prom
     const text = (res.content || []).filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n');
     let parsed: any = text;
     try { parsed = JSON.parse(text); } catch { /* keep text */ }
-    const failed = Boolean(res.isError) || parsed?.success === false;
-    // DBHub returns { data: { statements: [{ sql, rows, count }] } }; hand the model only the rows (fewer tokens).
-    const stmts: any[] = Array.isArray(parsed?.data?.statements) ? parsed.data.statements : [];
-    const rows: any[] = stmts.flatMap((st) => (Array.isArray(st?.rows) ? st.rows : []));
-    await audit({ db: 'dbhub', sql: sqlText, allowed: !failed, reason: failed ? String(parsed?.error || text).slice(0, 500) : null, rows: failed ? null : rows.length, ms: Date.now() - t0 });
-    if (failed) return { error: String(parsed?.error || text).slice(0, 500) };
+    const out = dbhubOutcome(res, text, parsed);
+    await audit(out.failed ? executionErrorAudit('dbhub', sqlText, out.error, Date.now() - t0)
+      : { db: 'dbhub', sql: sqlText, allowed: true, reason: null, rows: out.rows.length, ms: Date.now() - t0 });
+    if (out.failed) return { error: out.error };
+    const stmts = out.stmts;
+    const rows = out.rows;
     return stmts.length ? { count: rows.length, rows } : (parsed?.data ?? parsed);
   } catch (e: any) {
     await reset();
-    await audit({ db: 'dbhub', sql: sqlText, allowed: false, reason: `dbhub error: ${String(e?.message || e).slice(0, 300)}`, rows: null, ms: Date.now() - t0 });
+    await audit(executionErrorAudit('dbhub', sqlText, `dbhub error: ${String(e?.message || e)}`, Date.now() - t0));
     return { error: 'سرویس پایگاه داده (DBHub) در دسترس نیست؛ دوباره تلاش کنید.' };
   }
 }
