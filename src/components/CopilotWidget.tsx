@@ -30,11 +30,15 @@ interface Message {
   content: string;
 }
 
-const QUICK_PROMPTS = [
-  'مانده امروز؟',
-  'لیست ۵ بدهکار با بالاترین بدهی را بده',
-  'وضعیت پرداختهای دوره جاری چطوره؟',
-];
+/** Quick-prompt buttons; site stats only for admins (the analytics tool is admin-only). */
+export function quickPrompts(isAdmin: boolean): string[] {
+  return [
+    'ثبت‌نام‌های در انتظار سایت',
+    'درآمد این ماه',
+    ...(isAdmin ? ['بازدید امروز سایت'] : []),
+    'کارهای امروز',
+  ];
+}
 
 const SEND_FAILED = 'ارسال نشد — دوباره';
 
@@ -56,6 +60,7 @@ interface CopilotContextValue {
   sendMessage: (raw: string) => Promise<void>;
   retry: () => void;
   openTab: () => void;
+  prompts: string[];
 }
 
 const CopilotContext = createContext<CopilotContextValue | null>(null);
@@ -69,9 +74,11 @@ function useCopilot(): CopilotContextValue {
 export function CopilotProvider({
   children,
   onOpenTab,
+  isAdmin = false,
 }: {
   children: React.ReactNode;
   onOpenTab: () => void;
+  isAdmin?: boolean;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -137,7 +144,7 @@ export function CopilotProvider({
 
   return (
     <CopilotContext.Provider
-      value={{ messages, input, setInput, isLoading, error, sendMessage, retry, openTab: onOpenTab }}
+      value={{ messages, input, setInput, isLoading, error, sendMessage, retry, openTab: onOpenTab, prompts: quickPrompts(isAdmin) }}
     >
       {children}
     </CopilotContext.Provider>
@@ -213,7 +220,7 @@ function ErrorLine({ error, onRetry, disabled }: { error: string | null; onRetry
 }
 
 export function CopilotBar() {
-  const { messages, input, setInput, isLoading, error, sendMessage, retry, openTab } = useCopilot();
+  const { messages, input, setInput, isLoading, error, sendMessage, retry, openTab, prompts } = useCopilot();
   const [expanded, setExpanded] = useState(false);
   const last = messages[messages.length - 1];
   const showErrorInBar = Boolean(error) && !expanded;
@@ -254,7 +261,7 @@ export function CopilotBar() {
         {!last && !expanded && (
           <button
             type="button"
-            onClick={() => void sendMessage(QUICK_PROMPTS[0])}
+            onClick={() => void sendMessage(prompts[0])}
             disabled={isLoading}
             className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
           >
@@ -281,7 +288,7 @@ export function CopilotBar() {
               empty={
                 <button
                   type="button"
-                  onClick={() => void sendMessage(QUICK_PROMPTS[0])}
+                  onClick={() => void sendMessage(prompts[0])}
                   disabled={isLoading}
                   className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400"
                 >
@@ -323,7 +330,7 @@ export function CopilotBar() {
 }
 
 export function CopilotPage() {
-  const { messages, input, setInput, isLoading, error, sendMessage, retry } = useCopilot();
+  const { messages, input, setInput, isLoading, error, sendMessage, retry, prompts } = useCopilot();
   const listRef = useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -351,7 +358,7 @@ export function CopilotPage() {
             <div className="space-y-2">
               <p className="text-xs text-slate-500">یک سؤال را انتخاب کنید یا بنویسید.</p>
               <div className="flex flex-wrap gap-2">
-                {QUICK_PROMPTS.map((prompt) => (
+                {prompts.map((prompt) => (
                   <button
                     key={prompt}
                     type="button"

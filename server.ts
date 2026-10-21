@@ -13,6 +13,7 @@ import * as chabokan from './mysql-socks';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
+import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
@@ -3030,7 +3031,7 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   '۲) اگر پرسش کاربر نیازمند داده‌ای است که ابزاری برای آن وجود ندارد، صادقانه بگویید داده در دسترس نیست.',
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
-  '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید.',
+  '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید؛ وضعیت‌ها و کدها (مثل new، pending، approved، paid) را همیشه به فارسی بگویید، نه کد انگلیسی.',
   '۶) شما فقط می‌خوانید؛ هیچ پیامی ارسال نمی‌کنید و چیزی را تغییر نمی‌دهید. اگر کاربر ارسال پیام خواست، متن پیشنهادی بنویسید و بگویید از بخش «پیام‌رسان» ارسال کند.',
   copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
@@ -3815,7 +3816,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
           role: 'tool',
           tool_call_id: toolCall?.id || `${fn.name || 'tool'}`,
           name: String(fn.name || ''),
-          content: JSON.stringify(result),
+          content: JSON.stringify(persianizeCodes(result)),
         });
       }
     }

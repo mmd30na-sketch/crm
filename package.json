@@ -14,7 +14,8 @@
     "test:ocr": "node --import tsx scripts/test-ocr-validate.mjs",
     "test:logic": "node --import tsx scripts/test-crm-logic.mjs",
     "test:print": "node --import tsx scripts/test-print-docs.mjs",
-    "test:copilot-date": "node --import tsx scripts/test-copilot-date.mjs"
+    "test:copilot-date": "node --import tsx scripts/test-copilot-date.mjs",
+    "test:copilot-labels": "node --import tsx scripts/test-copilot-labels.mjs"
   },
   "dependencies": {
     "@fontsource/vazirmatn": "^5.3.0",

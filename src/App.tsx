@@ -304,7 +304,7 @@ export default function App() {
   }
 
   return (
-    <CopilotProvider onOpenTab={() => handleActiveTabChange('copilot')}>
+    <CopilotProvider onOpenTab={() => handleActiveTabChange('copilot')} isAdmin={role === 'admin'}>
     <div
       className="flex h-screen h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
       style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #f8fafc 50%, #f0fdf4 100%)' }}

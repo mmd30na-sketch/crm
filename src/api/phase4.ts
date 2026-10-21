@@ -1,5 +1,6 @@
 // Phase 4 API client: leads, activities, tasks, campaigns. Datetimes from the server are UTC without 'Z'.
 import { getAuthToken } from './client';
+import * as L from '../utils/labels';
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
@@ -16,7 +17,7 @@ const put = <T>(p: string, b: unknown) => call<T>(p, { method: 'PUT', body: JSON
 export const utc = (s?: string | null) => (s ? new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : `${s}Z`) : null);
 
 export type LeadStatus = 'new' | 'contacted' | 'in_negotiation' | 'converted' | 'lost';
-export const LEAD_STATUS_LABEL: Record<LeadStatus, string> = { new: 'جدید', contacted: 'تماس گرفته شد', in_negotiation: 'در حال پیگیری', converted: 'تبدیل‌شده', lost: 'از دست رفته' };
+export const LEAD_STATUS_LABEL: Record<LeadStatus, string> = L.LEAD_STATUS_LABEL;
 export interface Lead {
   id: number; first_name: string | null; last_name: string; phone_number: string; national_code: string | null;
   source_id: number | null; source_title: string | null; course_id: number | null; course_title: string | null;
@@ -32,7 +33,7 @@ export const updateLead = (id: number, b: LeadInput) => put<{ ok: true }>(`/lead
 export const convertLead = (id: number, national_code?: string) => post<{ student_id: number; alreadyExists?: boolean; alreadyConverted?: boolean }>(`/leads/${id}/convert`, { national_code });
 
 export type ActivityKind = 'call' | 'note' | 'sms' | 'in_person' | 'rubika';
-export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = { call: 'تماس تلفنی', note: 'یادداشت', sms: 'پیامک', in_person: 'حضوری', rubika: 'روبیکا' };
+export const ACTIVITY_KIND_LABEL: Record<ActivityKind, string> = L.ACTIVITY_KIND_LABEL;
 export interface Activity { id: number; kind: ActivityKind; outcome: string | null; body: string | null; staff_username: string | null; occurred_at: string }
 export interface LinkedMessage { id: string; direction: 'in' | 'out'; source: 'account' | 'bot'; text: string; at: string }
 export const listActivities = (entity_type: 'student' | 'lead', entity_id: number) =>
@@ -42,8 +43,8 @@ export const addActivity = (b: { entity_type: 'student' | 'lead'; entity_id: num
 
 export type TaskStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
 export type TaskPriority = 'low' | 'normal' | 'high';
-export const TASK_STATUS_LABEL: Record<TaskStatus, string> = { open: 'باز', in_progress: 'در حال انجام', done: 'انجام شد', cancelled: 'لغو شد' };
-export const TASK_PRIORITY_LABEL: Record<TaskPriority, string> = { low: 'کم', normal: 'عادی', high: 'فوری' };
+export const TASK_STATUS_LABEL: Record<TaskStatus, string> = L.TASK_STATUS_LABEL;
+export const TASK_PRIORITY_LABEL: Record<TaskPriority, string> = L.TASK_PRIORITY_LABEL;
 export interface Task {
   id: number; title: string; description: string | null; assignee_username: string | null; created_by: string | null;
   due_at: string | null; priority: TaskPriority; status: TaskStatus; entity_type: 'student' | 'lead' | null; entity_id: number | null;

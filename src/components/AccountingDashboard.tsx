@@ -45,6 +45,7 @@ import { downloadCsv } from '../utils/exportCsv';
 import DebtorsReport from './DebtorsReport';
 import { jalaliTodayParts } from '../utils/normalize';
 import { monthlySeries } from '../utils/charts';
+import { PAY_METHOD_LABELS } from '../utils/labels';
 
 interface AccountingDashboardProps {
   students: Student[];
@@ -69,9 +70,6 @@ const normJalali = (raw?: string): string => {
   return m ? `${m[1]}/${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}` : '';
 };
 
-const PAY_METHOD_LABELS: Record<string, string> = {
-  pos: 'کارتخوان', cash: 'نقدی', card_transfer: 'کارت‌به‌کارت', online: 'آنلاین', cheque: 'چک',
-};
 
 function currentJalaliYearMonth() {
   const { jy, jm } = jalaliTodayParts();
