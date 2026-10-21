@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
+import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
@@ -3300,9 +3301,28 @@ const COPILOT_SQL_TOOL = {
   },
 };
 
-/** Tools offered to this user: run_sql_query only for admins and only when COPILOT_SQL_ENABLED=1. */
+const COPILOT_UMAMI_TOOL = {
+  type: 'function',
+  function: {
+    name: 'get_site_analytics',
+    description: 'آمار بازدید سایت kermanshahcart.ir از Umami (فقط خواندنی): بازدید، بازدیدکننده، صفحه‌دیده‌شده، پرش، کاربران آنلاین و پرتکرارترین صفحه/ارجاع‌دهنده/دستگاه/شهر/رویداد/مرورگر/سیستم‌عامل/کشور. روزها به وقت تهران. برای custom تاریخ شمسی یا میلادی به شکل YYYY-MM-DD بدهید.',
+    parameters: {
+      type: 'object',
+      properties: {
+        period: { type: 'string', enum: ['today', 'yesterday', '7d', '30d', 'custom'] },
+        startDate: { type: 'string', description: 'YYYY-MM-DD (فقط برای custom)' },
+        endDate: { type: 'string', description: 'YYYY-MM-DD (فقط برای custom؛ پیش‌فرض همان startDate)' },
+        metrics: { type: 'array', items: { type: 'string', enum: ['path', 'referrer', 'device', 'city', 'event', 'browser', 'os', 'country'] } },
+      },
+      required: ['period'],
+    },
+  },
+};
+
+/** Tools offered to this user: run_sql_query (COPILOT_SQL_ENABLED=1) and get_site_analytics (UMAMI_* set) only for admins. */
 function copilotToolsFor(role: string) {
-  return COPILOT_SQL_ENABLED && role === 'admin' ? [...COPILOT_TOOLS, COPILOT_SQL_TOOL] : COPILOT_TOOLS;
+  if (role !== 'admin') return COPILOT_TOOLS;
+  return [...COPILOT_TOOLS, ...(COPILOT_SQL_ENABLED ? [COPILOT_SQL_TOOL] : []), ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -3319,6 +3339,11 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   if (name === 'run_sql_query') {
     if (!COPILOT_SQL_ENABLED || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
     return runCopilotSql(a.database, a.sql, (e) => auditCopilotSql(ctx.username, e));
+  }
+
+  if (name === 'get_site_analytics') {
+    if (!umamiEnabled() || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
+    return getSiteAnalytics(a);
   }
 
   if (name === 'send_notification') {
