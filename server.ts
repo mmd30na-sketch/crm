@@ -12,6 +12,7 @@ import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
+import { copilotDateRule } from './src/utils/copilotDate';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
@@ -3754,7 +3755,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const sqlRule = sqlNames.length
     ? `\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
     : '';
-  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() + sqlRule }, ...history];
+  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() + sqlRule + '\n' + copilotDateRule() }, ...history];
 
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   try {
