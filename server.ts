@@ -3750,8 +3750,9 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const sessionUser = (req as any).user || {};
   const ctx = { username: String(sessionUser.username || ''), role: String(sessionUser.role || '') };
   const tools = await copilotToolsFor(ctx.role);
-  const sqlRule = tools.some((t: any) => ['run_sql_query', 'execute_sql_crm'].includes(t.function?.name))
-    ? '\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (execute_sql_crm یا run_sql_query) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.'
+  const sqlNames = tools.map((t: any) => t.function?.name).filter((n: string) => n === 'run_sql_query' || n === 'execute_sql_crm');
+  const sqlRule = sqlNames.length
+    ? `\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
     : '';
   const messages: any[] = [{ role: 'system', content: copilotSystemPrompt() + sqlRule }, ...history];
 
