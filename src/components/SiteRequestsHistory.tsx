@@ -73,7 +73,7 @@ export default function SiteRequestsHistory({ courses }: { courses: Course[] }) 
 
   const addLead = async (r: WebsiteRegistration) => {
     const key = phoneKey(r.phone_number);
-    if (!key || leadPhones.has(key)) return;
+    if (!key || leadPhones.has(key) || r.status === 'approved' || r.student_id) return;
     const parts = String(r.full_name || '').trim().split(/\s+/).filter(Boolean);
     setBusy(r.tracking_code); setError(null);
     try {
@@ -138,6 +138,7 @@ export default function SiteRequestsHistory({ courses }: { courses: Course[] }) 
               {shown.map((r) => {
                 const st = STATUS[r.status] || { label: r.status, cls: 'bg-slate-50 text-slate-600 border-slate-200' };
                 const inLeads = leadPhones.has(phoneKey(r.phone_number));
+                const isStudent = r.status === 'approved' || Boolean(r.student_id);
                 return (
                   <tr key={r.tracking_code || r.id} className="border-b border-slate-50 hover:bg-slate-50/60">
                     <td className="p-2 whitespace-nowrap text-slate-600">{faDate(r.created_at)}</td>
@@ -149,9 +150,9 @@ export default function SiteRequestsHistory({ courses }: { courses: Course[] }) 
                     <td className="p-2 whitespace-nowrap text-slate-600">{r.status === 'pending' ? '—' : faDate(r.approved_at)}</td>
                     <td className="p-2 text-xs">{r.paid_toman ? <span className="text-emerald-700">{r.paid_toman.toLocaleString('fa-IR')} تومان</span> : r.paid_toman === 0 ? <span className="text-slate-400">پرداخت نشده</span> : '—'}</td>
                     <td className="p-2 text-left">
-                      <button type="button" disabled={inLeads || busy !== null || !phoneKey(r.phone_number)} onClick={() => void addLead(r)}
-                        className={`flex items-center gap-1 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold ${inLeads ? 'bg-slate-100 text-slate-500' : 'bg-violet-600 text-white hover:bg-violet-700'} disabled:cursor-not-allowed disabled:opacity-70`}>
-                        {inLeads ? <><Check className="h-3.5 w-3.5" /> در سرنخ‌ها هست</> : <><UserPlus className="h-3.5 w-3.5" /> {busy === r.tracking_code ? 'در حال افزودن...' : 'افزودن به سرنخ‌ها'}</>}
+                      <button type="button" disabled={isStudent || inLeads || busy !== null || !phoneKey(r.phone_number)} onClick={() => void addLead(r)}
+                        className={`flex items-center gap-1 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold ${isStudent || inLeads ? 'bg-slate-100 text-slate-500' : 'bg-violet-600 text-white hover:bg-violet-700'} disabled:cursor-not-allowed disabled:opacity-70`}>
+                        {isStudent ? <><Check className="h-3.5 w-3.5" /> کارآموز شده</> : inLeads ? <><Check className="h-3.5 w-3.5" /> در سرنخ‌ها هست</> : <><UserPlus className="h-3.5 w-3.5" /> {busy === r.tracking_code ? 'در حال افزودن...' : 'افزودن به سرنخ‌ها'}</>}
                       </button>
                     </td>
                   </tr>
