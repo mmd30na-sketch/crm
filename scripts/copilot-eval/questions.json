@@ -1,0 +1,107 @@
+[
+  {
+    "id": "q1",
+    "question": "تعداد ثبت‌نام‌های امروز چقدر است؟",
+    "expected_tool": "list_site_registrations",
+    "expected_sql": "SELECT COUNT(*) AS total FROM registrations WHERE DATE(created_at) = CURDATE() AND status = 'pending'",
+    "check": "number equals"
+  },
+  {
+    "id": "q2",
+    "question": "تعداد ثبت‌نام‌های سایت در انتظار تأیید چند تا است؟",
+    "expected_tool": "list_site_registrations",
+    "expected_sql": "SELECT COUNT(*) AS total FROM registrations WHERE status = 'pending'",
+    "check": "number equals"
+  },
+  {
+    "id": "q3",
+    "question": "دوره‌های فعال برگزاری (ترم‌های در حال انجام) کدام‌ها هستند؟",
+    "expected_tool": "list_course_terms",
+    "expected_sql": "SELECT ct.course_id, ct.course_number, ct.start_date, ct.end_date, ct.capacity, ct.status FROM crm_course_terms ct WHERE ct.status = 'active' ORDER BY ct.start_date",
+    "check": "array length matches"
+  },
+  {
+    "id": "q4",
+    "question": "بیشترین بدهکاران (۱۰ نفر اول) چه کسانی هستند؟",
+    "expected_tool": "get_debtors_list",
+    "expected_sql": "SELECT e.student_id, s.first_name, s.last_name, s.phone_number, e.final_price - COALESCE(SUM(p.amount), 0) AS balance_due FROM enrollments e JOIN students s ON e.student_id = s.student_id LEFT JOIN payments p ON p.enrollment_id = e.enrollment_id GROUP BY e.student_id, s.first_name, s.last_name, s.phone_number, e.final_price HAVING balance_due > 0 ORDER BY balance_due DESC LIMIT 10",
+    "check": "array length <= 10"
+  },
+  {
+    "id": "q5",
+    "question": "درآمد این ماه چقدر است؟",
+    "expected_tool": "get_financial_report",
+    "expected_sql": "SELECT COALESCE(SUM(amount),0) AS total_income FROM payments WHERE REPLACE(pay_date_jalali,'-','/') LIKE '{{JALALI_MONTH}}%'",
+    "check": "number equals"
+  },
+  {
+    "id": "q6",
+    "question": "سرنخ‌ها (لیدها) را بر اساس وضعیت تفکیک کنید.",
+    "expected_tool": "list_leads",
+    "expected_sql": "SELECT status, COUNT(*) AS count FROM leads GROUP BY status ORDER BY count DESC",
+    "check": "array length matches"
+  },
+  {
+    "id": "q7",
+    "question": "کارهای عقب‌افتاده (overdue) چند تا است؟",
+    "expected_tool": "list_tasks",
+    "expected_sql": "SELECT COUNT(*) AS total FROM crm_tasks WHERE status = 'open' AND due_date < CURDATE()",
+    "check": "number equals"
+  },
+  {
+    "id": "q8",
+    "question": "لیست کارآموزان ثبت‌نام شده در دوره پایه سوم رانندگی چقدر است؟",
+    "expected_tool": "list_enrollments",
+    "expected_sql": "SELECT COUNT(*) AS total FROM enrollments e JOIN courses c ON e.course_id = c.course_id WHERE c.code = 'C3-DRIVE'",
+    "check": "number equals"
+  },
+  {
+    "id": "q9",
+    "question": "مجموع پرداختی‌های امروز چقدر است؟",
+    "expected_tool": "get_daily_cashflow",
+    "expected_sql": "SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE REPLACE(pay_date_jalali,'-','/') = '{{JALALI_TODAY}}'",
+    "check": "number equals"
+  },
+  {
+    "id": "q10",
+    "question": "قیمت دوره‌های فعال را لیست کنید.",
+    "expected_tool": "list_courses",
+    "expected_sql": "SELECT course_id, title, price FROM courses WHERE is_active = 1",
+    "check": "array length matches"
+  },
+  {
+    "id": "q11",
+    "question": "سرنخ‌های جدید که هنوز تماس گرفته نشده‌اند چند تا هستند؟",
+    "expected_tool": "list_leads",
+    "expected_sql": "SELECT COUNT(*) AS total FROM leads WHERE status = 'new'",
+    "check": "number equals"
+  },
+  {
+    "id": "q12",
+    "question": "کارآموزان با بدهی بالای ۵ میلیون تومان را نشان بده.",
+    "expected_tool": "get_debtors_list",
+    "expected_sql": "SELECT e.student_id, s.first_name, s.last_name, s.phone_number, e.final_price - COALESCE(SUM(p.amount), 0) AS balance_due FROM enrollments e JOIN students s ON e.student_id = s.student_id LEFT JOIN payments p ON p.enrollment_id = e.enrollment_id GROUP BY e.student_id, s.first_name, s.last_name, s.phone_number, e.final_price HAVING balance_due > 5000000 ORDER BY balance_due DESC LIMIT 20",
+    "check": "array length <= 20"
+  },
+  {
+    "id": "q13",
+    "question": "مجموع هزینه‌های این ماه چقدر است؟",
+    "expected_tool": "get_financial_report",
+    "expected_sql": "SELECT SUM(amount) AS total_expenses FROM expenses WHERE REPLACE(expense_date,'-','/') LIKE '{{JALALI_MONTH}}%'",
+    "check": "number equals"
+  },
+  {
+    "id": "q14",
+    "question": "تعداد ثبت‌نام‌های تأییدشده در سایت امروز چقدر است؟",
+    "expected_tool": "list_site_registrations",
+    "expected_sql": "SELECT COUNT(*) AS total FROM registrations WHERE DATE(created_at) = CURDATE() AND status = 'approved'",
+    "check": "number equals"
+  },
+  {
+    "id": "q15",
+    "question": "نمای قیف فروش (تعداد لیدها در هر مرحله) را نشان دهید.",
+    "expected_tool": "get_sales_funnel",
+    "expected_sql": "SELECT status, COUNT(*) AS count FROM leads GROUP BY status ORDER BY FIELD(status, 'new', 'contacted', 'in_negotiation', 'converted', 'lost')",
+    "check": "array length equals 5"
+  }
+]
