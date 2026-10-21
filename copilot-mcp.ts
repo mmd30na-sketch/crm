@@ -73,10 +73,13 @@ export async function callDbhubTool(name: string, args: any, audit: Audit): Prom
     const text = (res.content || []).filter((p: any) => p.type === 'text').map((p: any) => p.text).join('\n');
     let parsed: any = text;
     try { parsed = JSON.parse(text); } catch { /* keep text */ }
-    const rows = Array.isArray(parsed?.data?.rows) ? parsed.data.rows.length : (Array.isArray(parsed?.rows) ? parsed.rows.length : null);
     const failed = Boolean(res.isError) || parsed?.success === false;
-    await audit({ db: 'dbhub', sql: sqlText, allowed: !failed, reason: failed ? String(parsed?.error || text).slice(0, 500) : null, rows, ms: Date.now() - t0 });
-    return failed ? { error: String(parsed?.error || text).slice(0, 500) } : (parsed?.data ?? parsed);
+    // DBHub returns { data: { statements: [{ sql, rows, count }] } }; hand the model only the rows (fewer tokens).
+    const stmts: any[] = Array.isArray(parsed?.data?.statements) ? parsed.data.statements : [];
+    const rows: any[] = stmts.flatMap((st) => (Array.isArray(st?.rows) ? st.rows : []));
+    await audit({ db: 'dbhub', sql: sqlText, allowed: !failed, reason: failed ? String(parsed?.error || text).slice(0, 500) : null, rows: failed ? null : rows.length, ms: Date.now() - t0 });
+    if (failed) return { error: String(parsed?.error || text).slice(0, 500) };
+    return stmts.length ? { count: rows.length, rows } : (parsed?.data ?? parsed);
   } catch (e: any) {
     await reset();
     await audit({ db: 'dbhub', sql: sqlText, allowed: false, reason: `dbhub error: ${String(e?.message || e).slice(0, 300)}`, rows: null, ms: Date.now() - t0 });
