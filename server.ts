@@ -1095,7 +1095,7 @@ app.post('/api/messenger/webhook', asyncHandler(async (req, res) => {
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required' });
 
   // With MySQL the students live there (db_store.json only holds demo students): look the sender up first.
-  const mysqlStudent = chabokan.isMysqlEnabled() && channel === 'rubika' && chat_id && sender_phone
+  const mysqlStudent = chabokan.isMysqlEnabled() && (channel === 'rubika' || channel === 'telegram') && chat_id && sender_phone
     ? await chabokan.findStudentByPhone(normalizeMobile(sender_phone))
     : null;
   const db = readDb();
@@ -1103,6 +1103,12 @@ app.post('/api/messenger/webhook', asyncHandler(async (req, res) => {
 
   // The chat_id <-> student link decides who receives that student's messages, so it is only
   // accepted from a caller that knows the shared secret (MESSENGER_WEBHOOK_SECRET).
+  // Telegram: the bot only forwards a phone the user shared as their own contact (contact.user_id === from.id).
+  if (channel === 'telegram' && chat_id && sender_phone && mysqlStudent) {
+    const tlinks = ((db as any).telegram_links ||= {}) as Record<string, string>;
+    tlinks[String(mysqlStudent.id)] = String(chat_id).slice(0, 100);
+    console.log(`[Telegram] chat_id linked for student ${mysqlStudent.id}`);
+  }
   if (channel === 'rubika' && chat_id && sender_phone) {
     if (chabokan.isMysqlEnabled()) {
       if (mysqlStudent) {
@@ -3437,7 +3443,7 @@ async function resolveCopilotRecipient(channel: 'telegram' | 'rubika', raw: stri
   if (rows.length > 1) return { error: `${rows.length} کارآموز با این مشخصات پیدا شد؛ شناسه کارآموز (student_id) را بدهید.` };
   const st = rows[0];
   const label = `آقای ${String(st.first_name || '').trim()} ${String(st.last_name || '').trim()}`.trim();
-  const link = channel === 'rubika' ? (readDb() as any).rubika_links?.[String(st.student_id)] : null; // Telegram links are not stored in the CRM.
+  const link = (readDb() as any)[channel === 'rubika' ? 'rubika_links' : 'telegram_links']?.[String(st.student_id)];
   if (!link) return { error: 'این کارآموز به روبیکا/تلگرام وصل نیست' };
   return { chatId: String(link), label };
 }
