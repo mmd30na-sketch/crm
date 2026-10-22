@@ -827,7 +827,7 @@ export default function StudentsList({
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-sky-100 flex items-center justify-center"><Edit3 className="w-4 h-4 text-sky-600" /></div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">ویرایش پرونده کارآموز</h3>
+                  <h3 className="text-sm font-bold text-slate-900">ویرایش پرونده هنرجو</h3>
                   <p className="text-xs text-slate-400">{editingStudent.first_name} {editingStudent.last_name}</p>
                 </div>
               </div>

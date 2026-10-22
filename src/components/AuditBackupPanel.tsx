@@ -4,7 +4,7 @@ import * as api from '../api/client';
 import { downloadCsv } from '../utils/exportCsv';
 
 const ENTITY_LABEL: Record<string, string> = {
-  students: 'کارآموز', enrollments: 'ثبت‌نام دوره', payments: 'پرداخت', expenses: 'هزینه', registrations: 'ثبت‌نام سایت',
+  students: 'هنرجو', enrollments: 'ثبت‌نام دوره', payments: 'پرداخت', expenses: 'هزینه', registrations: 'ثبت‌نام سایت',
   courses: 'دوره', staff: 'کاربر', settings: 'تنظیمات', messenger: 'پیام‌رسان', auth: 'ورود', 'dashboard-notes': 'یادداشت داشبورد',
   'receipt-settings': 'تنظیمات رسید', ocr: 'OCR', imports: 'ورود اطلاعات',
 };

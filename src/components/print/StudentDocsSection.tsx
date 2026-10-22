@@ -39,7 +39,7 @@ export default function StudentDocsSection({
   } : null, [student, enrollment, course, paid, settings]);
 
   if (!enrollment || !input) {
-    return <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3">این کارآموز ثبت‌نام دوره‌ای ندارد؛ مدارک ثبت‌نام ساخته نمی‌شود.</div>;
+    return <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3">این هنرجو ثبت‌نام دوره‌ای ندارد؛ مدارک ثبت‌نام ساخته نمی‌شود.</div>;
   }
   return (
     <div className="space-y-2" id="student-registration-docs">

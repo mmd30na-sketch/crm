@@ -52,7 +52,7 @@ export default function PrintPreview({ enrollmentId }: { enrollmentId?: number }
     (async () => {
       try {
         const ctx = await api.fetchEnrollmentDocContext(enrollmentId);
-        if (!ctx.student) throw new Error('کارآموز این ثبت‌نام پیدا نشد.');
+        if (!ctx.student) throw new Error('هنرجو این ثبت‌نام پیدا نشد.');
         const paid = ctx.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
         const input = {
           student: ctx.student, enrollment: { id: ctx.enrollment.id, course_number: ctx.enrollment.course_number ?? null, final_price: ctx.enrollment.final_price },

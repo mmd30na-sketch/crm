@@ -107,15 +107,15 @@ export function RubikaBulkContactsButton({ kind }: { kind: Kind }) {
           <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-end sm:items-center justify-center p-0 sm:p-4" dir="rtl" role="dialog" aria-modal="true" onClick={() => setOpen(false)}>
             <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-black text-slate-900">افزودن {kind === 'student' ? 'کارآموزان' : 'سرنخ‌ها'} به مخاطبین روبیکا</h3>
+                <h3 className="text-sm font-black text-slate-900">افزودن {kind === 'student' ? 'هنرجویان' : 'سرنخ‌ها'} به مخاطبین روبیکا</h3>
                 <button type="button" onClick={() => setOpen(false)} className="p-1 text-slate-400" aria-label="بستن"><X className="w-4 h-4" /></button>
               </div>
               <p className="text-xs text-slate-500 leading-6">فقط شماره‌ها به دفترچه مخاطبین اکانت اصلی اضافه می‌شوند؛ <b>هیچ پیامی برای کسی ارسال نمی‌شود.</b> هر ۳ تا ۵ ثانیه یک نفر؛ با محدودیت روبیکا یا خطاهای پشت سر هم خودکار متوقف می‌شود.</p>
-              {other && <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2">یک افزودن گروهی دیگر ({job!.kind === 'student' ? 'کارآموزان' : 'سرنخ‌ها'}) در حال اجراست.</p>}
+              {other && <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2">یک افزودن گروهی دیگر ({job!.kind === 'student' ? 'هنرجویان' : 'سرنخ‌ها'}) در حال اجراست.</p>}
               {!mine?.running && !other && (
                 <div className="space-y-2 text-xs">
                   {kind === 'student' && (
-                    <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={activeTerm} onChange={e => setActiveTerm(e.target.checked)} className="w-4 h-4" />فقط کارآموزان دوره‌های فعال</label>
+                    <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={activeTerm} onChange={e => setActiveTerm(e.target.checked)} className="w-4 h-4" />فقط هنرجویان دوره‌های فعال</label>
                   )}
                   <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={unlinked} onChange={e => setUnlinked(e.target.checked)} className="w-4 h-4" />فقط کسانی که هنوز اضافه/بررسی نشده‌اند</label>
                   {kind === 'lead' && <p className="text-[11px] text-slate-400">سرنخ‌های تبدیل‌شده یا ازدست‌رفته شامل نمی‌شوند.</p>}

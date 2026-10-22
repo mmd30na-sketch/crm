@@ -720,7 +720,7 @@ export default function StudentRegistrationForm({
         studentObj = approved.student;
         enrollmentObj = approved.enrollment;
         setPendingRegs((rows) => rows.filter((r) => r.id !== selectedReg.id));
-        setExistingNotice(approved.studentCreated ? null : 'این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+        setExistingNotice(approved.studentCreated ? null : 'این هنرجو قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
         setCreatedStudent(studentObj);
         if (idCardFile || personalPhotoFile) {
           // Photos picked by hand in the form replace the ones copied from the site.
@@ -759,7 +759,7 @@ export default function StudentRegistrationForm({
               birth_date_jalali: birthDate || studentObj.birth_date_jalali,
             });
           } catch (updErr) { console.warn('Could not refresh existing student details:', updErr); }
-          setExistingNotice('این کارآموز قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
+          setExistingNotice('این هنرجو قبلاً ثبت شده بود؛ ثبت‌نام جدید به همان پرونده اضافه شد.');
         } else {
           setExistingNotice(null);
         }
@@ -874,7 +874,7 @@ export default function StudentRegistrationForm({
             <div>
               <h2 className="text-xl font-black text-slate-900 mb-1">ثبت‌نام با موفقیت انجام شد!</h2>
               <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-                پرونده کارآموز ایجاد شد. وضعیت هر سه مدرک در زیر نمایش داده می‌شود.
+                پرونده هنرجو ایجاد شد. وضعیت هر سه مدرک در زیر نمایش داده می‌شود.
               </p>
               {existingNotice && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2 max-w-xs mx-auto">{existingNotice}</p>}
             </div>
@@ -882,7 +882,7 @@ export default function StudentRegistrationForm({
             <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 text-right space-y-2 max-w-xs mx-auto">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">خلاصه پرونده</div>
               {[
-                { label: 'نام کارآموز', value: `${createdStudent.first_name} ${createdStudent.last_name}` },
+                { label: 'نام هنرجو', value: `${createdStudent.first_name} ${createdStudent.last_name}` },
                 { label: 'کد ملی',      value: createdStudent.national_code, mono: true },
                 { label: 'دوره',        value: course?.title || '—' },
                 { label: 'پرداختی',    value: `${payAmount.toLocaleString('fa-IR')} تومان`, mono: true },
@@ -921,7 +921,7 @@ export default function StudentRegistrationForm({
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className="text-lg font-black text-slate-900">ثبت‌نام هوشمند کارآموز</h2>
+            <h2 className="text-lg font-black text-slate-900">ثبت‌نام هوشمند هنرجو</h2>
             
           </div>
           {ocrReady !== null && (
@@ -1170,7 +1170,7 @@ export default function StudentRegistrationForm({
             </div>
 
             <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-xs">
-              <SectionHeader icon={User} label="اطلاعات شخصی کارآموز" color="sky" />
+              <SectionHeader icon={User} label="اطلاعات شخصی هنرجو" color="sky" />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
                 <Field label="نام" required warning={ocrHint(ocrWarnings, 'first_name')}>
                   <Input icon={User} value={firstName} onChange={(v) => { clearOcrWarning('first_name'); setFirstName(v); }} placeholder="نام" warn={!!ocrHint(ocrWarnings, 'first_name')} />
@@ -1298,7 +1298,7 @@ export default function StudentRegistrationForm({
                 <h3 className="text-sm font-black text-slate-900 mb-1">شروع دوره جدید؟</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   شماره دوره {courseNumber} از آخرین دوره ثبت‌شده ({currentMax}) بیشتر است.
-                  آیا این کارآموز در یک دوره جدید ثبت شود؟
+                  آیا این هنرجو در یک دوره جدید ثبت شود؟
                 </p>
               </div>
             </div>

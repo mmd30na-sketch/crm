@@ -1709,25 +1709,25 @@ const DEFAULT_MESSAGE_TEMPLATES = [
   {
     id: 'welcome',
     title: 'خوش‌آمدگویی و ثبت‌نام',
-    body: 'آقای [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. زمان شروع کلاس‌ها به شما اطلاع داده می‌شود.',
+    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. زمان شروع کلاس‌ها به شما اطلاع داده می‌شود.',
     color: 'sky',
   },
   {
     id: 'debt_warning',
     title: 'یادآوری بدهی مالی',
-    body: 'آقای [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید.',
+    body: 'هنرجوی گرامی [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید.',
     color: 'rose',
   },
   {
     id: 'exam_schedule',
     title: 'زمان‌بندی آزمون',
-    body: 'آقای [نام] [خانوادگی]؛ آزمون شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
+    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ آزمون شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
     color: 'teal',
   },
   {
     id: 'class_change',
     title: 'تغییر زمان کلاس',
-    body: 'آقای [نام]؛ زمان جلسه کلاس شما تغییر یافت. جهت هماهنگی زمان جدید با آموزشگاه تماس بگیرید.',
+    body: 'هنرجوی گرامی [نام]؛ زمان جلسه کلاس شما تغییر یافت. جهت هماهنگی زمان جدید با آموزشگاه تماس بگیرید.',
     color: 'amber',
   },
 ];
@@ -2220,7 +2220,7 @@ async function notifyRegistration(student: any, course: any) {
     const academy = academyDisplayName();
     await deliverMessage({
       channel: 'sms', recipient: phone, studentId: student.id,
-      message: `آقای ${student.first_name} ${student.last_name}، ثبت‌نام شما در دوره «${course?.title || ''}» با موفقیت انجام شد.${academy ? `\n${academy}` : ''}`,
+      message: `هنرجوی گرامی ${student.first_name} ${student.last_name}، ثبت‌نام شما در دوره «${course?.title || ''}» با موفقیت انجام شد.${academy ? `\n${academy}` : ''}`,
     });
   } catch (err: any) { console.warn('Registration SMS failed:', err?.message || err); }
 }

@@ -201,7 +201,7 @@ export default function SupervisorDashboard({
     return {
       name: course.title.length > 14 ? course.title.slice(0, 13) + '…' : course.title,
       fullTitle: course.title,
-      'تعداد کارآموز': count,
+      'تعداد هنرجو': count,
     };
   });
 
@@ -260,7 +260,7 @@ export default function SupervisorDashboard({
               <CheckCircle className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-[11px] font-semibold text-slate-400 block">کارآموزان فعال و در حال آموزش</span>
+              <span className="text-[11px] font-semibold text-slate-400 block">هنرجویان فعال و در حال آموزش</span>
               <span className="text-xl font-black text-emerald-600 font-mono">{faNum(activeStudentsCount)} نفر</span>
             </div>
           </div>
@@ -300,9 +300,9 @@ export default function SupervisorDashboard({
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3" id="active-trainees-monitor">
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
           <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-            <Users className="w-4 h-4 text-emerald-500" />نظارت کارآموزان فعال
+            <Users className="w-4 h-4 text-emerald-500" />نظارت هنرجویان فعال
           </h3>
-          <span className="text-[10px] text-slate-400">{faNum(termRows.length)} دوره در حال برگزاری · {faNum(activeStudentsCount)} کارآموز</span>
+          <span className="text-[10px] text-slate-400">{faNum(termRows.length)} دوره در حال برگزاری · {faNum(activeStudentsCount)} هنرجو</span>
         </div>
         {activeTerms === null ? (
           <p className="text-xs text-slate-400 py-4 text-center">در حال بارگذاری…</p>
@@ -387,7 +387,7 @@ export default function SupervisorDashboard({
         <div className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
             <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-              <Layers className="w-4 h-4 text-violet-500" />توزیع کارآموزان به تفکیک دوره‌ها
+              <Layers className="w-4 h-4 text-violet-500" />توزیع هنرجویان به تفکیک دوره‌ها
             </h3>
             <span className="text-[10px] text-slate-400">{courses.length.toLocaleString('fa-IR')} دوره</span>
           </div>
@@ -400,7 +400,7 @@ export default function SupervisorDashboard({
                 <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={50} />
                 <YAxis stroke="#94a3b8" tick={{ fontSize: 10 }} allowDecimals={false} />
                 <Tooltip formatter={(value: any, name: any, props: any) => [value, props.payload.fullTitle]} />
-                <Bar dataKey="تعداد کارآموز" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={35} />
+                <Bar dataKey="تعداد هنرجو" fill="#0ea5e9" radius={[4, 4, 0, 0]} maxBarSize={35} />
               </BarChart>
             </ResponsiveContainer>
           </div>

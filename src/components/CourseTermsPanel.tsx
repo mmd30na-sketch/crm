@@ -79,7 +79,7 @@ export default function CourseTermsPanel({ courses, isAdmin }: { courses: Course
       {err && <p role="alert" className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">{err}</p>}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[['کارآموزان', fa(totals.enrolled) + ' نفر'], ['کل شهریه', fa(totals.due)], ['پرداخت‌شده', fa(totals.paid)], ['مانده', fa(totals.rem)]].map(([l, v]) => (
+        {[['هنرجوان', fa(totals.enrolled) + ' نفر'], ['کل شهریه', fa(totals.due)], ['پرداخت‌شده', fa(totals.paid)], ['مانده', fa(totals.rem)]].map(([l, v]) => (
           <div key={l} className="bg-white border border-slate-200 rounded-2xl p-3 shadow-sm"><div className="text-[11px] text-slate-500">{l}</div><div className="text-sm font-black text-slate-800 mt-1">{v}</div></div>
         ))}
       </div>
@@ -135,7 +135,7 @@ export default function CourseTermsPanel({ courses, isAdmin }: { courses: Course
                     ظرفیت: {r.capacity ? fa(r.capacity) : '—'}
                   </div>
                   <div className="flex gap-2 mt-3">
-                    <button onClick={() => setViewing(r)} className="flex-1 flex items-center justify-center gap-1 py-2.5 text-xs font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded-xl"><Users className="w-4 h-4" />{fa(r.enrolled)} کارآموز</button>
+                    <button onClick={() => setViewing(r)} className="flex-1 flex items-center justify-center gap-1 py-2.5 text-xs font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded-xl"><Users className="w-4 h-4" />{fa(r.enrolled)} هنرجو</button>
                     {isAdmin && <button onClick={() => openEdit(r)} className="flex items-center justify-center gap-1 px-4 py-2.5 text-xs font-bold text-slate-700 bg-slate-100 rounded-xl"><Edit3 className="w-4 h-4" />ویرایش</button>}
                   </div>
                 </div>
@@ -185,12 +185,12 @@ export default function CourseTermsPanel({ courses, isAdmin }: { courses: Course
           <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-end sm:items-center justify-center sm:p-4" dir="rtl" role="dialog" aria-modal="true" onClick={() => setViewing(null)}>
             <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 space-y-3 max-h-[90dvh] flex flex-col" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-black truncate">کارآموزان {viewing.course_title} — دوره {fa(viewing.course_number)}</h3>
+                <h3 className="text-sm font-black truncate">هنرجوان {viewing.course_title} — دوره {fa(viewing.course_number)}</h3>
                 <button onClick={() => setViewing(null)} aria-label="بستن" className="p-2 rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>
               </div>
               <div className="overflow-y-auto -mx-1 px-1">
                 {students === null ? <div className="text-xs text-slate-400 py-6 text-center">در حال بارگذاری...</div>
-                  : students.length === 0 ? <div className="text-xs text-slate-400 py-6 text-center">کارآموزی ثبت نشده است.</div>
+                  : students.length === 0 ? <div className="text-xs text-slate-400 py-6 text-center">هنرجوی ثبت نشده است.</div>
                   : (
                     <ul className="divide-y divide-slate-100">
                       {students.map((s) => {

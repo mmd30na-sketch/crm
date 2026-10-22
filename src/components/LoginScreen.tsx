@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Lock, User, AlertCircle } from 'lucide-react';
 import * as api from '../api/client';
+import { StaffRole } from '../types';
 
-export default function LoginScreen({ onLoggedIn }: { onLoggedIn: (user?: { username: string; role?: string; full_name?: string }) => void }) {
+export default function LoginScreen({ onLoggedIn }: { onLoggedIn: (user?: { username: string; role?: StaffRole; full_name?: string }) => void }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -14,7 +15,7 @@ export default function LoginScreen({ onLoggedIn }: { onLoggedIn: (user?: { user
     setLoading(true);
     try {
       const data = await api.login(username.trim(), password);
-      onLoggedIn(data.user);
+      onLoggedIn(data.user ? { ...data.user, role: data.user.role as StaffRole } : undefined);
     } catch (err: any) {
       setError(err?.message || 'ورود ناموفق بود');
     } finally {

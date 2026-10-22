@@ -597,6 +597,7 @@ export async function createExpense(body: {
   pay_date_jalali?: string;
   description?: string;
   category?: string;
+  expenseDate?: string;
 }): Promise<Expense> {
   const res = await apiFetch(`/expenses`, {
     method: 'POST',
@@ -605,7 +606,7 @@ export async function createExpense(body: {
       title:            body.title,
       amount:           body.amount,
       pay_method:       body.pay_method ?? body.category ?? 'عمومی',
-      pay_date_jalali:  body.pay_date_jalali,
+      pay_date_jalali:  body.pay_date_jalali ?? body.expenseDate,
       description:      body.description ?? '',
       category:         body.category ?? body.pay_method ?? 'عمومی',
     }),

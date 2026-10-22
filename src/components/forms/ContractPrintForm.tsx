@@ -29,19 +29,19 @@ const DEFAULT_RULES = [
   {
     id: 2,
     prefix: '۲.',
-    text: 'کارآموز متعهد به حضور منظم در کلاسهاست؛ غیبت بیش از حد مجاز طبق آییننامه، موجب حذف از دوره و عدم معرفی به آزمون خواهد شد.',
+    text: 'هنرجو متعهد به حضور منظم در کلاسهاست؛ غیبت بیش از حد مجاز طبق آییننامه، موجب حذف از دوره و عدم معرفی به آزمون خواهد شد.',
     isEntirelyBold: false,
   },
   {
     id: 3,
     prefix: '۳.',
-    text: 'آموزشگاه هیچگونه مسئولیتی در قبال قبولی یا مردودی کارآموز در آزمونهای فنی و حرفهای ندارد.',
+    text: 'آموزشگاه هیچگونه مسئولیتی در قبال قبولی یا مردودی هنرجو در آزمونهای فنی و حرفهای ندارد.',
     isEntirelyBold: true,
   },
   {
     id: 4,
     prefix: '۴.',
-    text: 'هزینههای ثبتنام آزمون، صدور گواهینامه و آزمونهای مجدد، جدا از شهریه آموزشی بوده و بر عهده کارآموز است.',
+    text: 'هزینههای ثبتنام آزمون، صدور گواهینامه و آزمونهای مجدد، جدا از شهریه آموزشی بوده و بر عهده هنرجو است.',
     isEntirelyBold: false,
   },
   {
@@ -127,7 +127,7 @@ export const ContractPrintForm: React.FC<ContractPrintFormProps> = ({
                   {organizationName}
                 </span>
                 <span className="text-xs text-slate-500 font-medium">
-                  سامانه مدیریت و ثبتنام کارآموزان
+                  سامانه مدیریت و ثبتنام هنرجویان
                 </span>
               </div>
             </div>
@@ -152,11 +152,11 @@ export const ContractPrintForm: React.FC<ContractPrintFormProps> = ({
             </h1>
           </div>
 
-          {/* Section 1: مشخصات کارآموز */}
+          {/* Section 1: مشخصات هنرجو */}
           <section className="mb-8">
             <div className="flex items-center gap-2 mb-4">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-900 inline-block" />
-              <h2 className="text-lg font-bold text-slate-900">مشخصات کارآموز :</h2>
+              <h2 className="text-lg font-bold text-slate-900">مشخصات هنرجو :</h2>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50/70 p-5 rounded-xl border border-slate-200 text-sm leading-relaxed">
               <div className="flex items-center gap-2">
@@ -180,11 +180,11 @@ export const ContractPrintForm: React.FC<ContractPrintFormProps> = ({
             </div>
           </section>
 
-          {/* Section 2: شرایط و تعهدات کارآموز */}
+          {/* Section 2: شرایط و تعهدات هنرجو */}
           <section className="mb-8">
             <div className="flex items-center gap-2 mb-4">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-900 inline-block" />
-              <h2 className="text-lg font-bold text-slate-900">شرایط و تعهدات کارآموز:</h2>
+              <h2 className="text-lg font-bold text-slate-900">شرایط و تعهدات هنرجو:</h2>
             </div>
             <div className="space-y-3.5 pr-1">
               {rules.map((rule) => {
@@ -235,7 +235,7 @@ export const ContractPrintForm: React.FC<ContractPrintFormProps> = ({
             {/* Student Signature */}
             <div className="flex flex-col items-start gap-4">
               <div className="text-sm font-bold text-slate-900">
-                امضا و اثرانگشت کارآموز (با قبول شرایط فوق)
+                امضا و اثرانگشت هنرجو (با قبول شرایط فوق)
               </div>
               <div className="w-full h-28 border border-dashed border-slate-300 rounded-lg flex flex-col justify-between p-3 bg-slate-50/40">
                 <span className="text-xs text-slate-400">[محل امضا و اثرانگشت]</span>

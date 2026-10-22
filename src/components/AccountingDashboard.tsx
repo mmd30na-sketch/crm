@@ -96,6 +96,7 @@ export default function AccountingDashboard({
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [expenseTitle, setExpenseTitle]             = useState('');
   const [expenseAmount, setExpenseAmount]           = useState('');
+  const [expenseDate, setExpenseDate]               = useState(new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' }));
   const [expenseCategory, setExpenseCategory]       = useState('قبوض و نگهداری');
   const [expenseDesc, setExpenseDesc]               = useState('');
   const [isSubmittingExpense, setIsSubmittingExpense]= useState(false);
@@ -178,7 +179,7 @@ export default function AccountingDashboard({
       return {
         id: `pay_${p.id}`,
         type: 'income' as const,
-        title: st ? `شهریه کارآموز: ${st.first_name} ${st.last_name}` : 'دریافتی صندوق',
+        title: st ? `شهریه هنرجو: ${st.first_name} ${st.last_name}` : 'دریافتی صندوق',
         amount: p.amount,
         date: normJalali(p.pay_date_jalali) || '—',
         method: PAY_METHOD_LABELS[p.pay_method || ''] || p.pay_method || 'سایر',
@@ -206,10 +207,12 @@ export default function AccountingDashboard({
         amount: parseFloat(expenseAmount),
         category: expenseCategory,
         description: expenseDesc,
+        expenseDate: expenseDate.trim() || undefined,
       });
       onRefresh();
       setIsExpenseModalOpen(false);
       setExpenseTitle(''); setExpenseAmount(''); setExpenseDesc('');
+      setExpenseDate(new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' }));
     } catch (err: any) {
       alert(err?.message || 'خطا در ثبت هزینه');
     } finally {
@@ -230,7 +233,7 @@ export default function AccountingDashboard({
           </div>
           <div>
             <h2 className="text-base font-black text-slate-900">پیشخوان حسابداری و تحلیل نمودارهای مالی</h2>
-            <p className="text-xs text-slate-400 mt-0.5">تحلیل آنلاین درآمدها، روند نقدینگی، بدهی کارآموزان و تراز هزینه‌ها</p>
+            <p className="text-xs text-slate-400 mt-0.5">تحلیل آنلاین درآمدها، روند نقدینگی، بدهی هنرجویان و تراز هزینه‌ها</p>
           </div>
         </div>
 
@@ -240,7 +243,7 @@ export default function AccountingDashboard({
               const stu = new Map(students.map((st) => [st.id, st]));
               downloadCsv<Payment>(`payments-${new Date().toISOString().slice(0, 10)}`, filteredPayments, [
                 { header: 'تاریخ', value: (p) => p.pay_date_jalali },
-                { header: 'کارآموز', value: (p) => { const st = stu.get(p.student_id); return st ? `${st.first_name} ${st.last_name}` : p.student_id; } },
+                { header: 'هنرجو', value: (p) => { const st = stu.get(p.student_id); return st ? `${st.first_name} ${st.last_name}` : p.student_id; } },
                 { header: 'کد ملی', value: (p) => stu.get(p.student_id)?.national_code },
                 { header: 'مبلغ', value: (p) => p.amount }, { header: 'روش', value: (p) => p.pay_method },
                 { header: 'نوع', value: (p) => p.payment_kind }, { header: 'توضیحات', value: (p) => p.description },
@@ -528,6 +531,12 @@ export default function AccountingDashboard({
                 <label className="block text-xs font-semibold text-slate-600 mb-1">مبلغ هزینه (تومان) *</label>
                 <input type="number" required value={expenseAmount} onChange={e => setExpenseAmount(e.target.value)} placeholder="مثال: 500000"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl font-mono focus:outline-none focus:border-rose-400" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">تاریخ هزینه (شمسی)</label>
+                <input type="text" value={expenseDate} onChange={e => setExpenseDate(e.target.value)} placeholder="۱۴۰۵/۰۸/۰۱"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl font-mono focus:outline-none focus:border-rose-400 text-left" dir="ltr" />
               </div>
 
               <div>

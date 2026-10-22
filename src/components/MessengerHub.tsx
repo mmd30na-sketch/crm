@@ -92,25 +92,25 @@ const DEFAULT_TEMPLATES = [
   {
     id: 'welcome',
     title: 'خوش‌آمدگویی و ثبت‌نام',
-    body: 'آقای [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. زمان شروع کلاس‌ها به شما اطلاع داده می‌شود.',
+    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. زمان شروع کلاس‌ها به شما اطلاع داده می‌شود.',
     color: 'sky',
   },
   {
     id: 'debt_warning',
     title: 'یادآوری بدهی مالی',
-    body: 'آقای [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید.',
+    body: 'هنرجوی گرامی [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید.',
     color: 'rose',
   },
   {
     id: 'exam_schedule',
     title: 'زمان‌بندی آزمون',
-    body: 'آقای [نام] [خانوادگی]؛ آزمون شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
+    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ آزمون شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
     color: 'teal',
   },
   {
     id: 'class_change',
     title: 'تغییر زمان کلاس',
-    body: 'آقای [نام]؛ زمان جلسه کلاس شما تغییر یافت. جهت هماهنگی زمان جدید با آموزشگاه تماس بگیرید.',
+    body: 'هنرجوی گرامی [نام]؛ زمان جلسه کلاس شما تغییر یافت. جهت هماهنگی زمان جدید با آموزشگاه تماس بگیرید.',
     color: 'amber',
   },
 ];
@@ -545,7 +545,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="جستجوی گفتگوی کارآموز..."
+                  placeholder="جستجوی گفتگوی هنرجو..."
                   value={chatSearch}
                   onChange={e => setChatSearch(e.target.value)}
                   className="w-full pr-8 pl-3 py-1.5 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:border-sky-400 focus:bg-white transition"
@@ -617,7 +617,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                         <ChannelBadge channel={thread.channel} />
                         {thread.person && (
                           <span title={thread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${thread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {({ student: 'کارآموز', registration: 'ثبت‌نام', legacy: 'کارآموز قدیمی', lead: 'سرنخ' } as Record<string, string>)[thread.person.kind] || 'مرتبط'}
+                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[thread.person.kind] || 'مرتبط'}
                           </span>
                         )}
                       </div>
@@ -651,7 +651,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                         <ChannelBadge channel={activeThread.channel} />
                         {activeThread.person && (
                           <span title={activeThread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${activeThread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            {({ student: 'کارآموز', registration: 'ثبت‌نام', legacy: 'کارآموز قدیمی', lead: 'سرنخ' } as Record<string, string>)[activeThread.person.kind] || 'مرتبط'}
+                            {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[activeThread.person.kind] || 'مرتبط'}
                           </span>
                         )}
                       </div>
@@ -760,7 +760,26 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                     {QUICK_TEMPLATES.map(tmpl => (
                       <button
                         key={tmpl.id}
-                        onClick={() => setMessageInput(tmpl.body.replace('[نام]', activeThread.senderName))}
+                        onClick={() => {
+                          const parts = activeThread.senderName.trim().split(/\s+/);
+                          const fName = parts[0] || '';
+                          const lName = parts.slice(1).join(' ') || '';
+                          const stu = activeThread.person.kind === 'student' && activeThread.person.id ? students.find(s => s.id === activeThread.person.id) : null;
+                          const enr = stu ? enrollments.filter(e => e.student_id === stu.id) : [];
+                          const primaryEnr = enr[0];
+                          const courseTitle = primaryEnr ? (courses.find(c => c.id === primaryEnr.course_id)?.title || '') : '';
+                          const totalPaid = stu ? payments.filter(p => p.student_id === stu.id).reduce((sum, p) => sum + (p.amount || 0), 0) : 0;
+                          const totalTuition = enr.reduce((sum, e) => sum + (e.final_price ?? courses.find(c => c.id === e.course_id)?.tuition ?? 0), 0);
+                          const debt = Math.max(0, totalTuition - totalPaid);
+                          let text = tmpl.body
+                            .replace(/\[نام\]/g, fName)
+                            .replace(/\[خانوادگی\]/g, lName)
+                            .replace(/\[دوره\]/g, courseTitle)
+                            .replace(/\[بدهی\]/g, debt > 0 ? `${debt.toLocaleString('fa-IR')} تومان` : '۰ تومان')
+                            .replace(/\[تاریخ\]/g, new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' }))
+                            .replace(/\[ساعت\]/g, '۰۹:۰۰');
+                          setMessageInput(text);
+                        }}
                         className="px-2.5 py-1 bg-white hover:bg-sky-50 text-slate-700 hover:text-sky-700 border border-slate-200 rounded-lg whitespace-nowrap transition cursor-pointer font-medium"
                       >
                         {tmpl.title}
@@ -846,7 +865,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* Select Student */}
                   <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">انتخاب کارآموز از دفترچه پرونده‌ها</label>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">انتخاب هنرجو از دفترچه پرونده‌ها</label>
                     <div className="relative">
                       <User className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <select

@@ -59,7 +59,13 @@ export default function BulkMessaging({ courses }: { courses: Course[] }) {
     try {
       const r = await p4.createCampaign({ name: name || 'کمپین', template, filters: finalFilters(), dry_run: dry, throttle_ms: throttle, confirm: dry ? undefined : confirmText });
       setMsg(dry ? `اجرای آزمایشی برای ${r.total.toLocaleString('fa-IR')} گیرنده ساخته شد؛ هیچ پیامی ارسال نمی‌شود.` : `کمپین در صف ارسال قرار گرفت (${r.total.toLocaleString('fa-IR')} گیرنده).`);
-      setConfirmReal(false); setConfirmText(''); await loadCampaigns();
+      setConfirmReal(false); setConfirmText('');
+      if (!dry) {
+        setPreview(null);
+        setName('');
+        setTemplate('');
+      }
+      await loadCampaigns();
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
   const openLog = async (c: p4.Campaign) => { setOpenCampaign(c); setRecipients(await p4.campaignRecipients(c.id).catch(() => [])); };
@@ -81,7 +87,7 @@ export default function BulkMessaging({ courses }: { courses: Course[] }) {
           <div className="grid grid-cols-2 gap-2">
             <label className="space-y-1">گروه
               <select value={filters.target} onChange={(e) => setFilters({ target: e.target.value as any, channel: filters.channel })} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
-                <option value="students">کارآموزان</option><option value="term">همه افراد یک دوره</option><option value="leads">سرنخ‌ها</option>
+                <option value="students">هنرجویان</option><option value="term">همه افراد یک دوره</option><option value="leads">سرنخ‌ها</option>
               </select></label>
             <label className="space-y-1">کانال
               <select value={channel} onChange={(e) => setFilters({ ...filters, channel: e.target.value as p4.CampaignChannel })} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
@@ -90,7 +96,13 @@ export default function BulkMessaging({ courses }: { courses: Course[] }) {
             {filters.target === 'term' ? (<>
               <label className="space-y-1 col-span-2">دوره و شماره دوره
                 <select value={filters.term_id ? `id:${filters.term_id}` : filters.term_number ? `num:${filters.term_number}` : ''}
-                  onChange={(e) => { const [k, v] = e.target.value.split(':'); setFilters({ target: 'term', channel: filters.channel, debtors: filters.debtors, ...(k === 'id' ? { term_id: Number(v) } : k === 'num' ? { term_number: Number(v) } : {}) }); }}
+                  onChange={(e) => {
+                    const [k, v] = e.target.value.split(':');
+                    const next: typeof filters = { target: 'term', channel: filters.channel, debtors: filters.debtors };
+                    if (k === 'id') next.term_id = Number(v);
+                    else if (k === 'num') next.term_number = Number(v);
+                    setFilters(next);
+                  }}
                   className="w-full border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
                   <option value="">— انتخاب کنید —</option>
                   <optgroup label="همه رشته‌ها با شماره دوره">

@@ -131,12 +131,12 @@ export const ReceiptDoc: React.FC<{ data: DocData }> = ({ data: d }) => (
       <tr><th>عنوان دوره</th><td>{d.courseTitle || '—'}</td></tr>
     </tbody></table>
     <p className="pd-note">
-      ثبت‌نام کارآموز فوق در دوره یادشده در تاریخ <Num v={d.date} /> در این آموزشگاه انجام شد. این رسید را تا پایان دوره نزد خود نگه دارید.
+      ثبت‌نام هنرجو فوق در دوره یادشده در تاریخ <Num v={d.date} /> در این آموزشگاه انجام شد. این رسید را تا پایان دوره نزد خود نگه دارید.
     </p>
     <div className="pd-spacer" />
     <div className="pd-sign">
       <div>مهر و امضای آموزشگاه</div>
-      <div>امضای کارآموز</div>
+      <div>امضای هنرجو</div>
     </div>
     <Foot d={d} />
   </div>
@@ -146,7 +146,7 @@ export const ReceiptDoc: React.FC<{ data: DocData }> = ({ data: d }) => (
 export const FileSummaryDoc: React.FC<{ data: DocData }> = ({ data: d }) => (
   <div className="pd-page pd-summary" dir="rtl" data-doc="IDCard">
     <Head d={d} />
-    <div className="pd-title">برگ خلاصه پرونده کارآموز</div>
+    <div className="pd-title">برگ خلاصه پرونده هنرجو</div>
     <Meta d={d} />
     <div className="pd-top">
       <table className="pd-rows"><tbody>
@@ -182,7 +182,7 @@ export const ContractDoc: React.FC<{ data: DocData }> = ({ data: d }) => {
       <div className="pd-title">قرارداد آموزشی</div>
       <Meta d={d} />
       <p className="pd-intro">
-        این قرارداد میان «<b>{d.academy.name}</b>» و کارآموز «<b>{d.student.fullName || '……………'}</b>»
+        این قرارداد میان «<b>{d.academy.name}</b>» و هنرجو «<b>{d.student.fullName || '……………'}</b>»
         به کد ملی <b>{d.student.nationalCode ? <Num v={d.student.nationalCode} /> : '……………'}</b> برای دوره
         «<b>{d.courseTitle || '……………'}</b>» با شهریه <b><Num v={formatAmount(d.money.tuition)} /> تومان</b> منعقد می‌شود
         (پرداخت‌شده تا این تاریخ: <b><Num v={formatAmount(d.money.paid)} /> تومان</b>).
@@ -194,7 +194,7 @@ export const ContractDoc: React.FC<{ data: DocData }> = ({ data: d }) => {
       <div className="pd-spacer" />
       <div className="pd-sign">
         <div>مهر و امضای آموزشگاه</div>
-        <div>امضا و اثرانگشت کارآموز<br /><span style={{ fontSize: '7.5pt' }}>(با قبول شرایط فوق)</span></div>
+        <div>امضا و اثرانگشت هنرجو<br /><span style={{ fontSize: '7.5pt' }}>(با قبول شرایط فوق)</span></div>
       </div>
       <Foot d={d} text="" />
     </div>
