@@ -131,7 +131,7 @@ export default function SiteRequestsHistory({ courses }: { courses: Course[] }) 
                     <td className="p-2 text-left">
                       <button type="button" disabled={isStudent || inLeads || busy !== null || !phoneKey(r.phone_number)} onClick={() => void addLead(r)}
                         className={`flex items-center gap-1 whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold ${isStudent || inLeads ? 'bg-slate-100 text-slate-500' : 'bg-violet-600 text-white hover:bg-violet-700'} disabled:cursor-not-allowed disabled:opacity-70`}>
-                        {isStudent ? <><Check className="h-3.5 w-3.5" /> کارآموز شده</> : inLeads ? <><Check className="h-3.5 w-3.5" /> در سرنخ‌ها هست</> : <><UserPlus className="h-3.5 w-3.5" /> {busy === r.tracking_code ? 'در حال افزودن...' : 'افزودن به سرنخ‌ها'}</>}
+                        {isStudent ? <><Check className="h-3.5 w-3.5" /> هنرجو شده</> : inLeads ? <><Check className="h-3.5 w-3.5" /> در سرنخ‌ها هست</> : <><UserPlus className="h-3.5 w-3.5" /> {busy === r.tracking_code ? 'در حال افزودن...' : 'افزودن به سرنخ‌ها'}</>}
                       </button>
                     </td>
                   </tr>

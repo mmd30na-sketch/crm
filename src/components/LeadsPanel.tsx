@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import FilterSheet from './FilterSheet';
 import { Contact, Plus, Search, X, Loader2, UserCheck, ClipboardList, Edit3 } from 'lucide-react';
 import {
@@ -67,6 +67,9 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [convertCode, setConvertCode] = useState('');
   const [converting, setConverting] = useState(false);
+  // Synchronous guard: the disabled attribute only lands after the next render, so two fast clicks
+  // could otherwise start two conversions before React re-renders the button.
+  const convertingRef = useRef(false);
   const [convertError, setConvertError] = useState<string | null>(null);
   const [convertMsg, setConvertMsg] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState('');
@@ -145,28 +148,31 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
 
   const closeDrawer = () => {
     setSelectedLead(null);
-    setConvertCode(''); setConvertError(null); setConvertMsg(null); setConverting(false);
+    setConvertCode(''); setConvertError(null); setConvertMsg(null); setConverting(false); convertingRef.current = false;
     setTaskTitle(''); setTaskDue(''); setTaskError(null); setTaskSuccess(null); setTaskSaving(false);
   };
 
   const doConvert = async () => {
     if (!selectedLead) return;
+    if (convertingRef.current) return; // already converting: ignore the second click
+    convertingRef.current = true;
     setConverting(true); setConvertError(null);
     try {
       let code: string | undefined;
       if (!selectedLead.national_code) {
         const check = checkNationalCode(convertCode);
-        if (check.error) { setConvertError(check.error); setConverting(false); return; }
+        if (check.error) { setConvertError(check.error); setConverting(false); convertingRef.current = false; return; }
         code = check.code;
       }
       const res = await convertLead(selectedLead.id, code);
-      setConvertMsg(`به کارآموز تبدیل شد (پرونده #${res.student_id})`);
+      setConvertMsg(`به هنرجو تبدیل شد (پرونده #${res.student_id})`);
       setSelectedLead(prev => prev ? { ...prev, status: 'converted', converted_student_id: res.student_id } : prev);
       props.onConverted?.(res.student_id);
       load();
     } catch (err: any) {
-      setConvertError(err?.message || 'تبدیل به کارآموز ناموفق بود.');
+      setConvertError(err?.message || 'تبدیل به هنرجو ناموفق بود.');
     } finally {
+      convertingRef.current = false;
       setConverting(false);
     }
   };
@@ -362,7 +368,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
 
                 {selectedLead.status === 'converted' ? (
                   <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
-                    تبدیل‌شده به کارآموز #{selectedLead.converted_student_id}
+                    تبدیل‌شده به هنرجو #{selectedLead.converted_student_id}
                   </span>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -372,7 +378,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
                     )}
                     <button type="button" disabled={converting} onClick={doConvert}
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 inline-flex items-center gap-1 cursor-pointer">
-                      <UserCheck className="w-3.5 h-3.5" />{converting ? 'در حال تبدیل...' : 'تبدیل به کارآموز'}
+                      <UserCheck className="w-3.5 h-3.5" />{converting ? 'در حال تبدیل...' : 'تبدیل به هنرجو'}
                     </button>
                   </div>
                 )}

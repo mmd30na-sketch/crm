@@ -683,14 +683,28 @@ export async function insertEnrollment(body: any) {
 
 export async function listPayments() {
   const rows = await sql(
-    // Only payments of an existing enrollment are listed/counted (rows without one are left in the table).
-    `SELECT p.payment_id AS id, p.enrollment_id, p.student_id, p.pay_date_jalali,
+    // Every payment is listed, also when it has no enrollment (legacy rows migrated with EnrollRef = 0 -> NULL)
+    // or its enrollment was deleted: the LEFT JOIN keeps the row and COALESCE fills the course/enrollment
+    // fields, so received money can no longer disappear from the report.
+    `SELECT p.payment_id AS id,
+            COALESCE(e.enrollment_id, p.enrollment_id) AS enrollment_id,
+            p.student_id,
+            COALESCE(e.course_id, 0) AS course_id,
+            COALESCE(c.title, '') AS course_title,
+            p.pay_date_jalali,
             CAST(p.amount AS DECIMAL(15,2)) AS amount, p.pay_method, p.payment_kind, p.description
      FROM payments p
-     JOIN enrollments e ON e.enrollment_id = p.enrollment_id
+     LEFT JOIN enrollments e ON e.enrollment_id = p.enrollment_id
+     LEFT JOIN courses c ON c.course_id = e.course_id
      ORDER BY p.payment_id DESC`
   );
-  return rows.map((p: any) => ({ ...p, amount: Number(p.amount || 0) }));
+  return rows.map((p: any) => ({
+    ...p,
+    enrollment_id: p.enrollment_id === null || p.enrollment_id === undefined ? null : Number(p.enrollment_id),
+    course_id: Number(p.course_id || 0),
+    course_title: p.course_title || '',
+    amount: Number(p.amount || 0),
+  }));
 }
 
 export type PaymentRequest = {

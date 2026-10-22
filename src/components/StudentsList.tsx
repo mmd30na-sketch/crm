@@ -298,9 +298,10 @@ export default function StudentsList({
   const handleOpenMessaging = (student: Student) => {
     const fin = getStudentFinance(student.id);
     setMessagingStudent(student);
+    const fullName = `${student.first_name || ''} ${student.last_name || ''}`.trim() || 'هنرجوی گرامی';
     setMessageText(fin.debt > 0
-      ? `آقای ${student.first_name} ${student.last_name}؛ با سلام، خواهشمند است نسبت به تسویه مانده بدهی شهریه خود به مبلغ ${formatToman(fin.debt)} اقدام فرمایید.`
-      : `آقای ${student.first_name} ${student.last_name}؛ پرونده آموزشی و مالی شما با موفقیت تسویه گردید.`);
+      ? `هنرجوی گرامی، ${fullName}؛ با سلام، خواهشمند است نسبت به تسویه مانده بدهی شهریه خود به مبلغ ${formatToman(fin.debt)} اقدام فرمایید.`
+      : `هنرجوی گرامی، ${fullName}؛ پرونده آموزشی و مالی شما با موفقیت تسویه گردید.`);
     setMessageSent(false); setMessageError(null); setMessageResult('');
   };
 
@@ -335,7 +336,7 @@ export default function StudentsList({
             <div className="flex items-center gap-2">
               <UserCheck className="w-4 h-4 text-sky-500" />
               <span className="text-sm font-bold text-slate-700">پرونده فعال</span>
-              <span className="text-xs text-slate-400">/ کارآموز انتخاب‌شده</span>
+              <span className="text-xs text-slate-400">/ هنرجوی انتخاب‌شده</span>
               {selectedHiddenByFilters && <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">در فیلتر فعلی لیست نیست</span>}
             </div>
             <div className="flex items-center gap-2">
@@ -525,7 +526,7 @@ export default function StudentsList({
 
       {!isDesktop && mobileProfileOpen && profileCardEl && (
         <ModalPortal>
-          <div className="fixed inset-0 z-50 bg-slate-100 flex flex-col" dir="rtl" role="dialog" aria-modal="true" aria-label="پرونده کارآموز">
+          <div className="fixed inset-0 z-50 bg-slate-100 flex flex-col" dir="rtl" role="dialog" aria-modal="true" aria-label="پرونده هنرجو">
             <div className="flex items-center justify-between gap-2 px-3 h-14 bg-white border-b border-slate-200 shrink-0">
               <h3 className="text-sm font-black text-slate-800 truncate">پرونده {selectedStudent ? `${selectedStudent.first_name} ${selectedStudent.last_name}` : ''}</h3>
               <button type="button" onClick={closeMobileProfile} aria-label="بستن" className="min-w-10 min-h-10 flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100"><X className="w-5 h-5" /></button>
@@ -550,12 +551,12 @@ export default function StudentsList({
             {/* Left: Title */}
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-slate-400" />
-              <span className="text-sm font-bold text-slate-700">لیست کارآموزان</span>
+              <span className="text-sm font-bold text-slate-700">لیست هنرجویان</span>
               <span className="text-xs font-bold text-sky-600 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full font-mono">
                 {filteredStudents.length} نفر
               </span>
               {courseNumberFilter !== 'all' && (
-                <button onClick={() => setCourseNumberFilter('all')} title="نمایش کارآموزان همه دوره‌ها"
+                <button onClick={() => setCourseNumberFilter('all')} title="نمایش هنرجویان همه دوره‌ها"
                   className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full hover:bg-amber-100 transition cursor-pointer">
                   فقط دوره شماره {courseNumberFilter} — نمایش همه
                 </button>
@@ -569,7 +570,7 @@ export default function StudentsList({
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="جستجوی کارآموز (نام، کدملی، موبایل)..."
+                  placeholder="جستجوی هنرجو (نام، کدملی، موبایل)..."
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
                   className="w-44 sm:w-52 pr-9 pl-3 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100 transition"
@@ -649,7 +650,7 @@ export default function StudentsList({
         {filteredStudents.length === 0 ? (
           <div className="py-20 flex flex-col items-center gap-3 text-slate-400">
             <AlertCircle className="w-10 h-10" />
-            <p className="text-sm font-semibold">هیچ کارآموزی یافت نشد</p>
+            <p className="text-sm font-semibold">هیچ هنرجویی یافت نشد</p>
             <p className="text-xs">فیلترها یا عبارت جستجو را تغییر دهید</p>
           </div>
         ) : (
@@ -658,7 +659,7 @@ export default function StudentsList({
               <thead className="sticky top-0 z-10 bg-slate-50">
                                 <tr className="border-b border-slate-200 bg-slate-50/80">
                   {[
-                    { label: 'کارآموز', hideCls: '' },
+                    { label: 'هنرجو', hideCls: '' },
                     { label: 'کد ملی', hideCls: 'hidden md:table-cell' },
                     { label: 'شماره همراه', hideCls: 'hidden sm:table-cell' },
                     { label: 'دوره آموزشی', hideCls: '' },
@@ -769,7 +770,7 @@ export default function StudentsList({
         {filteredStudents.length > 0 && (
           <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/60 flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400">
-              نمایش <strong className="text-slate-600">{(pageStart + 1).toLocaleString('fa-IR')}</strong> تا <strong className="text-slate-600">{(pageStart + pagedStudents.length).toLocaleString('fa-IR')}</strong> از <strong className="text-slate-600">{filteredStudents.length.toLocaleString('fa-IR')}</strong> کارآموز
+              نمایش <strong className="text-slate-600">{(pageStart + 1).toLocaleString('fa-IR')}</strong> تا <strong className="text-slate-600">{(pageStart + pagedStudents.length).toLocaleString('fa-IR')}</strong> از <strong className="text-slate-600">{filteredStudents.length.toLocaleString('fa-IR')}</strong> هنرجو
               {filteredStudents.length !== studentsList.length && <> (کل: {studentsList.length.toLocaleString('fa-IR')})</>}
             </span>
 

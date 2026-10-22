@@ -4,7 +4,7 @@
  * Each enrollment's balance is clamped at 0 before anything is summed: an enrollment that was settled by
  * lowering final_price to what was paid (or overpaid) must not cancel another enrollment's debt.
  * Only payments of one of the given enrollments count: rows without (or with a deleted) enrollment are
- * left in the table but ignored, like the server's payment listing.
+ * listed by the server but ignored here, because they cannot be attributed to an enrollment's balance.
  */
 
 export type BalanceEnrollment = { id: number; final_price?: number | null };

@@ -42,7 +42,10 @@ async def link_contact(s, msg):
     c = msg["contact"]; chat = msg["chat"]["id"]
     if msg["chat"].get("type") != "private" or c.get("user_id") != msg["from"]["id"]:
         return "❌ لطفاً فقط شماره خودتان را با دکمه «اتصال به ربات» بفرستید."
-    mobile = B.norm_mobile(c.get("phone_number", ""))
+    # Only ASCII digits leave this bot: the number is forwarded to the CRM's phone lookup, so it must never
+    # be able to break a query (ER_PARSE_ERROR 1064) or act as a wildcard. The CRM binds it with a
+    # placeholder; keeping it a plain literal here also holds when a caller interpolates it.
+    mobile = "".join(ch for ch in str(B.norm_mobile(c.get("phone_number", ""))) if ch in "0123456789")
     secret = E("MESSENGER_WEBHOOK_SECRET")
     if not mobile or not secret: return "متأسفانه اتصال الان ممکن نیست. لطفاً با آموزشگاه تماس بگیرید."
     try:

@@ -48,8 +48,8 @@ const NAV_ITEMS = [
   },
   {
     id: 'students',
-    label: 'کارآموزان',
-    sublabel: 'مدیریت کارآموزان',
+    label: 'هنرجویان',
+    sublabel: 'مدیریت هنرجویان',
     icon: Users,
     color: 'teal',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],

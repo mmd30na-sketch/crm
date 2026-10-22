@@ -112,7 +112,8 @@ export default function AccountingDashboard({
     return true;
   };
 
-  // Only payments of an existing enrollment count (the server lists only those; this guards stale state).
+  // Only payments of an enrollment in the selected course/term count here: the server lists every payment
+  // (also the ones without an enrollment), and those cannot be attributed to a course or term.
   const termNumbers = Array.from(new Set(enrollments
     .filter(e => accCourse === 'all' || String(e.course_id) === accCourse)
     .map(e => e.course_number).filter((n): n is number => n != null && Number(n) > 0))).sort((a, b) => b - a);

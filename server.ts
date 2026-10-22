@@ -2351,10 +2351,22 @@ app.post('/api/payments', asyncHandler(async (req, res) => {
 app.get('/api/payments', async (req, res) => {
   try {
     if (chabokan.isMysqlEnabled()) return res.json(await chabokan.listPayments());
-    // Only payments of an existing enrollment count (same rule as the MySQL listing).
+    // Every payment is listed, also when it has no enrollment (or its enrollment was deleted):
+    // the enrollment/course fields are filled like the MySQL listing's COALESCE, so received money
+    // can no longer disappear from the report.
     const db = readDb();
-    const ids = new Set(db.enrollments.map(e => e.id));
-    res.json(db.payments.filter(p => p.enrollment_id && ids.has(p.enrollment_id)));
+    const enrollments = new Map(db.enrollments.map(e => [Number(e.id), e]));
+    const courses = new Map(db.courses.map(c => [Number(c.id), c]));
+    res.json(db.payments.map(p => {
+      const enr = p.enrollment_id === null || p.enrollment_id === undefined ? undefined : enrollments.get(Number(p.enrollment_id));
+      const course = enr ? courses.get(Number(enr.course_id)) : undefined;
+      return {
+        ...p,
+        enrollment_id: p.enrollment_id === null || p.enrollment_id === undefined ? null : Number(p.enrollment_id),
+        course_id: enr ? Number(enr.course_id) : 0,
+        course_title: course?.title || '',
+      };
+    }));
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
