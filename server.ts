@@ -385,7 +385,7 @@ const initialDb: DatabaseSchema = {
     { id: 3, title: 'هزینه شارژ اینترنت و قبوض تلفن آموزشگاه', amount: 620000, pay_method: 'بانکداری اینترنتی', pay_date_jalali: '1405/05/15', description: 'قبوض تلفن ثابت و شارژ اینترنت فیبر نوری شاتل' },
   ],
   reportTemplates: [
-    { key: 'standard_receipt', title: 'فیش پرداخت رسمی کارآموز (A5)', category: 'receipt', active: true, body: '<div class="receipt-print">...</div>' },
+    { key: 'standard_receipt', title: 'فیش پرداخت رسمی هنرجو (A5)', category: 'receipt', active: true, body: '<div class="receipt-print">...</div>' },
     { key: 'standard_contract', title: 'قرارداد رسمی آموزش رانندگی', category: 'contract', active: true, body: '<div class="contract-print">...</div>' },
   ],
   staff_users: [],
@@ -1677,7 +1677,7 @@ async function deliverMessage(opts: { channel: string; recipient: string; messag
       chatId = (student as any)?.rubika_chat_id || null;
     }
     if (!getGateways().rubika_bot_token) { status = 'not_configured'; note = 'توکن ربات روبیکا تنظیم نشده است.'; }
-    else if (!chatId) { status = 'awaiting_user_init'; note = 'کارآموز هنوز /start نزده؛ پیام در صف ماند.'; }
+    else if (!chatId) { status = 'awaiting_user_init'; note = 'هنرجو هنوز /start نزده؛ پیام در صف ماند.'; }
     else {
       try {
         const r = await sendRubikaMessage(chatId, message);
@@ -1826,7 +1826,7 @@ app.post('/api/messenger/send', async (req, res) => {
     const r = await deliverMessage({ channel, recipient: phone, message, studentId: req.body?.student_id });
     const labels: Record<string, string> = {
       sent: 'پیام ارسال شد.',
-      awaiting_user_init: 'کارآموز هنوز /start نزده؛ پیام در صف ماند.',
+      awaiting_user_init: 'هنرجو هنوز /start نزده؛ پیام در صف ماند.',
       not_configured: r.note || 'درگاه ارسال تنظیم نشده است.',
       failed: `ارسال ناموفق بود${r.note ? `: ${r.note}` : '.'}`,
     };
@@ -2110,12 +2110,12 @@ app.put('/api/students/:id', asyncHandler(async (req, res) => {
   }
   const hasStatus = body.status !== undefined && body.status !== null && body.status !== '';
   if (hasStatus && !['active', 'suspended', 'graduated'].includes(body.status)) {
-    return res.status(400).json({ error: 'وضعیت کارآموز نامعتبر است.' });
+    return res.status(400).json({ error: 'وضعیت هنرجو نامعتبر است.' });
   }
   const db = readDb();
   const codeChanged = !!data.national_code && data.national_code !== normalizeNationalCode(current.national_code);
   if (codeChanged && db.students.some(s => sameCode(s, data.national_code) && s.id !== studentId)) {
-    return res.status(409).json({ error: 'کارآموز دیگری با این کد ملی ثبت شده است.' });
+    return res.status(409).json({ error: 'هنرجوی دیگری با این کد ملی ثبت شده است.' });
   }
   const index = db.students.findIndex(s => s.id === studentId);
   if (index === -1) return res.status(404).json({ error: 'Student not found' });
@@ -2234,7 +2234,7 @@ app.post('/api/enrollments', async (req, res) => {
     if (!studentId || !courseId) return res.status(400).json({ error: 'student_id و course_id الزامی است.' });
 
     const [students, courses, enrollments] = await Promise.all([loadStudents(), loadCourses(), loadEnrollments()]);
-    if (!students.some(s => Number(s.id) === studentId)) return res.status(404).json({ error: 'کارآموز یافت نشد.' });
+    if (!students.some(s => Number(s.id) === studentId)) return res.status(404).json({ error: 'هنرجو یافت نشد.' });
     const course = courses.find(c => Number(c.id) === courseId);
     if (!course) return res.status(404).json({ error: 'دوره آموزشی یافت نشد.' });
     if (!courseIsActive(course)) return res.status(409).json({ error: 'این دوره غیرفعال است و ثبت‌نام جدید ندارد.' });
@@ -2254,7 +2254,7 @@ app.post('/api/enrollments', async (req, res) => {
     // A missing class number (null) must still match another enrollment without one.
     const sameClass = (e: any) => (e.course_number === null || e.course_number === undefined || e.course_number === '' ? null : Number(e.course_number)) === courseNumber;
     if (enrollments.some(e => Number(e.student_id) === studentId && Number(e.course_id) === courseId && sameClass(e))) {
-      return res.status(409).json({ error: 'این کارآموز قبلاً در همین دوره و کلاس ثبت‌نام شده است.' });
+      return res.status(409).json({ error: 'این هنرجو قبلاً در همین دوره و کلاس ثبت‌نام شده است.' });
     }
 
     const signup = requestDate(b.signup_date_jalali, 'تاریخ ثبت‌نام');
@@ -2294,7 +2294,7 @@ app.get('/api/enrollments', async (req, res) => {
 app.post('/api/payments', asyncHandler(async (req, res) => {
   const paymentData = req.body || {};
   const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
-  if (!studentId) return res.status(400).json({ error: 'کارآموز پرداخت مشخص نیست.' });
+  if (!studentId) return res.status(400).json({ error: 'هنرجوی پرداخت مشخص نیست.' });
   const rawAmount = paymentData.amount;
   const amount = typeof rawAmount === 'number' || typeof rawAmount === 'string' ? Math.round(Number(rawAmount)) : NaN;
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'مبلغ پرداخت باید بیشتر از صفر باشد.' });
@@ -2308,7 +2308,7 @@ app.post('/api/payments', asyncHandler(async (req, res) => {
   const description = sanitizeString(paymentData.description ?? paymentData.notes, 400);
   const overpayError = (remaining: number) => remaining > 0
     ? `مبلغ پرداختی از مانده شهریه (${remaining.toLocaleString('fa-IR')} تومان) بیشتر است.`
-    : 'برای این کارآموز مانده‌ای برای پرداخت وجود ندارد.';
+    : 'برای این هنرجو مانده‌ای برای پرداخت وجود ندارد.';
 
   if (chabokan.isMysqlEnabled()) {
     // Check + every part + the cached amount_paid in one transaction with the enrollment rows locked.
@@ -2324,10 +2324,10 @@ app.post('/api/payments', asyncHandler(async (req, res) => {
   }
 
   const db = readDb();
-  if (!db.students.some(s => s.id === studentId)) return res.status(404).json({ error: 'کارآموز یافت نشد.' });
+  if (!db.students.some(s => s.id === studentId)) return res.status(404).json({ error: 'هنرجو یافت نشد.' });
   if (linkedEnrollmentId) {
     const enr = db.enrollments.find(e => e.id === linkedEnrollmentId);
-    if (!enr || enr.student_id !== studentId) return res.status(404).json({ error: 'ثبت‌نام مربوط به این کارآموز یافت نشد.' });
+    if (!enr || enr.student_id !== studentId) return res.status(404).json({ error: 'ثبت‌نام مربوط به این هنرجو یافت نشد.' });
   }
   const { order, owed } = jsonStudentOwed(db, studentId);
   const remaining = payableAmount(owed, linkedEnrollmentId);
@@ -2710,7 +2710,7 @@ app.post('/api/enrollments/:id/receipt', uploadReceipt.single('pdf'), asyncHandl
   const ctx = await loadEnrollmentForPdf(enrollmentId);
   if (!ctx) return res.status(404).json({ error: 'ثبت‌نام پیدا نشد.' });
   const { enrollment, student } = ctx;
-  if (!student) return res.status(404).json({ error: 'کارآموز این ثبت‌نام پیدا نشد.' });
+  if (!student) return res.status(404).json({ error: 'هنرجوی این ثبت‌نام پیدا نشد.' });
 
   const field = DOC_PATH_FIELDS[kind];
   const target = registrationPdfRelPath({ courseNumber: enrollment.course_number, lastName: student.last_name, studentId: student.id, kind });
@@ -3074,7 +3074,7 @@ function copilotToolGuide(tools: any[]): string {
 }
 
 const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
-  `شما «دستیار هوشمند»${academyDisplayName() ? ` ${academyDisplayName()}` : ' آموزشگاه'} هستید؛ دستیار عمومی CRM آموزشگاه، فارسی‌زبان، دقیق و حرفه‌ای، برای امور مالی، کارآموزان، سرنخ‌ها، کلاس‌ها و دوره‌ها، کارهای کارکنان، پیام‌رسان، ثبت‌نام‌های سایت و آمار بازدید سایت. کارآموزان این آموزشگاه همه آقا هستند و دوره‌ها آموزش کارت هوشمند (رانندگان و مدیران حمل‌ونقل) است، نه آموزش رانندگی.`,
+  `شما «دستیار هوشمند»${academyDisplayName() ? ` ${academyDisplayName()}` : ' آموزشگاه'} هستید؛ دستیار عمومی CRM آموزشگاه، فارسی‌زبان، دقیق و حرفه‌ای، برای امور مالی، هنرجویان و فراگیران، سرنخ‌ها، کلاس‌ها و دوره‌ها، کارهای کارکنان، پیام‌رسان، ثبت‌نام‌های سایت و آمار بازدید سایت. مخاطبین این مرکز عموماً رانندگان و مدیران حمل‌ونقل هستند و دوره‌ها آموزش کارت هوشمند است، نه آموزش رانندگی.`,
   'قوانین کار:',
   '۱) برای هر عدد، آمار، موجودی، بدهی یا گردش مالی حتماً از ابزارهای در دسترس استفاده کنید و هرگز عددی را حدس نزنید.',
   '۲) اگر پرسش کاربر نیازمند داده‌ای است که ابزاری برای آن وجود ندارد، صادقانه بگویید داده در دسترس نیست.',

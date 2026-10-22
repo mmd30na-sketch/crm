@@ -545,7 +545,7 @@ export async function updateStudent(id: number, body: any) {
       // Same lock as insertStudent/approve: no other student can take this code while we write it.
       await lockNationalCode(conn, nationalCode);
       const clash = (await findStudentsByCode(conn, nationalCode, true)).find((r) => Number(r.student_id) !== id);
-      if (clash) throw httpError(409, 'کارآموز دیگری با این کد ملی ثبت شده است.');
+      if (clash) throw httpError(409, 'هنرجوی دیگری با این کد ملی ثبت شده است.');
     }
     await conn.query(`UPDATE students SET ${sets.join(', ')} WHERE student_id = ?`, params);
     await conn.commit();
@@ -727,14 +727,14 @@ export async function insertPaymentAtomic(input: PaymentRequest): Promise<any[]>
   try {
     await conn.beginTransaction();
     const [stu] = await conn.query('SELECT student_id FROM students WHERE student_id = ? FOR UPDATE', [input.studentId]);
-    if (!(stu as any[]).length) throw httpError(404, 'کارآموز یافت نشد.');
+    if (!(stu as any[]).length) throw httpError(404, 'هنرجو یافت نشد.');
     const [enrRows] = await conn.query(
       'SELECT enrollment_id, final_price FROM enrollments WHERE student_id = ? ORDER BY enrollment_id ASC FOR UPDATE',
       [input.studentId]
     );
     const enrollments = (enrRows as any[]).map((e) => ({ id: Number(e.enrollment_id), final_price: Number(e.final_price || 0) }));
     if (input.linkedEnrollmentId && !enrollments.some((e) => e.id === input.linkedEnrollmentId)) {
-      throw httpError(404, 'ثبت‌نام مربوط به این کارآموز یافت نشد.');
+      throw httpError(404, 'ثبت‌نام مربوط به این هنرجو یافت نشد.');
     }
     const ids = enrollments.map((e) => e.id);
     // Same rule as the listings: only payments of an existing enrollment count.
@@ -746,7 +746,7 @@ export async function insertPaymentAtomic(input: PaymentRequest): Promise<any[]>
     if (input.amount > remaining) {
       throw httpError(400, remaining > 0
         ? `مبلغ پرداختی از مانده شهریه (${remaining.toLocaleString('fa-IR')} تومان) بیشتر است.`
-        : 'برای این کارآموز مانده‌ای برای پرداخت وجود ندارد.');
+        : 'برای این هنرجو مانده‌ای برای پرداخت وجود ندارد.');
     }
     const parts = allocatePayment(ids, owed, input.amount, input.linkedEnrollmentId);
     const insertedIds: number[] = [];
@@ -948,8 +948,8 @@ export async function approveWebsiteRegistration(input: ApproveRegistrationInput
       const firstName = cleanText(o.first_name ?? (parts[0] || ''), 100);
       const lastName = cleanText(o.last_name ?? parts.slice(1).join(' '), 100);
       const phone = o.phone_number ?? toLatinDigits(reg.phone_number).replace(/[\s-]/g, '');
-      if (!firstName || !lastName) throw httpError(400, 'نام و نام خانوادگی کارآموز مشخص نیست؛ آن‌ها را وارد کنید.');
-      if (!phone) throw httpError(400, 'شماره همراه کارآموز مشخص نیست.');
+      if (!firstName || !lastName) throw httpError(400, 'نام و نام خانوادگی هنرجو مشخص نیست؛ آن‌ها را وارد کنید.');
+      if (!phone) throw httpError(400, 'شماره همراه هنرجو مشخص نیست.');
       const columns = ['first_name', 'last_name', 'national_code', 'phone_number', 'address'];
       const values: any[] = [firstName, lastName, nationalCode, phone, cleanText(o.address ?? '', 400)];
       if (studentHasBirthDate && o.birth_date_jalali) { columns.push('birth_date_jalali'); values.push(o.birth_date_jalali); }
@@ -966,7 +966,7 @@ export async function approveWebsiteRegistration(input: ApproveRegistrationInput
       'SELECT enrollment_id FROM enrollments WHERE student_id = ? AND course_id = ? AND course_number = ? LIMIT 1',
       [studentId, input.courseId, courseNumber]
     );
-    if ((dup as any[]).length) throw httpError(409, 'این کارآموز قبلاً در همین دوره و کلاس ثبت‌نام شده است.');
+    if ((dup as any[]).length) throw httpError(409, 'این هنرجو قبلاً در همین دوره و کلاس ثبت‌نام شده است.');
 
     const [enr] = await conn.query(
       `INSERT INTO enrollments (student_id, course_id, course_number, signup_date_jalali, final_price, amount_paid)

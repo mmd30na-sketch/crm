@@ -21,6 +21,7 @@ export default function AuditBackupPanel() {
   const [entity, setEntity] = useState('');
   const [page, setPage] = useState(0);
   const [backups, setBackups] = useState<api.BackupFile[] | null>(null);
+  const [backupsDirConfigured, setBackupsDirConfigured] = useState<boolean>(true);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   const PAGE = 50;
@@ -29,7 +30,7 @@ export default function AuditBackupPanel() {
     setLoading(true); setErr('');
     try {
       const [a, b] = await Promise.all([api.getAuditLog({ limit: PAGE, offset: page * PAGE, entity }), api.getBackups()]);
-      setRows(a.rows); setTotal(a.total); setBackups(b.files);
+      setRows(a.rows); setTotal(a.total); setBackups(b.files); setBackupsDirConfigured(b.dir_configured);
     } catch (e: any) { setErr(e.message || 'خطا'); }
     finally { setLoading(false); }
   };
@@ -43,7 +44,8 @@ export default function AuditBackupPanel() {
           <span className="text-[11px] text-slate-500">هر شب ساعت ۳ بامداد · نگهداری ۱۴ روز</span>
         </div>
         {backups === null ? <p className="text-xs text-slate-400">در حال بررسی...</p>
-          : backups.length === 0 ? <p className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">هنوز هیچ بکاپی ثبت نشده است.</p>
+          : !backupsDirConfigured ? <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">پوشه بکاپ سرور تنظیم نشده است یا دسترسی به آن مقدور نیست (CRM_BACKUP_DIR).</p>
+          : backups.length === 0 ? <p className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">هنوز هیچ بکاپی در مسیر بکاپها ثبت نشده است.</p>
           : (
             <div className="text-xs space-y-1">
               <p className={`font-bold ${Date.now() - new Date(backups[0].mtime).getTime() > 36 * 3600e3 ? 'text-rose-600' : 'text-emerald-700'}`}>

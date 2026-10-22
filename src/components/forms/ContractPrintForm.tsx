@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import * as api from '../../api/client';
 
 export interface ContractPrintFormProps {
+  enrollmentId?: number;
   organizationName?: string;
   contractDate?: string;
   caseNumber?: string;
@@ -53,16 +55,59 @@ const DEFAULT_RULES = [
 ];
 
 export const ContractPrintForm: React.FC<ContractPrintFormProps> = ({
-  organizationName = 'کارت هوشمند کرمانشاه',
-  contractDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' }),
-  caseNumber = '………',
-  studentName = '………………',
-  nationalId = '………………',
-  courseTitle = '………………',
-  paymentAmount = '………………',
+  enrollmentId,
+  organizationName: propOrg,
+  contractDate: propDate,
+  caseNumber: propCase,
+  studentName: propStudent,
+  nationalId: propNational,
+  courseTitle: propCourse,
+  paymentAmount: propAmount,
   rules = DEFAULT_RULES,
   onPrint,
 }) => {
+  const [loadedData, setLoadedData] = useState<{
+    org?: string;
+    date?: string;
+    caseNo?: string;
+    student?: string;
+    national?: string;
+    course?: string;
+    amount?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!enrollmentId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ctx = await api.fetchEnrollmentDocContext(enrollmentId);
+        if (cancelled) return;
+        const paid = ctx.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+        const finalPrice = ctx.enrollment.final_price ?? ctx.course?.tuition ?? 0;
+        setLoadedData({
+          org: ctx.settings?.academy_name || 'آموزشگاه رانندگی پایه یکم و دوم تیروژ',
+          date: new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' }),
+          caseNo: String(ctx.enrollment.id),
+          student: `${ctx.student?.first_name || ''} ${ctx.student?.last_name || ''}`.trim(),
+          national: ctx.student?.national_code || '',
+          course: ctx.course?.title || '',
+          amount: finalPrice > 0 ? `${finalPrice.toLocaleString('fa-IR')} تومان (پرداختی: ${paid.toLocaleString('fa-IR')} تومان)` : `${paid.toLocaleString('fa-IR')} تومان`,
+        });
+      } catch (e) {
+        console.warn('Failed to load contract enrollment data:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enrollmentId]);
+
+  const organizationName = propOrg || loadedData?.org || 'آموزشگاه رانندگی پایه یکم و دوم تیروژ';
+  const contractDate = propDate || loadedData?.date || new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' });
+  const caseNumber = propCase || loadedData?.caseNo || '………';
+  const studentName = propStudent || loadedData?.student || '………………';
+  const nationalId = propNational || loadedData?.national || '………………';
+  const courseTitle = propCourse || loadedData?.course || '………………';
+  const paymentAmount = propAmount || loadedData?.amount || '………………';
   const handlePrint = () => {
     if (onPrint) {
       onPrint();

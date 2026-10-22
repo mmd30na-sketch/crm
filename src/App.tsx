@@ -479,7 +479,9 @@ export default function App() {
           id="main-content-scroll"
         >
           {new URLSearchParams(window.location.search).get('print') === 'contract' ? (
-              <ContractPrintForm />
+              <ContractPrintForm
+                enrollmentId={Number(new URLSearchParams(window.location.search).get('enrollment')) || undefined}
+              />
           ) : new URLSearchParams(window.location.search).get('print') === 'all' ? (
               <PrintPreview enrollmentId={Number(new URLSearchParams(window.location.search).get('enrollment')) || undefined} />
           ) : loading ? (
