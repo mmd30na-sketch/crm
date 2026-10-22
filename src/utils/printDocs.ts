@@ -148,11 +148,13 @@ export function buildDocData(input: BuildDocInput): DocData {
   const firstName = String(student.first_name ?? '').trim();
   const lastName = String(student.last_name ?? '').trim();
   const fullName = `${firstName} ${lastName}`.trim();
-  const tuition = Number(enrollment.final_price) || Number(course?.tuition) || 0;
+  const tuition = (enrollment.final_price != null && !isNaN(Number(enrollment.final_price)))
+    ? Number(enrollment.final_price)
+    : (Number(course?.tuition) || 0);
   const paid = input.paid ?? (input.payments ?? []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const money = paymentSummary(tuition, paid);
   const courseNumber = enrollment.course_number != null && String(enrollment.course_number) !== '' ? String(enrollment.course_number) : '';
-  const academyName = String(settings?.academy_name ?? '').trim();
+  const academyName = String(settings?.academy_name ?? '').trim() || 'آموزشگاه';
   const courseTitle = String(course?.title ?? '').trim();
   const nationalCode = String(student.national_code ?? '').trim();
   return {

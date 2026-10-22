@@ -4,7 +4,8 @@
  * (2) MySQL runs as copilot_ro (SELECT-only grants, no secret tables/columns) with MAX_EXECUTION_TIME;
  * (3) the site SQLite file is opened readonly + query_only. Every attempt is written to crm_copilot_queries.
  */
-import { Parser } from 'node-sql-parser';
+import nodeSqlParser from 'node-sql-parser';
+const Parser = (nodeSqlParser as any).Parser || nodeSqlParser;
 import mysql from 'mysql2/promise';
 import Database from 'better-sqlite3';
 

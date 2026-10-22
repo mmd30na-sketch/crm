@@ -63,7 +63,7 @@ export default function SiteRequestsHistory({ courses }: { courses: Course[] }) 
       await createLead({
         first_name: parts.length > 1 ? parts[0] : null,
         last_name: parts.length > 1 ? parts.slice(1).join(' ') : (parts[0] || r.tracking_code),
-        phone_number: `0${key}`,
+        phone_number: key.startsWith('0') ? key : `0${key}`,
         national_code: r.national_code || null,
         course_id: CATEGORY[String(r.category || '')]?.id ?? null,
         source_id: websiteSource?.id ?? null,

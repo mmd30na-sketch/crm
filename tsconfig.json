@@ -22,5 +22,20 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "src",
+    "server.ts",
+    "mysql-socks.ts",
+    "courseTerms.ts",
+    "phase4.ts",
+    "copilot-*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "reports",
+    "backend-server",
+    ".worktrees"
+  ]
 }
