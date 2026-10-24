@@ -26,10 +26,18 @@ import {
   Key,
   Layers,
   ChevronRight,
+  Palette,
+  Sun,
+  Moon,
+  Monitor,
+  ImagePlus,
+  RotateCcw,
+  Upload,
 } from 'lucide-react';
-import { Course, StaffRole, StaffUser } from '../types';
+import { Course, StaffRole, StaffUser, ThemeConfig } from '../types';
 import * as api from '../api/client';
 import AuditBackupPanel from './AuditBackupPanel';
+import { useTheme } from '../theme/ThemeProvider';
 
 interface SettingsProps {
   courses: Course[];
@@ -37,7 +45,46 @@ interface SettingsProps {
 }
 
 export default function Settings({ courses, onRefresh }: SettingsProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database'>('academy');
+  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database' | 'theme'>('academy');
+
+  /* ── 0. Theme («تم»): applied app-wide through the ThemeProvider, saved on the server ── */
+  const { theme, setTheme } = useTheme();
+  const [isSavingTheme, setIsSavingTheme] = useState(false);
+  const [themeSaved, setThemeSaved] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const updateTheme = (patch: Partial<ThemeConfig>) => setTheme({ ...theme, ...patch });
+  const handleSaveTheme = async () => {
+    setIsSavingTheme(true);
+    try {
+      await api.saveThemeSettings(theme);
+      setThemeSaved(true);
+      setTimeout(() => setThemeSaved(false), 2500);
+    } catch {
+      alert('خطا در ذخیره تنظیمات تم');
+    } finally {
+      setIsSavingTheme(false);
+    }
+  };
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setIsUploadingLogo(true);
+    try {
+      setTheme(await api.uploadThemeLogo(file));
+    } catch (err: any) {
+      alert(err?.message || 'بارگذاری لوگو ناموفق بود');
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+  const handleLogoReset = async () => {
+    try {
+      setTheme(await api.saveThemeSettings({ ...theme, logo_url: null }));
+    } catch {
+      alert('خطا در بازگردانی لوگو');
+    }
+  };
 
   /* ── 1. Rubika & SMS gateways: stored on the server, secrets are never sent back ── */
   const [rubikaBotToken, setRubikaBotToken]   = useState('');
@@ -338,6 +385,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
   /* Navigation Pills List */
   const NAV_ITEMS = [
     { id: 'academy', label: 'مشخصات آموزشگاه', icon: Building, color: 'sky' },
+    { id: 'theme', label: 'تم و ظاهر', icon: Palette, color: 'sky' },
     { id: 'courses', label: 'لیست دوره‌ها', icon: BookOpen, count: courses.length, color: 'violet' },
     { id: 'gateways', label: 'وب‌سرویس و درگاه‌ها', icon: Cpu, color: 'teal' },
     { id: 'database', label: 'دیتابیس، بکاپ و تغییرات', icon: Database, color: 'amber' },
@@ -487,6 +535,121 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 </button>
               </div>
             </form>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              SUBTAB 1.5: THEME («تم») — MODE, PRIMARY COLOR, FONT, LOGO
+          ══════════════════════════════════════════════ */}
+          {activeSubTab === 'theme' && (
+            <div className="space-y-5 fade-in">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Palette className="w-4 h-4" style={{ color: 'var(--brand-primary)' }} />
+                  تم ظاهری سیستم
+                </h3>
+                <span className="text-[11px] text-slate-400">تغییرات بلافاصله در کل پنل اعمال می‌شوند</span>
+              </div>
+
+              {/* Mode */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">حالت نمایش</label>
+                <div className="grid grid-cols-3 gap-2 max-w-sm">
+                  {([
+                    { id: 'light', label: 'روشن', icon: Sun },
+                    { id: 'dark', label: 'تاریک', icon: Moon },
+                    { id: 'system', label: 'سیستمی', icon: Monitor },
+                  ] as const).map(m => {
+                    const Icon = m.icon;
+                    const selected = theme.mode === m.id;
+                    return (
+                      <button key={m.id} type="button" onClick={() => updateTheme({ mode: m.id })}
+                        className={`flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
+                          selected ? 'text-white border-transparent' : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                        }`}
+                        style={selected ? { background: 'linear-gradient(135deg, var(--brand-primary), var(--brand-primary-dark))' } : undefined}>
+                        <Icon className="w-4 h-4" />{m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {theme.mode === 'system' && (
+                  <p className="text-[11px] text-slate-400 mt-1.5">حالت سیستمی با تنظیمات تاریک/روشن دستگاه شما همگام است.</p>
+                )}
+              </div>
+
+              {/* Primary color */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">رنگ اصلی (برند)</label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {['#0ea5e9', '#2563eb', '#14b8a6', '#8b5cf6', '#f43f5e', '#f59e0b', '#10b981', '#334155'].map(c => {
+                    const selected = theme.primary.toLowerCase() === c;
+                    return (
+                      <button key={c} type="button" onClick={() => updateTheme({ primary: c })} title={c}
+                        className={`w-9 h-9 rounded-xl border-2 transition cursor-pointer ${selected ? 'border-slate-900 scale-110' : 'border-white shadow-sm hover:scale-105'}`}
+                        style={{ background: c }} />
+                    );
+                  })}
+                  <label className="flex items-center gap-1.5 px-2.5 py-1.5 border border-dashed border-slate-300 rounded-xl cursor-pointer hover:border-slate-400 transition" title="رنگ دلخواه">
+                    <input type="color" value={theme.primary} onChange={e => updateTheme({ primary: e.target.value })}
+                      className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent p-0" />
+                    <span className="text-[11px] font-bold text-slate-500">رنگ دلخواه</span>
+                  </label>
+                  <span className="text-[11px] font-mono text-slate-400" dir="ltr">{theme.primary}</span>
+                </div>
+              </div>
+
+              {/* Font */}
+              <div className="max-w-sm">
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">فونت رابط کاربری</label>
+                <select value={theme.font} onChange={e => updateTheme({ font: e.target.value as ThemeConfig['font'] })}
+                  className="w-full px-3.5 py-2.5 text-xs border border-slate-200 rounded-xl focus:outline-none font-bold text-slate-800 bg-white cursor-pointer">
+                  <option value="vazirmatn" style={{ fontFamily: 'Vazirmatn' }}>وزیرمتن (پیش‌فرض)</option>
+                  <option value="tahoma" style={{ fontFamily: 'Tahoma' }}>تاهوما (Tahoma)</option>
+                  <option value="system" style={{ fontFamily: 'system-ui' }}>فونت سیستم (System UI)</option>
+                </select>
+              </div>
+
+              {/* Logo */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">لوگو (نمایش در سایدبار و صفحه ورود)</label>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="h-16 w-16 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center overflow-hidden">
+                    {theme.logo_url ? (
+                      <img src={theme.logo_url} alt="لوگو" className="max-h-full max-w-full object-contain" />
+                    ) : (
+                      <Palette className="w-6 h-6 text-slate-300" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="px-3.5 py-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer">
+                      <ImagePlus className="w-4 h-4" />
+                      {isUploadingLogo ? 'در حال بارگذاری...' : 'انتخاب تصویر'}
+                      <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleLogoUpload} disabled={isUploadingLogo} />
+                    </label>
+                    {theme.logo_url && (
+                      <button type="button" onClick={handleLogoReset}
+                        className="px-3.5 py-2.5 border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer">
+                        <RotateCcw className="w-4 h-4" />بازگردانی پیش‌فرض
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-slate-400">JPG، PNG یا WEBP — حداکثر ۲ مگابایت</span>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-3 border-t border-slate-100">
+                {themeSaved && (
+                  <span className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">
+                    <CheckCircle className="w-4 h-4" />تم با موفقیت ذخیره شد
+                  </span>
+                )}
+                <button type="button" onClick={handleSaveTheme} disabled={isSavingTheme}
+                  className="mr-auto px-5 py-2.5 text-white text-xs font-bold rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  style={{ background: 'linear-gradient(135deg, var(--brand-primary), var(--brand-primary-dark))' }}>
+                  {isSavingTheme ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" />ذخیره...</> : <><Upload className="w-3.5 h-3.5" />ذخیره تم</>}
+                </button>
+              </div>
+            </div>
           )}
 
           {/* ══════════════════════════════════════════════

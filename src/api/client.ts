@@ -17,6 +17,7 @@ import {
   Expense,
   WebsiteRegistration,
   StaffUser,
+  ThemeConfig,
 } from '../types';
 import { cleanText, photoPath, jalaliToday } from '../utils/normalize';
 import type { DocKind } from '../utils/printDocs';
@@ -702,6 +703,53 @@ export async function saveReceiptSettings(settings: ReceiptSettings): Promise<Re
   });
   if (!res.ok) throw new Error('Error saving receipt settings');
   return settings;
+}
+
+// ─────────────────────────────────────────────────────────
+// THEME SETTINGS («تم»)
+// ─────────────────────────────────────────────────────────
+
+function normalizeTheme(raw: any): ThemeConfig {
+  const d = raw && typeof raw === 'object' ? raw : {};
+  const primary = typeof d.primary === 'string' ? d.primary.trim() : '';
+  return {
+    mode: d.mode === 'light' || d.mode === 'dark' || d.mode === 'system' ? d.mode : 'system',
+    primary: /^#[0-9a-fA-F]{6}$/.test(primary) ? primary : '#0ea5e9',
+    font: d.font === 'vazirmatn' || d.font === 'tahoma' || d.font === 'system' ? d.font : 'vazirmatn',
+    logo_url: typeof d.logo_url === 'string' && d.logo_url.trim() ? d.logo_url.trim() : null,
+  };
+}
+
+/** GET /api/settings/theme — public (the login screen shows the logo without a session). */
+export async function fetchThemeSettings(): Promise<ThemeConfig> {
+  const res = await apiFetch('/settings/theme');
+  if (!res.ok) throw new Error('دریافت تنظیمات تم ناموفق بود');
+  return normalizeTheme(await res.json());
+}
+
+/** PUT /api/settings/theme — admin only. `logo_url: null` resets to the built-in logo. */
+export async function saveThemeSettings(theme: ThemeConfig): Promise<ThemeConfig> {
+  const res = await apiFetch('/settings/theme', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: theme.mode,
+      primary: theme.primary,
+      font: theme.font,
+      logo_url: theme.logo_url ?? null,
+    }),
+  });
+  if (!res.ok) throw await serverError(res, 'ذخیره تم ناموفق بود.');
+  return normalizeTheme(await res.json());
+}
+
+/** POST /api/settings/theme/logo — admin only, image only (JPG/PNG/WEBP), max 2 MB. */
+export async function uploadThemeLogo(file: File): Promise<ThemeConfig> {
+  const formData = new FormData();
+  formData.append('logo', file);
+  const res = await apiFetch('/settings/theme/logo', { method: 'POST', body: formData });
+  if (!res.ok) throw await serverError(res, 'بارگذاری لوگو ناموفق بود.');
+  return normalizeTheme(await res.json());
 }
 
 // ─────────────────────────────────────────────────────────

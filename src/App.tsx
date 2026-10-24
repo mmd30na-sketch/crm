@@ -36,6 +36,7 @@ import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
 import SiteRequestsHistory from './components/SiteRequestsHistory';
 import { taskSummary } from './api/phase4';
+import { ThemeProvider, useTheme } from './theme/ThemeProvider';
 
 const NAV_ITEMS = [
   {
@@ -162,6 +163,15 @@ const ACTIVE_BADGE_MAP: Record<string, string> = {
 };
 
 export default function App() {
+  return (
+    <ThemeProvider>
+      <AppShell />
+    </ThemeProvider>
+  );
+}
+
+function AppShell() {
+  const { theme } = useTheme();
   const [authed, setAuthed] = useState<boolean>(!!api.getAuthToken());
   const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
@@ -307,7 +317,7 @@ export default function App() {
     <CopilotProvider onOpenTab={() => handleActiveTabChange('copilot')} isAdmin={role === 'admin'}>
     <div
       className="flex h-screen h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
-      style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #f8fafc 50%, #f0fdf4 100%)' }}
+      style={{ background: 'var(--app-bg)' }}
       dir="rtl"
       id="app-root"
     >
@@ -327,8 +337,12 @@ export default function App() {
         {/* Brand Header */}
         <div className="p-5 pb-4">
           <div className="flex items-center gap-3 mb-1">
-            <div className="carla-brand-logo">
-              <span className="text-white font-black text-base leading-none">C</span>
+            <div className="carla-brand-logo overflow-hidden">
+              {theme?.logo_url ? (
+                <img src={theme.logo_url} alt="لوگوی آموزشگاه" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-white font-black text-base leading-none">C</span>
+              )}
             </div>
             <div>
               <h1 className="text-white text-base font-bold tracking-tight leading-tight">سامانه CRM</h1>
@@ -353,9 +367,13 @@ export default function App() {
                 onClick={() => handleActiveTabChange(item.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 text-right group ${
                   isActive
-                    ? 'bg-gradient-to-l from-sky-600 to-sky-500 text-white shadow-lg shadow-sky-900/30'
+                    ? 'text-white shadow-lg'
                     : 'text-slate-400 hover:text-white hover:bg-white/6'
                 }`}
+                style={isActive ? {
+                  background: 'linear-gradient(to left, var(--brand-primary-dark), var(--brand-primary))',
+                  boxShadow: '0 10px 15px -3px rgba(var(--brand-primary-rgb), 0.45)',
+                } : undefined}
               >
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all ${
                   isActive ? 'bg-white/20' : `bg-white/5 group-hover:bg-white/10`
@@ -367,7 +385,7 @@ export default function App() {
                     {item.label}
                   </div>
                   <div className={`text-[10px] leading-tight truncate transition-all ${
-                    isActive ? 'text-sky-100/80' : 'text-slate-600 group-hover:text-slate-400'
+                    isActive ? 'text-white/70' : 'text-slate-600 group-hover:text-slate-400'
                   }`}>
                     {item.sublabel}
                   </div>

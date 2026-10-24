@@ -1,9 +1,18 @@
 @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
 @import "tailwindcss";
 
+/* Dark mode follows the `dark` class on <html> (set by src/theme/ThemeProvider.tsx). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* The brand colors are runtime CSS variables (--brand-*), so a theme change in
+     Settings → «تم» re-colors every primary surface without a reload. */
+  --color-primary: var(--brand-primary, #0ea5e9);
+  --color-primary-dark: var(--brand-primary-dark, #0284c7);
+  --color-primary-soft: var(--brand-primary-soft, #f0f9ff);
 
   /* === CARLA LIGHT CORPORATE PALETTE === */
   --color-brand-50:  #f0f9ff;
@@ -31,13 +40,24 @@
 }
 
 /* === BASE === */
+/* Runtime theme variables (set by src/theme/ThemeProvider.tsx; the defaults match the
+   server defaults so the first paint before JS loads already uses the brand color). */
+:root {
+  --brand-primary: #0ea5e9;
+  --brand-primary-rgb: 14, 165, 233;
+  --brand-primary-dark: #0284c7;
+  --brand-primary-soft: #f0f9ff;
+  --app-font: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
+  --app-bg: linear-gradient(135deg, #f0f9ff 0%, #f8fafc 50%, #f0fdf4 100%);
+}
+
 html {
   font-size: 104%;
   scroll-behavior: smooth;
 }
 
 body {
-  font-family: var(--font-sans);
+  font-family: var(--app-font, var(--font-sans));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: #f8fafc;
@@ -80,8 +100,8 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* Active nav item with gradient */
 .carla-nav-active {
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%) !important;
-  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.35);
+  background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-primary-dark) 100%) !important;
+  box-shadow: 0 4px 16px rgba(var(--brand-primary-rgb), 0.35);
   color: white !important;
 }
 
@@ -128,7 +148,7 @@ input[type="number"]::-webkit-outer-spin-button {
   border-radius: 99px 99px 0 0;
 }
 
-.carla-stat-card.brand::before { background: linear-gradient(90deg, #0ea5e9, #38bdf8); }
+.carla-stat-card.brand::before { background: linear-gradient(90deg, var(--brand-primary), rgba(var(--brand-primary-rgb), 0.55)); }
 .carla-stat-card.teal::before  { background: linear-gradient(90deg, #14b8a6, #2dd4bf); }
 .carla-stat-card.purple::before{ background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
 .carla-stat-card.rose::before  { background: linear-gradient(90deg, #f43f5e, #fb7185); }
@@ -150,7 +170,7 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* Premium Button Styles */
 .btn-primary {
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-primary-dark) 100%);
   color: white;
   border-radius: 0.625rem;
   padding: 0.5rem 1.25rem;
@@ -159,13 +179,13 @@ input[type="number"]::-webkit-outer-spin-button {
   border: none;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+  box-shadow: 0 2px 8px rgba(var(--brand-primary-rgb), 0.3);
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
 }
 .btn-primary:hover {
-  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.4);
+  box-shadow: 0 4px 16px rgba(var(--brand-primary-rgb), 0.4);
   transform: translateY(-1px);
 }
 .btn-primary:active { transform: translateY(0); }
@@ -215,8 +235,8 @@ input[type="number"]::-webkit-outer-spin-button {
   font-family: var(--font-sans);
 }
 .carla-input:focus {
-  border-color: #0ea5e9;
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px rgba(var(--brand-primary-rgb), 0.12);
 }
 .carla-input::placeholder { color: #94a3b8; }
 
@@ -263,7 +283,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .carla-progress-fill {
   height: 100%;
   border-radius: 99px;
-  background: linear-gradient(90deg, #0ea5e9, #2dd4bf);
+  background: linear-gradient(90deg, var(--brand-primary), #2dd4bf);
   transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -318,8 +338,8 @@ input[type="number"]::-webkit-outer-spin-button {
 .carla-spinner {
   width: 40px; height: 40px;
   border-radius: 50%;
-  border: 3px solid #e0f2fe;
-  border-top-color: #0ea5e9;
+  border: 3px solid var(--brand-primary-soft);
+  border-top-color: var(--brand-primary);
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -327,12 +347,12 @@ input[type="number"]::-webkit-outer-spin-button {
 /* Sidebar Brand Logo */
 .carla-brand-logo {
   width: 36px; height: 36px;
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  background: linear-gradient(135deg, var(--brand-primary) 0%, var(--brand-primary-dark) 100%);
   border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.4);
+  box-shadow: 0 4px 12px rgba(var(--brand-primary-rgb), 0.4);
 }
 
 /* Divider */
@@ -380,8 +400,8 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .carla-search input:focus {
   background: white;
-  border-color: #0ea5e9;
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px rgba(var(--brand-primary-rgb), 0.1);
 }
 .carla-search-icon {
   position: absolute;
@@ -428,10 +448,104 @@ input[type="number"]::-webkit-outer-spin-button {
   cursor: zoom-in;
 }
 .photo-thumb:hover {
-  border-color: #0ea5e9;
-  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.2);
+  border-color: var(--brand-primary);
+  box-shadow: 0 4px 16px rgba(var(--brand-primary-rgb), 0.2);
   transform: scale(1.03);
 }
+
+/* === DARK MODE — main layout surfaces ===
+   The `dark` class on <html> is set by src/theme/ThemeProvider.tsx (light/dark/system).
+   Only the shared surfaces are re-colored here; individual pages keep their own structure. */
+.dark body { background: #020617; }
+.dark {
+  --app-bg: #020617;
+}
+
+/* Sidebar / header */
+.dark .carla-sidebar {
+  background: #0b1220;
+  border-left-color: rgba(255, 255, 255, 0.06);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.35);
+}
+.dark .carla-header {
+  background: #0f172a;
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.25);
+}
+/* Header icon buttons follow the primary color (overrides the hardcoded sky hover). */
+#main-header button:hover {
+  color: var(--brand-primary);
+  background: rgba(var(--brand-primary-rgb), 0.1);
+}
+
+/* Cards, modals, stat cards */
+.dark .carla-card,
+.dark .carla-stat-card {
+  background: #111827;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.dark .carla-card:hover { box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.3); }
+.dark .carla-stat-card:hover { box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45); }
+.dark .carla-modal {
+  background: #111827;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.dark .carla-modal-overlay { background: rgba(2, 6, 23, 0.7); }
+
+/* Tables */
+.dark .carla-table th {
+  background: #0f172a;
+  color: #94a3b8;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.dark .carla-table tr { border-bottom-color: rgba(255, 255, 255, 0.06); }
+.dark .carla-table tr:hover { background: rgba(255, 255, 255, 0.04); }
+.dark .carla-table tr.selected-row { background: rgba(var(--brand-primary-rgb), 0.18); }
+.dark .carla-table td { color: #cbd5e1; }
+
+/* Inputs */
+.dark .carla-input {
+  background: #0f172a;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+.dark .carla-input::placeholder { color: #64748b; }
+.dark .carla-search input {
+  background: #0f172a;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.dark .carla-search input:focus { background: #111827; }
+.dark .carla-search-icon { color: #64748b; }
+.dark input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.dark select,
+.dark textarea {
+  color-scheme: dark;
+}
+
+/* Status pills that assumed a light badge background */
+.dark .badge-active { background: rgba(16, 185, 129, 0.14); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.35); }
+.dark .badge-suspended { background: rgba(251, 146, 60, 0.14); color: #fdba74; border-color: rgba(251, 146, 60, 0.35); }
+.dark .badge-graduated { background: rgba(96, 165, 250, 0.14); color: #93c5fd; border-color: rgba(96, 165, 250, 0.35); }
+
+/* Generic light surfaces used across pages (kept readable on the dark app background) */
+.dark .bg-white { background-color: #111827; }
+.dark .bg-slate-50 { background-color: #0f172a; }
+.dark .bg-slate-100 { background-color: #1e293b; }
+.dark .bg-slate-200 { background-color: #334155; }
+.dark .border-slate-100 { border-color: rgba(255, 255, 255, 0.07); }
+.dark .border-slate-200 { border-color: rgba(255, 255, 255, 0.09); }
+.dark .border-white\/10 { border-color: rgba(255, 255, 255, 0.09); }
+.dark .divide-slate-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(255, 255, 255, 0.06); }
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(255, 255, 255, 0.07); }
+.dark .text-slate-900 { color: #f1f5f9; }
+.dark .text-slate-800 { color: #e2e8f0; }
+.dark .text-slate-700 { color: #e2e8f0; }
+.dark .text-slate-600 { color: #cbd5e1; }
+.dark .text-slate-500 { color: #94a3b8; }
+.dark .text-slate-400 { color: #94a3b8; }
+.dark .hover\:bg-slate-50:hover { background-color: rgba(255, 255, 255, 0.04); }
+.dark .hover\:bg-slate-100:hover { background-color: rgba(255, 255, 255, 0.06); }
+.dark .hover\:bg-white\/6:hover { background-color: rgba(255, 255, 255, 0.06); }
 
 /* === MOBILE / TABLET RESPONSIVE (desktop >=1024px unchanged) === */
 html, body { max-width: 100%; overflow-x: hidden; }
