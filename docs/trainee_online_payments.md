@@ -31,6 +31,17 @@ The token is `signToken({ kind: 'trainee', student_id })` and is only accepted b
 | GET | `/api/trainee-payments/zarinpal/callback` | Zarinpal return (`Authority`,`Status`) -> verify -> redirect to SPA |
 | POST | `/api/trainee-payments/receipt` | multipart `receipt` (image/PDF, <=8MB) + `{enrollment_id, amount}` |
 | GET | `/api/trainee-payments/receipts/:id/file` | stream own uploaded receipt |
+| GET | `/api/trainee-payments/link/:code` | public short-link info (`kind: 'debt' \| 'installment'`; the code is the auth) |
+| POST | `/api/trainee-payments/link/:code/zarinpal` | start a Zarinpal payment from a short link |
+
+## Short payment links
+
+`/p/<code>` redirects to `/?trainee=1&code=<code>`. The code is a 12-char base62 value from
+`crm_debt_links` (remaining-debt SMS, see `docs/debt_sms.md`) or the legacy `crm_installment_links`; the
+debt resolver runs first and the installment resolver is the fallback. A debt link charges its full amount
+capped at the balance still owed; an installment link charges its own amount capped at that enrollment's
+remaining balance. The online payment created from a debt link is attached to the trainee's oldest owing
+enrollment and the link is burned on a successful verify (idempotently).
 
 ## Staff endpoints (admin/cashier session)
 

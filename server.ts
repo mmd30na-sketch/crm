@@ -11,7 +11,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
-import { createSms, toBracket, fromBracket } from '../shared/sms';
+import { createSms, toBracket, fromBracket, resolveApiKey } from '../shared/sms';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
@@ -32,6 +32,8 @@ import {
 } from './theme';
 import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPay';
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
+import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
+import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -887,6 +889,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/receipt-settings') && write) return false;
   if (path.startsWith('/payments') || path.startsWith('/expenses')) return role === 'cashier';
   if (path.startsWith('/online-payments')) return role === 'cashier'; // admin handled above
+  if (path.startsWith('/debt-sms')) return role === 'cashier'; // settings writes are admin-only in the handler
   if (path.startsWith('/ocr')) return role === 'cashier';
   if (path.includes('report-templates') || path.includes('report-context') || path.includes('/receipt')) return role === 'cashier';
   if (path.startsWith('/registrations')) return role === 'cashier';
@@ -4546,6 +4549,12 @@ registerInstructorPay(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (d) => writeDb(d),
 });
+
+// Remaining-debt payment links + SMS (debtSms.ts). The link store is shared with the trainee Zarinpal
+// flow below and the legacy installment-link store stays available for links sent before this change.
+const installmentStore = createInstallmentStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
+const debtLinkStore = createDebtLinkStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
+const publicBaseFromRequest = (req: express.Request) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`);
 registerOnlinePayments(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
@@ -4559,9 +4568,43 @@ registerOnlinePayments(app, {
   zarinpalMerchantId: () => {
     try { return String((readDb().settings as any)?.gateways?.zarinpal_merchant_id || ''); } catch { return ''; }
   },
-  publicBaseUrl: (req) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`),
+  publicBaseUrl: publicBaseFromRequest,
+  installments: installmentStore,
+  debtLinks: debtLinkStore,
   log: (msg) => console.warn(`[online-payments] ${msg}`),
 });
+
+// Remaining-debt SMS with a payment link: preview / single send / bulk send / settings / log.
+registerDebtSms(app, {
+  session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  normalizeMobile,
+  settings: () => { try { return (readDb() as any).settings || {}; } catch { return {}; } },
+  saveSettings: (patch: Record<string, any>) => {
+    const d = readDb();
+    const settings: any = (d as any).settings = (d as any).settings || {};
+    settings.debt_sms = { ...(settings.debt_sms || {}), ...patch };
+    writeDb(d);
+  },
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store: any) => writeDb(store),
+  links: debtLinkStore,
+  // SMS goes through the shared helper (sms_templates key debt_balance -> sms.ir verify 472328: NAME, AMOUNT, CODE).
+  sms: {
+    sendTemplate: (key, mobile, vars, fallback) => sharedSms.sendTemplate(key, mobile, vars, fallback),
+    configured: () => !!resolveApiKey(smsCfg?.apiKeyRef || 'env:SMS_API_KEY'),
+  },
+  log: (msg: string) => console.warn(`[debt-sms] ${msg}`),
+});
+
+// Short public payment URL: /p/<code> opens the trainee panel with the amount preset.
+app.get('/p/:code', (req, res) => {
+  const code = sanitizeString(req.params.code, 16);
+  if (!/^[0-9A-Za-z]{12}$/.test(code)) return res.redirect(302, '/?trainee=1&payment=notfound');
+  const base = publicBaseFromRequest(req).replace(/\/$/, '');
+  res.redirect(302, `${base}/?trainee=1&code=${encodeURIComponent(code)}`);
+});
+
 registerPhase4(app, {
   session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -4674,6 +4717,8 @@ async function startServer() {
   await ensureThemeSettingsSchema();
   await ensureInstructorPaySchema();
   await ensureOnlinePaymentsSchema();
+  await ensureInstallmentsSchema();
+  await ensureDebtSmsSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
