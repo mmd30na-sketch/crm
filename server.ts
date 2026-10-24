@@ -32,6 +32,8 @@ import {
 } from './theme';
 import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPay';
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
+import { registerInstallments, ensureInstallmentsSchema, createInstallmentStore } from './installments';
+import { registerInstallmentReminders, ensureInstallmentRemindersSchema, startInstallmentReminderScheduler } from './reminders';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -887,6 +889,8 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/receipt-settings') && write) return false;
   if (path.startsWith('/payments') || path.startsWith('/expenses')) return role === 'cashier';
   if (path.startsWith('/online-payments')) return role === 'cashier'; // admin handled above
+  if (path.startsWith('/installment-reminders')) return false; // admin only (handled above)
+  if (path.startsWith('/installments')) return role === 'cashier';
   if (path.startsWith('/ocr')) return role === 'cashier';
   if (path.includes('report-templates') || path.includes('report-context') || path.includes('/receipt')) return role === 'cashier';
   if (path.startsWith('/registrations')) return role === 'cashier';
@@ -4546,6 +4550,20 @@ registerInstructorPay(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (d) => writeDb(d),
 });
+
+// Installment schedule + short payment links (installments.ts); shared by the CRM routes, the trainee
+// Zarinpal flow (onlinePayments.ts) and the reminder job (reminders.ts).
+const installmentStore = createInstallmentStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
+const publicBaseFromRequest = (req: express.Request) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`);
+const publicBaseFromEnv = () => String(process.env.PUBLIC_BASE_URL || '');
+registerInstallments(app, {
+  store: installmentStore,
+  session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  jalaliToday: () => jalaliNow(),
+  publicBaseUrl: publicBaseFromRequest,
+  log: (msg) => console.warn(`[installments] ${msg}`),
+});
 registerOnlinePayments(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
@@ -4559,9 +4577,40 @@ registerOnlinePayments(app, {
   zarinpalMerchantId: () => {
     try { return String((readDb().settings as any)?.gateways?.zarinpal_merchant_id || ''); } catch { return ''; }
   },
-  publicBaseUrl: (req) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`),
+  publicBaseUrl: publicBaseFromRequest,
+  installments: installmentStore,
   log: (msg) => console.warn(`[online-payments] ${msg}`),
 });
+
+// Automatic installment-reminder SMS. The scheduler only registers when enabled (see reminders.ts).
+const reminderDeps = {
+  store: installmentStore,
+  session: (req: express.Request) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
+  sanitize: (v: unknown, max: number) => sanitizeString(v, max),
+  normalizeMobile,
+  jalaliToday: () => jalaliNow(),
+  publicBaseUrl: publicBaseFromEnv,
+  settings: () => { try { return (readDb() as any).settings || {}; } catch { return {}; } },
+  saveSettings: (patch: Record<string, any>) => {
+    const d = readDb();
+    const settings: any = (d as any).settings = (d as any).settings || {};
+    settings.installment_reminders = { ...(settings.installment_reminders || {}), ...patch };
+    writeDb(d);
+  },
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store: any) => writeDb(store),
+  log: (msg: string) => console.warn(`[installment-reminders] ${msg}`),
+};
+registerInstallmentReminders(app, reminderDeps);
+
+// Short public installment-payment URL: /p/<code> opens the trainee panel with the amount preset.
+app.get('/p/:code', (req, res) => {
+  const code = sanitizeString(req.params.code, 16);
+  if (!/^[0-9A-Za-z]{12}$/.test(code)) return res.redirect(302, '/?trainee=1&payment=notfound');
+  const base = publicBaseFromRequest(req).replace(/\/$/, '');
+  res.redirect(302, `${base}/?trainee=1&code=${encodeURIComponent(code)}`);
+});
+
 registerPhase4(app, {
   session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -4674,6 +4723,9 @@ async function startServer() {
   await ensureThemeSettingsSchema();
   await ensureInstructorPaySchema();
   await ensureOnlinePaymentsSchema();
+  await ensureInstallmentsSchema();
+  await ensureInstallmentRemindersSchema();
+  startInstallmentReminderScheduler(reminderDeps);
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

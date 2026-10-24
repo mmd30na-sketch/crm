@@ -1,5 +1,5 @@
 /**
- * Zarinpal v4 REST payment gateway (server side only).
+ * Zarinpal v4 payment gateway (server side only), now driven by the official `zarinpal-node-sdk`.
  *
  * Sandbox by default: the sandbox endpoints are used unless ZARINPAL_SANDBOX === '0'. The merchant id
  * comes from env ZARINPAL_MERCHANT_ID, or (as a fallback) from the settings value the caller passes in
@@ -9,7 +9,10 @@
  * verifyPayment convert with toGatewayAmount() unless ZARINPAL_CURRENCY=IRT is set.
  *
  * The network calls only run when a payment is actually started/verified; nothing here runs at boot.
+ * The exported function signatures are unchanged, so onlinePayments.ts keeps working as before.
  */
+import ZarinPal from 'zarinpal-node-sdk';
+
 export type ZarinpalConfig = {
   merchantId: string;
   sandbox: boolean;
@@ -40,21 +43,22 @@ export function toGatewayAmount(toman: number, cfg: ZarinpalConfig): number {
   return Math.max(0, Math.round(cfg.currency === 'IRT' ? toman : toman * 10));
 }
 
-type ZarinpalResponse = { data?: any; errors?: any };
+/** One SDK client per call; the SDK keeps no state between requests beyond the config. */
+const client = (cfg: ZarinpalConfig) => new ZarinPal({ merchantId: cfg.merchantId, sandbox: cfg.sandbox });
 
-async function callZarinpal(url: string, payload: Record<string, unknown>): Promise<ZarinpalResponse> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(20_000),
-  });
-  const body: any = await res.json().catch(() => ({}));
-  if (!res.ok && !body?.data) {
-    throw Object.assign(new Error('پاسخ درگاه پرداخت نامعتبر بود.'), { status: 502, gateway: true });
-  }
-  return body as ZarinpalResponse;
+/**
+ * The SDK throws on non-2xx HTTP and on its own input validators; the gateway also reports logical errors
+ * in the 200 body (code !== 100). Both are normalized to a Persian Error carrying `{ status: 502 }`.
+ */
+function gatewayError(err: any, fallback: string): Error {
+  const body = err?.response?.data;
+  const detail = body?.errors?.[0]?.message || body?.data?.message || err?.message || fallback;
+  return Object.assign(new Error(String(detail)), { status: 502, gateway: true });
 }
+
+/** Zarinpal rejects a malformed mobile/email at the SDK layer, so only well-formed values are forwarded. */
+const validMobile = (v?: string) => (/^09\d{9}$/.test(String(v || '')) ? String(v) : undefined);
+const validEmail = (v?: string) => (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '')) ? String(v) : undefined);
 
 export interface RequestPaymentInput {
   /** Amount in Toman (the CRM unit). */
@@ -70,23 +74,25 @@ export async function requestPayment(cfg: ZarinpalConfig, input: RequestPaymentI
   if (!cfg.merchantId) {
     throw Object.assign(new Error('شناسه پذیرنده زرین‌پال تنظیم نشده است (ZARINPAL_MERCHANT_ID).'), { status: 503, gateway: true });
   }
-  const metadata: Record<string, string> = {};
-  if (input.mobile) metadata.mobile = input.mobile;
-  if (input.email) metadata.email = input.email;
-  const body = await callZarinpal(`${baseUrl(cfg.sandbox)}/pg/v4/payment/request.json`, {
-    merchant_id: cfg.merchantId,
-    amount: toGatewayAmount(input.amountToman, cfg),
-    callback_url: input.callbackUrl,
-    description: input.description.slice(0, 255),
-    ...(Object.keys(metadata).length ? { metadata } : {}),
-  });
-  const code = Number(body.data?.code);
-  const authority = String(body.data?.authority || '');
-  if (code !== 100 || !authority) {
-    const detail = body.errors?.[0]?.message || body.data?.message || 'درخواست پرداخت پذیرفته نشد';
-    throw Object.assign(new Error(String(detail)), { status: 502, gateway: true });
+  const zp = client(cfg);
+  try {
+    const body: any = await zp.payments.create({
+      amount: toGatewayAmount(input.amountToman, cfg),
+      callback_url: input.callbackUrl,
+      description: input.description.slice(0, 255),
+      mobile: validMobile(input.mobile),
+      email: validEmail(input.email),
+    });
+    const code = Number(body?.data?.code);
+    const authority = String(body?.data?.authority || '');
+    if (code !== 100 || !authority) {
+      const detail = body?.errors?.[0]?.message || body?.data?.message || 'درخواست پرداخت پذیرفته نشد';
+      throw Object.assign(new Error(String(detail)), { status: 502, gateway: true });
+    }
+    return { authority, paymentUrl: zp.payments.getRedirectUrl(authority) };
+  } catch (err: any) {
+    throw err?.gateway ? err : gatewayError(err, 'درخواست پرداخت پذیرفته نشد');
   }
-  return { authority, paymentUrl: startPayUrl(authority, cfg) };
 }
 
 export interface VerifyPaymentInput {
@@ -97,23 +103,34 @@ export interface VerifyPaymentInput {
 
 /**
  * payment/verify.json. `code` 100 = freshly verified, 101 = already verified (both count as paid).
- * Anything else is treated as a failure with the gateway's message.
+ * Anything else is treated as a failure with the gateway's message; this never throws (an unreachable
+ * gateway yields `ok: false` so the callback can redirect the payer back to the SPA).
  */
 export async function verifyPayment(cfg: ZarinpalConfig, input: VerifyPaymentInput): Promise<{ ok: boolean; refId: string | null; code: number; message: string }> {
   if (!cfg.merchantId) {
     return { ok: false, refId: null, code: -1, message: 'شناسه پذیرنده زرین‌پال تنظیم نشده است.' };
   }
-  const body = await callZarinpal(`${baseUrl(cfg.sandbox)}/pg/v4/payment/verify.json`, {
-    merchant_id: cfg.merchantId,
-    amount: toGatewayAmount(input.amountToman, cfg),
-    authority: input.authority,
-  });
-  const code = Number(body.data?.code);
-  const ok = code === 100 || code === 101;
-  return {
-    ok,
-    refId: ok && body.data?.ref_id !== undefined && body.data?.ref_id !== null ? String(body.data.ref_id) : null,
-    code: Number.isFinite(code) ? code : -1,
-    message: String(body.data?.message || body.errors?.[0]?.message || (ok ? 'Verified' : 'تأیید پرداخت ناموفق بود')),
-  };
+  try {
+    const body: any = await client(cfg).verifications.verify({
+      amount: toGatewayAmount(input.amountToman, cfg),
+      authority: input.authority,
+    });
+    const code = Number(body?.data?.code);
+    const ok = code === 100 || code === 101;
+    return {
+      ok,
+      refId: ok && body?.data?.ref_id !== undefined && body?.data?.ref_id !== null ? String(body.data.ref_id) : null,
+      code: Number.isFinite(code) ? code : -1,
+      message: String(body?.data?.message || body?.errors?.[0]?.message || (ok ? 'Verified' : 'تأیید پرداخت ناموفق بود')),
+    };
+  } catch (err: any) {
+    const body = err?.response?.data;
+    const code = Number(body?.data?.code);
+    return {
+      ok: false,
+      refId: null,
+      code: Number.isFinite(code) ? code : -1,
+      message: String(body?.data?.message || body?.errors?.[0]?.message || err?.message || 'تأیید پرداخت ناموفق بود'),
+    };
+  }
 }
