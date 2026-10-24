@@ -16,6 +16,7 @@ import {
   CalendarRange,
   Bot,
   History,
+  CalendarClock,
   Wallet,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
@@ -38,6 +39,7 @@ import CourseTermsPanel from './components/CourseTermsPanel';
 import SiteRequestsHistory from './components/SiteRequestsHistory';
 import InstructorPayPanel from './components/InstructorPayPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
+import InstallmentsPanel from './components/InstallmentsPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
 import { taskSummary } from './api/phase4';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
@@ -105,6 +107,14 @@ const NAV_ITEMS = [
     sublabel: 'تأیید اقساط و رسید',
     icon: Wallet,
     color: 'emerald',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'installments',
+    label: 'اقساط',
+    sublabel: 'زمان‌بندی و لینک پرداخت',
+    icon: CalendarClock,
+    color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -193,7 +203,7 @@ export default function App() {
   if (params.get('trainee') === '1') {
     return (
       <ThemeProvider>
-        <TraineePaymentsPanel token={params.get('t') || ''} />
+        <TraineePaymentsPanel token={params.get('t') || ''} code={params.get('code') || ''} />
       </ThemeProvider>
     );
   }
@@ -609,6 +619,15 @@ function AppShell() {
               )}
               {activeTab === 'online-payments' && (role === 'admin' || role === 'cashier') && (
                 <OnlinePaymentsReview />
+              )}
+              {activeTab === 'installments' && (role === 'admin' || role === 'cashier') && (
+                <InstallmentsPanel
+                  students={students}
+                  courses={courses}
+                  enrollments={enrollments}
+                  payments={payments}
+                  isAdmin={role === 'admin'}
+                />
               )}
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />

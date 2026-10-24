@@ -126,7 +126,7 @@ export default function OnlinePaymentsReview() {
                       <td className="px-3 py-2.5 font-mono" dir="ltr">{r.phone_masked || '—'}</td>
                       <td className="px-3 py-2.5 text-slate-600">{r.course_title || '—'}{r.course_number ? ` · ${fa(r.course_number)}` : ''}</td>
                       <td className="px-3 py-2.5 font-black">{fa(r.amount)}</td>
-                      <td className="px-3 py-2.5">{op.ONLINE_METHOD_LABEL[r.method]}</td>
+                      <td className="px-3 py-2.5">{op.ONLINE_METHOD_LABEL[r.method]}{r.installment_id ? <span className="block text-[10px] text-slate-400">قسط #{fa(r.installment_id)}</span> : null}</td>
                       <td className="px-3 py-2.5"><span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLE[r.status]}`}>{op.ONLINE_STATUS_LABEL[r.status]}</span></td>
                       <td className="px-3 py-2.5">{r.receipt_file ? <a href={protectedFileUrl(r.receipt_file)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-700 font-bold hover:underline"><FileText className="w-3.5 h-3.5" />مشاهده</a> : (r.ref_id ? <span className="font-mono text-[10px] text-slate-500">{r.ref_id}</span> : '—')}</td>
                       <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500">{r.created_at?.slice(0, 16).replace('T', ' ')}</td>
@@ -150,7 +150,7 @@ export default function OnlinePaymentsReview() {
                   <div className="text-[11px] text-slate-600">{r.course_title || '—'}{r.course_number ? ` · دوره ${fa(r.course_number)}` : ''}</div>
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-black text-slate-800">{fa(r.amount)} تومان</span>
-                    <span className="text-slate-500">{op.ONLINE_METHOD_LABEL[r.method]}</span>
+                    <span className="text-slate-500">{op.ONLINE_METHOD_LABEL[r.method]}{r.installment_id ? ` · قسط #${fa(r.installment_id)}` : ''}</span>
                   </div>
                   {r.receipt_file && <a href={protectedFileUrl(r.receipt_file)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-700 text-[11px] font-bold"><FileText className="w-3.5 h-3.5" />مشاهده رسید</a>}
                   {r.admin_note && <div className="text-[10px] text-slate-500 bg-slate-50 rounded-lg px-2 py-1.5">یادداشت: {r.admin_note}</div>}
