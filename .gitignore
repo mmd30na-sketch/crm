@@ -12,3 +12,8 @@ coverage/
 ocr-eval-data/
 __pycache__/
 scripts/copilot-eval/.run-eval.cjs
+
+# runtime data (not source)
+db_store.json
+db_store.json.bak_*
+StudentFiles/

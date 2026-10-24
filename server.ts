@@ -11,6 +11,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
+import { createSms, toBracket, fromBracket } from '../shared/sms';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
@@ -552,8 +553,10 @@ setInterval(() => {
 interface PendingMessage {
   id: string;
   createdBy: string;
-  channel: 'telegram' | 'rubika';
+  channel: 'telegram' | 'rubika' | 'sms';
   recipient: string;
+  /** channel=sms: one item per recipient (max 20); sent only on human confirm. */
+  sms?: { items: { mobile: string; label: string; studentId?: number | null; text: string }[]; templateKey?: string | null; vars?: Record<string, string> };
   label: string;
   text: string;
   createdAt: number;
@@ -1601,15 +1604,20 @@ type Gateways = {
   sms_auto_register: boolean; sms_auto_exam: boolean;
   rubika_bot_token: string; rubika_channel_id: string; rubika_active: boolean;
 };
+// SMS settings live in MySQL app_settings['sms.config'] (shared with the site); API key only from env SMS_API_KEY.
+const sharedSms = createSms((q: string, p: any[] = []) => chabokan.sql(q, p));
+let smsCfg: any = { provider: 'smsir', lineNumber: process.env.SMS_SENDER_LINE || '', autoRegister: false, autoExam: false };
+const refreshSmsCfg = () => sharedSms.getConfig(true).then((c) => { smsCfg = c; }).catch((e) => console.warn('[SMS] config load failed:', e?.message || e));
+setTimeout(refreshSmsCfg, 3000); setInterval(refreshSmsCfg, 60_000).unref?.();
 function getGateways(): Gateways {
   let g: any = {};
   try { g = (readDb().settings as any)?.gateways || {}; } catch { /* unreadable DB: fall back to env */ }
   return {
-    sms_provider: g.sms_provider || process.env.SMS_PROVIDER || 'ippanel',
-    sms_api_key: g.sms_api_key || process.env.SMS_API_KEY || '',
-    sms_sender_line: g.sms_sender_line || process.env.SMS_SENDER_LINE || '',
-    sms_auto_register: g.sms_auto_register !== false,
-    sms_auto_exam: g.sms_auto_exam !== false,
+    sms_provider: smsCfg.provider || 'smsir',
+    sms_api_key: process.env.SMS_API_KEY || '',
+    sms_sender_line: smsCfg.lineNumber || process.env.SMS_SENDER_LINE || '',
+    sms_auto_register: smsCfg.autoRegister === true, // default OFF
+    sms_auto_exam: smsCfg.autoExam === true, // default OFF
     rubika_bot_token: g.rubika_bot_token || RUBIKA_BOT_TOKEN,
     rubika_channel_id: g.rubika_channel_id || '',
     rubika_active: g.rubika_active !== false,
@@ -1618,42 +1626,10 @@ function getGateways(): Gateways {
 
 const normalizeMobile = (v: unknown) => toLatinDigits(String(v ?? '')).replace(/[\s-]/g, '').replace(/^\+98/, '0').replace(/^98(?=9\d{9}$)/, '0');
 
-/** Sends one SMS through the configured provider (sms.ir or IPPanel). */
+/** Sends one SMS through the shared helper (sms.ir bulk, line from app_settings). */
 async function sendSmsMessage(mobile: string, text: string): Promise<{ ok: boolean; status: 'sent' | 'not_configured' | 'failed'; detail?: string }> {
-  const g = getGateways();
-  if (!g.sms_api_key || !g.sms_sender_line) {
-    return { ok: false, status: 'not_configured', detail: 'درگاه پیامک تنظیم نشده است (کلید API و شماره خط را در تنظیمات وارد کنید).' };
-  }
-  try {
-    if (g.sms_provider === 'smsir') {
-      const r = await fetch('https://api.sms.ir/v1/send/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-API-KEY': g.sms_api_key },
-        body: JSON.stringify({ lineNumber: Number(g.sms_sender_line), messageText: text, mobiles: [mobile] }),
-        signal: AbortSignal.timeout(15000),
-      });
-      const data: any = await r.json().catch(() => ({}));
-      return data?.status === 1 ? { ok: true, status: 'sent' } : { ok: false, status: 'failed', detail: data?.message || `HTTP ${r.status}` };
-    }
-    // IPPanel (edge API)
-    const r = await fetch('https://edge.ippanel.com/v1/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: g.sms_api_key },
-      body: JSON.stringify({
-        sending_type: 'webservice',
-        from_number: g.sms_sender_line.startsWith('+') ? g.sms_sender_line : `+98${g.sms_sender_line.replace(/^0/, '')}`,
-        message: text,
-        params: { recipients: [`+98${mobile.slice(1)}`] },
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const data: any = await r.json().catch(() => ({}));
-    return data?.meta?.status === true || r.ok && data?.meta?.status !== false
-      ? { ok: true, status: 'sent' }
-      : { ok: false, status: 'failed', detail: data?.meta?.message || `HTTP ${r.status}` };
-  } catch (err: any) {
-    return { ok: false, status: 'failed', detail: err?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : (err?.message || 'خطا در اتصال به سرویس پیامک') };
-  }
+  const r = await sharedSms.sendText(mobile, text);
+  return { ok: r.ok, status: (r.status === 'disabled' ? 'failed' : r.status) as any, detail: r.detail };
 }
 
 /** Delivers a message and stores it (outbox + chat history). The DB is re-read after the network call. */
@@ -1705,70 +1681,41 @@ async function deliverMessage(opts: { channel: string; recipient: string; messag
 
 // ── POST: ارسال پیام از طریق روبیکا یا پیامک ──
 // Message templates (messenger «الگوهای آماده»): JSON store, seeded once; writes are audit-logged by the /api middleware.
-const DEFAULT_MESSAGE_TEMPLATES = [
-  {
-    id: 'welcome',
-    title: 'خوش‌آمدگویی و ثبت‌نام',
-    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ ثبت‌نام شما در دوره [دوره] با موفقیت انجام شد. زمان شروع کلاس‌ها به شما اطلاع داده می‌شود.',
-    color: 'sky',
-  },
-  {
-    id: 'debt_warning',
-    title: 'یادآوری بدهی مالی',
-    body: 'هنرجوی گرامی [نام]؛ با توجه به نزدیک شدن زمان آزمون، خواهشمند است نسبت به تسویه مانده بدهی [بدهی] اقدام فرمایید.',
-    color: 'rose',
-  },
-  {
-    id: 'exam_schedule',
-    title: 'زمان‌بندی آزمون',
-    body: 'هنرجوی گرامی [نام] [خانوادگی]؛ آزمون شما برای روز [تاریخ] ساعت [ساعت] برنامه‌ریزی شد. همراه داشتن کارت ملی الزامی است.',
-    color: 'teal',
-  },
-  {
-    id: 'class_change',
-    title: 'تغییر زمان کلاس',
-    body: 'هنرجوی گرامی [نام]؛ زمان جلسه کلاس شما تغییر یافت. جهت هماهنگی زمان جدید با آموزشگاه تماس بگیرید.',
-    color: 'amber',
-  },
-];
+// Message templates: canonical store is MySQL sms_templates (see shared/sms.ts).
 const TEMPLATE_COLORS = ['sky', 'rose', 'teal', 'amber', 'violet', 'emerald', 'slate'];
-function loadTemplates(): any[] {
-  const db = readDb() as any;
-  if (!Array.isArray(db.message_templates)) {
-    db.message_templates = DEFAULT_MESSAGE_TEMPLATES.map(t => ({ ...t, updated_at: new Date().toISOString() }));
-    writeDb(db);
-  }
-  return db.message_templates;
-}
+// Templates live in MySQL sms_templates ({name}-style placeholders); the UI keeps its [نام]-style tokens, converted here.
+const tplOut = (t: any) => ({ id: t.key, title: t.title_fa || t.key, body: toBracket(t.body_fa || ''), color: t.color || 'sky', updated_at: t.updated_at });
 const templateInput = (b: any) => {
   const title = sanitizeString(b?.title, 80); const body = sanitizeString(b?.body, 1000);
   const color = TEMPLATE_COLORS.includes(b?.color) ? b.color : 'sky';
   if (!title || !body) throw Object.assign(new Error('عنوان و متن الگو الزامی است.'), { status: 400 });
-  return { title, body, color };
+  return { title_fa: title, body_fa: fromBracket(body), color };
 };
-app.get('/api/message-templates', (req, res) => { res.json(loadTemplates()); });
-app.post('/api/message-templates', (req, res) => {
+app.get('/api/message-templates', async (req, res) => {
+  try { res.json((await sharedSms.listTemplates(true)).filter((t: any) => t.show_in_crm && t.channel_kind === 'bulk').map(tplOut)); }
+  catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/message-templates', async (req, res) => {
   try {
-    const v = templateInput(req.body); loadTemplates();
-    const db = readDb() as any; const id = `t${Date.now().toString(36)}`;
-    db.message_templates.push({ id, ...v, updated_at: new Date().toISOString() }); writeDb(db);
-    res.json({ ok: true, id });
+    const v = templateInput(req.body); const id = `t${Date.now().toString(36)}`;
+    await sharedSms.upsertTemplate(id, v); res.json({ ok: true, id });
   } catch (e: any) { res.status(e.status || 500).json({ error: e.message }); }
 });
-app.put('/api/message-templates/:id', (req, res) => {
+app.put('/api/message-templates/:id', async (req, res) => {
   try {
-    const v = templateInput(req.body); loadTemplates();
-    const db = readDb() as any; const t = db.message_templates.find((x: any) => x.id === req.params.id);
-    if (!t) return res.status(404).json({ error: 'الگو یافت نشد.' });
-    Object.assign(t, v, { updated_at: new Date().toISOString() }); writeDb(db);
-    res.json({ ok: true });
+    const v = templateInput(req.body);
+    const t = await sharedSms.getTemplate(String(req.params.id));
+    if (!t || t.channel_kind !== 'bulk') return res.status(404).json({ error: 'الگو یافت نشد.' });
+    await chabokan.sql('UPDATE sms_templates SET title_fa = ?, body_fa = ?, color = ? WHERE `key` = ?', [v.title_fa, v.body_fa, v.color, t.key]);
+    await sharedSms.listTemplates(true); res.json({ ok: true });
   } catch (e: any) { res.status(e.status || 500).json({ error: e.message }); }
 });
-app.delete('/api/message-templates/:id', (req, res) => {
-  loadTemplates(); const db = readDb() as any; const n = db.message_templates.length;
-  db.message_templates = db.message_templates.filter((x: any) => x.id !== req.params.id);
-  if (db.message_templates.length === n) return res.status(404).json({ error: 'الگو یافت نشد.' });
-  writeDb(db); res.json({ ok: true });
+app.delete('/api/message-templates/:id', async (req, res) => {
+  try {
+    const t = await sharedSms.getTemplate(String(req.params.id));
+    if (!t || t.channel_kind !== 'bulk') return res.status(404).json({ error: 'الگو یافت نشد.' });
+    await sharedSms.deleteTemplate(t.key); res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/messenger/send', async (req, res) => {
@@ -2210,18 +2157,52 @@ app.post('/api/students/:id/photos', requireExistingStudent, uploadStudentMedia.
   }
 });
 
+const REG_COURSE_NAMES_FA: Record<string, string> = {
+  cargo_freight: 'بدو خدمت باری', passenger_bus: 'بدو خدمت مسافری', hazardous_materials: 'مواد خطرناک',
+  technical_manager: 'مدیر فنی شرکت', ceo_company: 'مدیر عامل شرکت', ceo_freight: 'مدیر شرکت حمل و نقل', ceo_passenger: 'مدیر شرکت مسافربری'
+};
+/** Vars for sms_templates.registration_rejected (param_map NAME/COURSE/TRACK + fallback {name},{tracking_code},{reason},{academy}). */
+function rejectionSmsVars(reg: any, reason: string, academy: string) {
+  return { name: reg?.full_name || '', course: REG_COURSE_NAMES_FA[String(reg?.category || '')] || '', tracking_code: String(reg?.tracking_code || ''), reason: reason || '', academy };
+}
+/** Vars for sms_templates.registration_welcome (param_map NAME/COURSE/TRACK + fallback {name},{family},{course},{academy}). */
+function welcomeSmsVars(student: any, course: any, trackingCode: string, academy: string) {
+  return { name: [student?.first_name, student?.last_name].filter(Boolean).join(' ').trim(), family: student?.last_name || '', course: course?.title || '', tracking_code: trackingCode || '', academy };
+}
+
+/** 'Registration rejected' SMS (sms_templates.registration_rejected, toggle sms.config.autoRejected). Never throws. */
+async function notifyRejection(reg: any, reason: string) {
+  const tracking = String(reg?.tracking_code || '');
+  const phone = normalizeMobile(reg?.phone_number);
+  const masked = phone.replace(/^(.*)(\d{4})$/, (_x, a2, b2) => '*'.repeat(a2.length) + b2);
+  try {
+    const c: any = await sharedSms.getConfig(true);
+    if (c.autoRejected !== true) return;
+    const tpl: any = await sharedSms.getTemplate('registration_rejected');
+    if (!tpl || !tpl.enabled) return;
+    if (!/^09\d{9}$/.test(phone)) { console.log(`[SMS] registration_rejected ${tracking} failed: invalid mobile ${masked}`); return; }
+    const academy = academyDisplayName() || String(c.academyName || '').trim();
+    // Verify template 997615 (NAME, COURSE, TRACK); falls back to fallback_body_fa (free text) inside the shared helper.
+    const r0 = await sharedSms.sendTemplate('registration_rejected', phone, rejectionSmsVars(reg, reason, academy));
+    if (r0.status === 'disabled') return;
+    const r = { status: r0.ok ? 'sent' : r0.status, note: `${r0.detail || ''} [${r0.mode || '-'}]` };
+    console.log(`[SMS] registration_rejected ${tracking} ${r.status === 'sent' ? 'ok' : `failed: ${r.note || r.status}`} ${masked}`);
+  } catch (e: any) { console.log(`[SMS] registration_rejected ${tracking} failed: ${e?.message || e} ${masked}`); }
+}
+
 /** Welcome SMS after registration: only when the toggle is on and an SMS gateway is configured. */
-async function notifyRegistration(student: any, course: any) {
+async function notifyRegistration(student: any, course: any, trackingCode?: string) {
   try {
     const g = getGateways();
     if (!student || !g.sms_auto_register || !g.sms_api_key || !g.sms_sender_line) return;
     const phone = normalizeMobile(student.phone_number);
     if (!/^09\d{9}$/.test(phone)) return;
     const academy = academyDisplayName();
-    await deliverMessage({
-      channel: 'sms', recipient: phone, studentId: student.id,
-      message: `هنرجوی گرامی ${student.first_name} ${student.last_name}، ثبت‌نام شما در دوره «${course?.title || ''}» با موفقیت انجام شد.${academy ? `\n${academy}` : ''}`,
-    });
+    // Verify template 743658 (NAME, COURSE, TRACK). Without a tracking code (manual CRM enrollment) TRACK is empty,
+    // so the shared helper falls back to fallback_body_fa (the previous free-text welcome).
+    const r = await sharedSms.sendTemplate('registration_welcome', phone, welcomeSmsVars(student, course, String(trackingCode || ''), academy));
+    if (r.status === 'disabled') return;
+    console.log(`[SMS] registration_welcome ${trackingCode || '-'} ${r.ok ? 'ok' : 'failed: ' + (r.detail || r.status)} [${r.mode || '-'}]`);
   } catch (err: any) { console.warn('Registration SMS failed:', err?.message || err); }
 }
 
@@ -2954,7 +2935,7 @@ app.post('/api/registrations/:code/approve', async (req, res) => {
     });
     // Committed: the welcome SMS lookup must not turn the approval into an error.
     loadCourses()
-      .then((courses) => notifyRegistration(result.student, courses.find(c => Number(c.id) === courseId)))
+      .then((courses) => notifyRegistration(result.student, courses.find(c => Number(c.id) === courseId), code))
       .catch((err) => console.warn('Registration SMS skipped:', err?.message || err));
     res.json({ success: true, ...result });
   } catch (err: any) {
@@ -2971,6 +2952,9 @@ app.post('/api/registrations/:code/reject', async (req, res) => {
     const reason = sanitizeString(req.body?.reason, 300);
     if (reason) console.log(`Registration ${code} rejected by ${(req as any).user?.username}: ${reason}`);
     res.json({ success: true, registration });
+    // Fire-and-forget 'registration rejected' SMS. Runs only after a real pending -> rejected transition
+    // (rejectWebsiteRegistration throws 409 for already-processed rows), so past rejections are never re-sent.
+    void notifyRejection(registration, reason);
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
@@ -3024,11 +3008,13 @@ app.post('/api/settings/gateways', (req, res) => {
   const db = readDb();
   const current: any = (db.settings as any)?.gateways || {};
   const next: any = { ...current };
-  if (b.sms_provider !== undefined) next.sms_provider = ['smsir', 'ippanel'].includes(b.sms_provider) ? b.sms_provider : 'ippanel';
-  if (typeof b.sms_api_key === 'string' && b.sms_api_key.trim()) next.sms_api_key = sanitizeString(b.sms_api_key, 200); // blank = keep the saved key
-  if (b.sms_sender_line !== undefined) next.sms_sender_line = sanitizeString(b.sms_sender_line, 30);
-  if (b.sms_auto_register !== undefined) next.sms_auto_register = !!b.sms_auto_register;
-  if (b.sms_auto_exam !== undefined) next.sms_auto_exam = !!b.sms_auto_exam;
+  // SMS: provider fixed to smsir; line + toggles -> app_settings['sms.config']; API key is env-only (SMS_API_KEY), UI value ignored.
+  const smsPatch: any = { provider: 'smsir' };
+  if (b.sms_sender_line !== undefined) smsPatch.lineNumber = sanitizeString(b.sms_sender_line, 30);
+  if (b.sms_auto_register !== undefined) smsPatch.autoRegister = !!b.sms_auto_register;
+  if (b.sms_auto_exam !== undefined) smsPatch.autoExam = !!b.sms_auto_exam;
+  for (const k of ['sms_provider', 'sms_api_key', 'sms_sender_line', 'sms_auto_register', 'sms_auto_exam']) delete next[k];
+  sharedSms.setConfig(smsPatch).then((c) => { smsCfg = c; }).catch((e) => console.warn('[SMS] config save failed:', e?.message || e));
   if (typeof b.rubika_bot_token === 'string' && b.rubika_bot_token.trim()) next.rubika_bot_token = sanitizeString(b.rubika_bot_token, 200);
   if (b.rubika_channel_id !== undefined) next.rubika_channel_id = sanitizeString(b.rubika_channel_id, 100);
   if (b.rubika_active !== undefined) next.rubika_active = !!b.rubika_active;
@@ -3060,6 +3046,8 @@ const COPILOT_TOOL_GUIDE: [string, string][] = [
   ['list_payments', 'فیش‌ها و دریافتی‌ها'], ['monthly_income', 'درآمد یک ماه شمسی'],
   ['get_financial_report', 'هزینه‌ها، سود و زیان ماهانه، حساب‌های بانکی و اقساط معوق'], ['list_messaging', 'گفتگوهای پیام‌رسان و کمپین‌ها'],
   ['list_sms', 'سوابق پیامک‌های ارسالی و الگوهای پیامک'],
+  ['sms_get_credit', 'اعتبار باقی‌مانده و خط پنل پیامک'], ['sms_delivery_status', 'وضعیت تحویل پیامک‌های ارسالی از پنل'],
+  ['sms_list_received', 'پیامک‌های دریافتی (پاسخ‌ها)'], ['sms_send', 'پیش‌نویس ارسال پیامک (فقط پس از تأیید ادمین در ویجت ارسال می‌شود)'],
   ['list_activity_log', 'سوابق تغییرات و تماس‌ها'], ['search_student', 'جست‌وجوی کارآموز'], ['trainee_count', 'تعداد کل کارآموزان'],
   ['get_student_financial_summary', 'خلاصه مالی یک کارآموز'], ['get_daily_cashflow', 'گردش روزانه'],
   ['get_debtors_list', 'بدهکاران'], ['top_debtors', 'بیشترین بدهکاران'], ['get_course_statistics', 'آمار یک دوره'],
@@ -3081,7 +3069,7 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید؛ وضعیت‌ها و کدها (مثل new، pending، approved، paid) را همیشه به فارسی بگویید، نه کد انگلیسی.',
-  '۶) شما فقط می‌خوانید؛ هیچ پیامی ارسال نمی‌کنید و چیزی را تغییر نمی‌دهید. اگر کاربر ارسال پیام خواست، متن پیشنهادی بنویسید و بگویید از بخش «پیام‌رسان» ارسال کند.',
+  '۶) شما مستقیماً هیچ پیامی ارسال نمی‌کنید و چیزی را تغییر نمی‌دهید. ابزارهای sms_send، send_telegram_message و send_rubika_message (اگر در دسترس باشند) فقط پیش‌نویس می‌سازند؛ پیش‌نمایش را به کاربر نشان دهید و بگویید برای ارسال، دکمه «تأیید» را در کادر زیر گفتگو بزند. هرگز نگویید پیام ارسال شد. اگر این ابزارها در دسترس نیستند، متن پیشنهادی بنویسید و بگویید از بخش «پیام‌رسان» ارسال کند.',
   copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
   '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
@@ -3492,6 +3480,45 @@ const COPILOT_SEND_RUBIKA_TOOL = {
   },
 };
 
+const COPILOT_SMS_TOOLS = [
+  { type: 'function', function: { name: 'sms_get_credit', description: 'اعتبار باقی‌مانده پنل پیامک (sms.ir) و شماره خط(های) ارسال. فقط خواندنی.', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'sms_delivery_status', description: 'وضعیت تحویل پیامک‌ها از پنل sms.ir. با message_id وضعیت یک پیامک؛ بدون آن فهرست پیامک‌های ارسالی اخیر (امروز یا بایگانی) با وضعیت تحویل. فقط خواندنی.', parameters: { type: 'object', properties: {
+    message_id: { type: 'string', description: 'شناسه پیامک در sms.ir (اختیاری)' },
+    scope: { type: 'string', enum: ['live', 'archive'], description: 'live = ارسال‌های امروز (پیش‌فرض)، archive = بایگانی روزهای قبل' },
+    limit: { type: 'number', description: 'حداکثر تعداد (پیش‌فرض ۱۰، حداکثر ۵۰)' } } } } },
+  { type: 'function', function: { name: 'sms_list_received', description: 'پیامک‌های دریافتی (پاسخ‌های مخاطبان) از پنل sms.ir. فقط خواندنی.', parameters: { type: 'object', properties: {
+    scope: { type: 'string', enum: ['live', 'archive'], description: 'live = دریافتی‌های جدید/امروز (پیش‌فرض)، archive = بایگانی' },
+    limit: { type: 'number', description: 'حداکثر تعداد (پیش‌فرض ۱۰، حداکثر ۵۰)' } } } } },
+  { type: 'function', function: { name: 'sms_send', description: 'یک پیامک پیش‌نویس می‌سازد و برای تأیید ادمین در صف می‌گذارد؛ هیچ‌چیزی ارسال نمی‌شود تا ادمین در ویجت «تأیید» را بزند. گیرنده: student_id یا موبایل (حداکثر ۲۰ گیرنده). محتوا: یا template_key (الگوهای ذخیره‌شده، مثل registration_welcome یا class_schedule) با params، یا text آزاد. بازگرداندن: { pending_id, preview } شامل متن نهایی، شناسه الگو و هزینه تقریبی.', parameters: { type: 'object', properties: {
+    recipients: { type: 'array', items: { type: 'string' }, description: 'فهرست student_id یا شماره موبایل (09xxxxxxxxx)؛ حداکثر ۲۰' },
+    template_key: { type: 'string', description: 'کلید الگوی پیامک (اختیاری؛ به‌جای text)' },
+    params: { type: 'object', description: 'مقادیر متغیرهای الگو، مثل { "name": "علی", "course": "..." }؛ نام و موبایل هر کارآموز خودکار پر می‌شود', additionalProperties: { type: 'string' } },
+    text: { type: 'string', description: 'متن آزاد پیامک (اگر template_key داده نشده)' } }, required: ['recipients'] } } },
+];
+
+const SMSIR_DELIVERY_FA: Record<number, string> = { 1: 'رسیده به گوشی', 2: 'نرسیده به گوشی', 3: 'پردازش در مخابرات', 4: 'نرسیده به مخابرات', 5: 'رسیده به اپراتور', 6: 'ناموفق', 7: 'لیست سیاه' };
+let smsirLastCall = 0;
+/** Read-only GET against sms.ir (key from env, never returned). Spaces calls ~2s apart. */
+async function smsirGet(path: string): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const apiKey = process.env.SMS_API_KEY || '';
+  if (!apiKey) return { ok: false, error: 'درگاه پیامک تنظیم نشده است.' };
+  const wait = smsirLastCall + 2000 - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  smsirLastCall = Date.now();
+  try {
+    const r = await fetch(`https://api.sms.ir${path}`, { headers: { 'x-api-key': apiKey, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+    const t = await r.text(); let b: any = null; try { b = JSON.parse(t); } catch { /* non-JSON */ }
+    if (b && b.status === 1) return { ok: true, data: b.data };
+    if (b && b.status === 20) return { ok: false, error: 'محدودیت تعداد درخواست پنل پیامک؛ چند ثانیه دیگر دوباره تلاش کنید.' };
+    return { ok: false, error: String((b && b.message) || `HTTP ${r.status}`).split(apiKey).join('***').slice(0, 200) };
+  } catch (e: any) { return { ok: false, error: e?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : 'خطا در اتصال به سرویس پیامک' }; }
+}
+/** OTP codes must never reach the model: mask digits in verification-code texts. */
+const redactSmsText = (t: unknown) => { const s = String(t ?? ''); return /کد\s*(تایید|تأیید|ورود)|code|رمز/i.test(s) ? s.replace(/\d{3,8}/g, '****') : s; };
+const smsirTime = (sec: unknown) => { const n = Number(sec); return n > 0 ? copilotTehran(new Date(n * 1000).toISOString()) : null; };
+const smsirMobile = (m: unknown) => maskPhone(String(m ?? '').replace(/^(?=9\d{9}$)/, '0'));
+const smsParts = (t: string) => { const uni = /[^\x00-\x7F]/.test(t); const one = uni ? 70 : 160; const multi = uni ? 67 : 153; return t.length <= one ? 1 : Math.ceil(t.length / multi); };
+
 /** Tools offered to this user (admin-only extras): SQL via DBHub (COPILOT_DB_BACKEND=dbhub, falls back to builtin when down) or builtin run_sql_query, plus get_site_analytics. */
 /** Admin-only read-only tools (exams, documents, SMS); offered only to admin and re-checked in runCopilotTool. */
 const COPILOT_ADMIN_READ_TOOLS = [
@@ -3551,7 +3578,7 @@ async function copilotToolsFor(role: string) {
     const dbhub = dbhubSelected() ? await getDbhubTools() : null;
     sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
   }
-  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
+  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...COPILOT_SMS_TOOLS, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -3583,6 +3610,92 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   if (name === 'send_notification') {
     // Disabled: sending must go through a human-confirmed UI flow, never directly from the model.
     return { error: 'ارسال پیام از طریق دستیار غیرفعال است؛ از بخش پیام‌رسان استفاده کنید.' };
+  }
+
+  if (name === 'sms_get_credit') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
+    const c = await smsirGet('/v1/credit');
+    const l = await smsirGet('/v1/line');
+    let cfgLine = ''; try { cfgLine = String((await sharedSms.getConfig()).lineNumber || ''); } catch { /* ignore */ }
+    if (!c.ok) return { error: c.error };
+    return { credit: c.data, credit_unit: 'اعتبار پنل sms.ir', lines: l.ok ? l.data : [], configured_line: cfgLine || null };
+  }
+
+  if (name === 'sms_delivery_status') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
+    const fmt = (m: any) => ({ message_id: m.messageId, mobile: smsirMobile(m.mobile), text: redactSmsText(m.messageText).slice(0, 200),
+      sent_at: smsirTime(m.sendDateTime), line: m.lineNumber, cost: m.cost, delivery: SMSIR_DELIVERY_FA[Number(m.deliveryState)] || (m.deliveryState == null ? 'نامشخص' : String(m.deliveryState)),
+      delivered_at: smsirTime(m.deliveryDateTime) });
+    const mid = toLatinDigits(String(a.message_id ?? '')).replace(/\D/g, '');
+    if (mid) { const r = await smsirGet(`/v1/send/${mid}`); return r.ok ? { message: r.data ? fmt(r.data) : null } : { error: r.error }; }
+    const limit = Math.min(50, Math.max(1, Number(a.limit) || 10));
+    const scope = a.scope === 'archive' ? 'archive' : 'live';
+    const r = await smsirGet(`/v1/send/${scope}?pageNumber=1&pageSize=${limit}`);
+    if (!r.ok) return { error: r.error };
+    const list = (Array.isArray(r.data) ? r.data : []).map(fmt);
+    return { scope, count: list.length, messages: list };
+  }
+
+  if (name === 'sms_list_received') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
+    const limit = Math.min(50, Math.max(1, Number(a.limit) || 10));
+    const scope = a.scope === 'archive' ? 'archive' : 'live';
+    const r = await smsirGet(`/v1/receive/${scope}?pageNumber=1&pageSize=${limit}${scope === 'live' ? '&sortByNewest=true' : ''}`);
+    if (!r.ok) return { error: r.error };
+    const list = (Array.isArray(r.data) ? r.data : []).map((m: any) => ({ number: smsirMobile(m.number ?? m.mobile), text: String(m.messageText ?? '').slice(0, 300),
+      received_at: smsirTime(m.receivedDateTime ?? m.sendDateTime), line: m.lineNumber ?? null }));
+    return { scope, count: list.length, messages: list };
+  }
+
+  if (name === 'sms_send') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
+    const raw: string[] = (Array.isArray(a.recipients) ? a.recipients : [a.recipients ?? a.recipient ?? a.mobile ?? a.student_id]).filter((x: any) => x != null && String(x).trim()).map((x: any) => sanitizeString(String(x), 40));
+    if (!raw.length) return { error: 'حداقل یک گیرنده لازم است.' };
+    if (raw.length > 20) return { error: 'حداکثر ۲۰ گیرنده در هر درخواست مجاز است.' };
+    const key = sanitizeString(a.template_key, 60);
+    const freeText = sanitizeString(a.text, 1000);
+    if (!key && !freeText) return { error: 'template_key یا text الزامی است.' };
+    if (key && freeText) return { error: 'فقط یکی از template_key یا text را بدهید.' };
+    let tpl: any = null;
+    if (key) {
+      if (/^otp/i.test(key)) return { error: 'این الگو از طریق دستیار قابل ارسال نیست.' };
+      tpl = await sharedSms.getTemplate(key);
+      if (!tpl) return { error: 'الگوی پیامک با این کلید پیدا نشد.' };
+      if (!tpl.enabled) return { error: 'این الگو غیرفعال است.' };
+    }
+    const vars: Record<string, string> = {};
+    if (a.params && typeof a.params === 'object') for (const [k, v] of Object.entries(a.params)) if (/^\w{1,40}$/.test(k)) vars[k] = sanitizeString(String(v ?? ''), 200);
+    const items: { mobile: string; label: string; studentId?: number | null; text: string }[] = [];
+    const errors: string[] = [];
+    for (const r0 of raw) {
+      const q = toLatinDigits(r0).trim(); const mob = normalizeMobile(q);
+      let st: any = null;
+      if (/^\d{1,9}$/.test(q)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE student_id = ? LIMIT 1', [Number(q)]))[0];
+      else if (/^09\d{9}$/.test(mob)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE phone_number = ? LIMIT 1', [mob]))[0] || { phone_number: mob };
+      else { errors.push(`${r0}: شناسه یا موبایل نامعتبر`); continue; }
+      if (!st) { errors.push(`${r0}: کارآموز پیدا نشد`); continue; }
+      const mobile = normalizeMobile(st.phone_number);
+      if (!/^09\d{9}$/.test(mobile)) { errors.push(`${r0}: شماره موبایل معتبر ندارد`); continue; }
+      if (items.some((x) => x.mobile === mobile)) continue;
+      const nm = `${String(st.first_name || '').trim()} ${String(st.last_name || '').trim()}`.trim();
+      const v = { ...vars }; if (nm && !v.name) v.name = nm; if (!v.mobile) v.mobile = mobile;
+      const text = tpl ? sharedSms.render(tpl.body_fa || tpl.fallback_body_fa || '', v).replace(/\n+$/, '') : freeText;
+      if (tpl && tpl.channel_kind === 'verify') { const { missing } = sharedSms.buildVerifyParams(tpl, v); if (missing.length) { errors.push(`${r0}: متغیر خالی الگو (${missing.join('، ')})`); continue; } }
+      items.push({ mobile, label: nm || 'شماره آزاد', studentId: st.student_id ?? null, text });
+    }
+    if (!items.length) return { error: `هیچ گیرنده معتبری نماند. ${errors.join('؛ ')}` };
+    const parts = items.reduce((n, x) => n + smsParts(x.text), 0);
+    const pendingId = `sms_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    const now = Date.now();
+    pendingMessages.set(pendingId, { id: pendingId, createdBy: ctx.username, channel: 'sms', recipient: items.map((x) => x.mobile).join(','),
+      label: items.length === 1 ? items[0].label : `${items.length} گیرنده`, text: items[0].text, createdAt: now, expiresAt: now + PENDING_TTL_MS,
+      sms: { items, templateKey: key || null, vars } });
+    const head = `✉️ پیامک → ${items.length} گیرنده${tpl ? ` | الگو: ${key}${tpl.provider_template_id ? ` (شناسه sms.ir ${tpl.provider_template_id}، ${tpl.channel_kind === 'verify' ? 'ارسال الگویی' : 'ارسال متنی'})` : ' (ارسال متنی)'}` : ' | متن آزاد'} | هزینه تقریبی: ${parts} بخش پیامک`;
+    const lines = items.slice(0, 5).map((x) => `• ${x.label} ${x.mobile}${items.length > 1 ? '' : ''}`);
+    if (items.length > 5) lines.push(`• و ${items.length - 5} گیرنده دیگر`);
+    const sample = items.length > 1 && items.some((x) => x.text !== items[0].text) ? '(متن نمونه برای گیرنده اول)\n' : '';
+    return { pending_id: pendingId, preview: `${head}\n${lines.join('\n')}\n${sample}${items[0].text}`, skipped: errors.length ? errors : undefined,
+      note: 'هنوز ارسال نشده است؛ ادمین باید در کادر تأیید زیر گفتگو «تأیید» را بزند.' };
   }
 
   if (name === 'send_telegram_message') {
@@ -3906,8 +4019,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     const limit = copilotLimit(a.limit, 20);
     const kind = String(a.kind || 'messages');
     if (kind === 'templates') {
-      const stored = (readDb() as any).message_templates;
-      const list = Array.isArray(stored) ? stored : DEFAULT_MESSAGE_TEMPLATES;
+      const list = (await sharedSms.listTemplates(true)).map((t: any) => ({ id: t.key, title: t.title_fa, body: t.body_fa, updated_at: t.updated_at }));
       return { kind: 'templates', count: list.length, templates: list.slice(0, limit).map((t: any) => ({
         id: t.id, title: t.title, body: String(t.body || '').slice(0, 500), updated_at: copilotTehran(t.updated_at) })) };
     }
@@ -4203,6 +4315,24 @@ app.post('/api/copilot/pending/:id/confirm', requireAdmin, asyncHandler(async (r
     } catch (err: any) {
       result = { ok: false, error: err?.message || 'خطا در ارسال' };
     }
+  } else if (pending.channel === 'sms' && pending.sms) {
+    const sent: string[] = []; const failed: string[] = [];
+    for (const it of pending.sms.items) {
+      let r: { ok: boolean; status: string; detail?: string };
+      try {
+        r = pending.sms.templateKey
+          ? await sharedSms.sendTemplate(pending.sms.templateKey, it.mobile, { ...(pending.sms.vars || {}), ...(it.studentId && !pending.sms.vars?.name ? { name: it.label } : {}), mobile: it.mobile })
+          : await sharedSms.sendText(it.mobile, it.text);
+      } catch (e: any) { r = { ok: false, status: 'failed', detail: e?.message || 'خطا' }; }
+      (r.ok ? sent : failed).push(it.mobile);
+      const db = readDb(); const t = Date.now();
+      const outbox = ((db as any).outbox ||= []) as any[];
+      outbox.push({ id: `MSG-${t}-${crypto.randomBytes(2).toString('hex')}`, recipient: it.mobile, channel: 'sms', message: it.text, student_id: it.studentId ?? undefined,
+        sent_at: new Date(t).toISOString(), status: r.ok ? 'sent' : (r.status === 'disabled' ? 'failed' : r.status), note: `copilot ${pendingId}${pending.sms.templateKey ? ` tpl=${pending.sms.templateKey}` : ''}${r.detail ? ` ${r.detail}` : ''}`.slice(0, 300) });
+      if (outbox.length > MAX_STORED_MESSAGES) outbox.splice(0, outbox.length - MAX_STORED_MESSAGES);
+      writeDb(db);
+    }
+    result = failed.length === 0 ? { ok: true } : { ok: sent.length > 0, error: `${sent.length} ارسال شد، ${failed.length} ناموفق` };
   } else if (pending.channel === 'telegram') {
     result = await sendTelegramMessage(pending.recipient, pending.text);
   }
