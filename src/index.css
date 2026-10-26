@@ -559,7 +559,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select { min-height: 42px; }
   main button, [role="dialog"] button { min-height: 36px; }
   /* Tables scroll sideways instead of crushing columns */
-  .overflow-x-auto > table, .overflow-auto > table { min-width: 600px; }
+  .overflow-x-auto > table:not(.table-fit), .overflow-auto > table:not(.table-fit) { min-width: 600px; }
   .overflow-x-auto, .overflow-auto { -webkit-overflow-scrolling: touch; }
   /* Modals: full width, never taller than the screen */
   .fixed.inset-0 > div { max-height: calc(100dvh - 1.5rem); overflow-y: auto; }

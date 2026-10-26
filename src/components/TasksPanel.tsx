@@ -71,7 +71,7 @@ export default function TasksPanel({ username, isAdmin, onCountsChange }: Props)
           )}
           <label className="text-xs text-slate-600 flex items-center gap-1"><input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />نمایش انجام‌شده‌ها</label>
           </FilterSheet>
-          <button onClick={load} className="p-2 border border-slate-200 rounded-xl hover:bg-slate-50"><RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /></button>
+          <button type="button" onClick={load} aria-label="بارگذاری مجدد" title="بارگذاری مجدد" className="p-2 border border-slate-200 rounded-xl hover:bg-slate-50"><RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /></button>
           <button onClick={() => setDraft({ title: '', priority: 'normal', status: 'open', assignee_username: username, due_local: '' })}
             className="flex items-center gap-1 px-3 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl"><Plus className="w-3.5 h-3.5" />کار جدید</button>
         </div>
@@ -110,7 +110,7 @@ export default function TasksPanel({ username, isAdmin, onCountsChange }: Props)
       {draft && (
         <ModalPortal><div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" dir="rtl">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5 space-y-3">
-            <div className="flex items-center justify-between"><h3 className="text-sm font-black">{draft.id ? 'ویرایش کار' : 'کار جدید'}</h3><button onClick={() => setDraft(null)}><X className="w-4 h-4" /></button></div>
+            <div className="flex items-center justify-between"><h3 className="text-sm font-black">{draft.id ? 'ویرایش کار' : 'کار جدید'}</h3><button type="button" onClick={() => setDraft(null)} aria-label="بستن"><X className="w-4 h-4" /></button></div>
             <input value={draft.title || ''} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="عنوان کار" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" />
             <textarea value={draft.description || ''} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="توضیحات" rows={3} className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm" />
             <div className="grid grid-cols-2 gap-2 text-xs">

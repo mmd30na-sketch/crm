@@ -366,7 +366,7 @@ export default function SupervisorDashboard({
                 <span className="text-xs font-mono font-bold text-slate-800">
                   {faNum(totalTuitionRevenue > 0 ? Math.round((totalReceivedCash / totalTuitionRevenue) * 100) : 0)}٪
                 </span>
-                <span className="text-[8px] text-slate-400 font-semibold">تکمیل</span>
+                <span className="text-[10px] text-slate-400 font-semibold">تکمیل</span>
               </div>
             </div>
 
@@ -444,7 +444,7 @@ export default function SupervisorDashboard({
                   <input type="checkbox" checked={task.completed} onChange={() => handleToggleTask(task.id)} className="h-4 w-4 text-sky-600 rounded cursor-pointer" />
                   <span className="font-semibold">{task.text}</span>
                 </div>
-                <button onClick={() => handleDeleteTask(task.id)} className="text-slate-400 hover:text-rose-500 transition">
+                <button type="button" onClick={() => handleDeleteTask(task.id)} aria-label="حذف" title="حذف" className="text-slate-400 hover:text-rose-500 transition">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -492,7 +492,7 @@ export default function SupervisorDashboard({
                 <CalendarIcon className="w-5 h-5 text-sky-600" />
                 <h3 className="text-sm font-bold text-slate-900">تقویم کلاسی و برنامه‌های {currentMonth}</h3>
               </div>
-              <button onClick={() => setIsCalendarOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setIsCalendarOpen(false)} aria-label="بستن" className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-4 h-4" /></button>
             </div>
 
             {/* Grid Days */}

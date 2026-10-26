@@ -360,7 +360,7 @@ function AppShell() {
   return (
     <CopilotProvider onOpenTab={() => handleActiveTabChange('copilot')} isAdmin={role === 'admin'}>
     <div
-      className="flex h-screen h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
+      className="flex h-screen supports-[height:100dvh]:h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
       style={{ background: 'var(--app-bg)' }}
       dir="rtl"
       id="app-root"
@@ -429,7 +429,7 @@ function AppShell() {
                     {item.label}
                   </div>
                   <div className={`text-[10px] leading-tight truncate transition-all ${
-                    isActive ? 'text-white/70' : 'text-slate-600 group-hover:text-slate-400'
+                    isActive ? 'text-white/70' : 'text-slate-400 group-hover:text-slate-300'
                   }`}>
                     {item.sublabel}
                   </div>
@@ -454,7 +454,7 @@ function AppShell() {
           <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white/5">
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold text-slate-300 leading-tight truncate">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
-              <div className="text-[9px] text-slate-600 leading-tight">{ROLE_LABEL[role]}</div>
+              <div className="text-[10px] text-slate-400 leading-tight">{ROLE_LABEL[role]}</div>
             </div>
             <button
               title="خروج"
@@ -494,7 +494,7 @@ function AppShell() {
               {activeNavItem && (
                 <div className="flex items-center gap-1.5">
                   <activeNavItem.icon className={`h-4 w-4 ${ICON_COLOR_MAP[activeNavItem.color]}`} />
-                  <span className="font-semibold text-slate-700">{activeNavItem.label}</span>
+                  <span className="min-w-0 truncate font-semibold text-slate-700">{activeNavItem.label}</span>
                 </div>
               )}
             </div>
@@ -505,14 +505,15 @@ function AppShell() {
             {/* Refresh */}
             <button
               onClick={refreshAllData}
-              className={`p-2 rounded-xl text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all ${isRefreshing ? 'animate-spin text-sky-500' : ''}`}
+              aria-label="بارگذاری مجدد"
+              className={`p-2 min-w-10 min-h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-all ${isRefreshing ? 'animate-spin text-sky-500' : ''}`}
               title="بارگذاری مجدد"
             >
               <RefreshCw className="h-4 w-4" />
             </button>
 
-            {/* Separator */}
-            <div className="h-6 w-px bg-slate-200" />
+            {/* Separator (only when the date is visible) */}
+            <div className="hidden lg:block h-6 w-px bg-slate-200" />
 
             {/* Date */}
             <div className="hidden lg:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5">
@@ -520,14 +521,14 @@ function AppShell() {
               <span className="font-bold font-mono text-[11px] text-slate-600">{jalaliDate}</span>
             </div>
 
-            {/* Separator */}
-            <div className="h-6 w-px bg-slate-200" />
+            {/* Separator (only when the user name is visible) */}
+            <div className="hidden md:block h-6 w-px bg-slate-200" />
 
             {/* User Avatar */}
             <div className="flex items-center gap-2.5 pl-1">
               <div className="hidden md:block text-right">
                 <div className="text-xs font-bold text-slate-700 leading-tight">{currentUser?.full_name || currentUser?.username || 'کاربر'}</div>
-                <div className="text-[9px] text-slate-400">{ROLE_LABEL[role]}</div>
+                <div className="text-[10px] text-slate-400">{ROLE_LABEL[role]}</div>
               </div>
             </div>
           </div>

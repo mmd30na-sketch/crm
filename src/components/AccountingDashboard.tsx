@@ -517,7 +517,7 @@ export default function AccountingDashboard({
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <Plus className="w-4 h-4 text-rose-600" />ثبت هزینه جدید آموزشگاه
               </h3>
-              <button onClick={() => setIsExpenseModalOpen(false)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setIsExpenseModalOpen(false)} aria-label="بستن" className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-4 h-4" /></button>
             </div>
 
             <form onSubmit={handleSaveExpense} className="space-y-3">

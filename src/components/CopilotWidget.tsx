@@ -342,7 +342,7 @@ export function CopilotBar() {
             type="button"
             onClick={() => void sendMessage(prompts[0])}
             disabled={isLoading}
-            className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
+            className="hidden sm:block shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-sky-300 hover:bg-sky-50 focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:opacity-40"
           >
             {prompts[0]}
           </button>

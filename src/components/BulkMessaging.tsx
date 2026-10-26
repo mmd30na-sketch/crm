@@ -189,7 +189,7 @@ export default function BulkMessaging({ courses }: { courses: Course[] }) {
 
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-xs">
         <div className="flex items-center justify-between mb-3"><h3 className="font-bold text-slate-800">کمپین‌ها و گزارش ارسال</h3>
-          <button onClick={loadCampaigns} className="p-1.5 border border-slate-200 rounded-lg"><RefreshCw className="w-3.5 h-3.5" /></button></div>
+          <button type="button" onClick={loadCampaigns} aria-label="بارگذاری مجدد" title="بارگذاری مجدد" className="p-1.5 border border-slate-200 rounded-lg"><RefreshCw className="w-3.5 h-3.5" /></button></div>
         <div className="overflow-x-auto"><table className="w-full text-right">
           <thead className="bg-slate-50 text-slate-500"><tr><th className="p-2">نام</th><th className="p-2">نوع</th><th className="p-2">وضعیت</th><th className="p-2">پیشرفت</th><th className="p-2">زمان</th><th className="p-2"></th></tr></thead>
           <tbody>

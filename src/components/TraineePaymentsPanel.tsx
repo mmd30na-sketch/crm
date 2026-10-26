@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CreditCard, Upload, Loader2, CheckCircle2, XCircle, Wallet, LogOut, GraduationCap, RefreshCw } from 'lucide-react';
 import * as op from '../api/onlinePayments';
 
+const toEn = (v: string) => String(v ?? '').replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0)).replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660));
+const digitsOnly = (v: string) => toEn(v).replace(/\D/g, '');
 const fa = (n: number) => (Number(n) || 0).toLocaleString('fa-IR');
 const inputCls = 'w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sky-200';
 
@@ -65,7 +67,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
       });
     } catch (e: any) {
       setErr(e.message);
-      if (/نامعتبر|منقضی/.test(e.message || '')) { setActiveToken(''); setMe(null); }
+      if (/نامعتبر|منقضی/.test(e.message || '')) { try { const u = new URL(window.location.href); u.searchParams.delete('t'); window.history.replaceState(null, '', u.pathname + (u.search || '')); } catch {} setActiveToken(''); setMe(null); }
     } finally { setLoading(false); }
   }, []);
 
@@ -94,10 +96,19 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
     } catch {}
   };
 
+  const logout = () => {
+    setActiveToken(''); setMe(null); setPayments([]); setErr(null); setNotice(null);
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete('t'); u.searchParams.delete('payment'); u.searchParams.set('trainee', '1');
+      window.history.replaceState(null, '', u.pathname + (u.search || ''));
+    } catch {}
+  };
+
   const login = async () => {
     setErr(null);
-    const id = Number(String(loginId).replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0)).replace(/\D/g, ''));
-    const last4 = loginLast4.replace(/\D/g, '').slice(-4);
+    const id = Number(digitsOnly(loginId));
+    const last4 = digitsOnly(loginLast4).slice(-4);
     if (!id || last4.length !== 4) { setErr('شناسه کارآموز و ۴ رقم آخر کد ملی را وارد کنید.'); return; }
     setLoginBusy(true);
     try {
@@ -107,7 +118,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
   };
 
   const payOnline = async (enrollmentId: number, remaining: number) => {
-    const amount = Math.round(Number(amounts[enrollmentId]));
+    const amount = Math.round(Number(digitsOnly(amounts[enrollmentId] ?? '')));
     if (!Number.isFinite(amount) || amount <= 0) { setErr('مبلغ را درست وارد کنید.'); return; }
     if (amount > remaining) { setErr('مبلغ از مانده این دوره بیشتر است.'); return; }
     setBusy(enrollmentId); setErr(null); setNotice(null);
@@ -120,7 +131,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
   const submitReceipt = async () => {
     if (!receiptFor) return;
     const enrollment = me?.enrollments.find((e) => e.id === receiptFor);
-    const amount = Math.round(Number(receiptAmount));
+    const amount = Math.round(Number(digitsOnly(receiptAmount)));
     if (!enrollment) return;
     if (!receiptFile) { setErr('فایل رسید را انتخاب کنید.'); return; }
     if (!Number.isFinite(amount) || amount <= 0 || amount > enrollment.remaining) { setErr('مبلغ معتبر نیست.'); return; }
@@ -145,7 +156,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
             <div className="text-[10px] text-slate-400 leading-tight">آموزشگاه کارلا</div>
           </div>
         </div>
-        {activeToken && <button onClick={() => { setActiveToken(''); setMe(null); }} className="text-xs text-slate-300 hover:text-white flex items-center gap-1"><LogOut className="w-4 h-4" />خروج</button>}
+        {activeToken && <button type="button" onClick={logout} className="min-h-10 px-2 text-xs text-slate-300 hover:text-white flex items-center gap-1"><LogOut className="w-4 h-4" />خروج</button>}
       </header>
 
       <main className="max-w-2xl mx-auto p-3 sm:p-5 space-y-4">
@@ -191,10 +202,10 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
             <h1 className="text-sm font-black text-slate-800">ورود با شماره پرونده</h1>
             <p className="text-xs text-slate-500">شناسه کارآموز و ۴ رقم آخر کد ملی خود را وارد کنید.</p>
             <label className="block text-xs font-bold text-slate-600 space-y-1">شناسه کارآموز
-              <input inputMode="numeric" value={loginId} onChange={(e) => setLoginId(e.target.value.replace(/[^\d۰-۹]/g, ''))} className={inputCls} placeholder="مثلاً ۱۱۸" />
+              <input inputMode="numeric" value={loginId} onChange={(e) => setLoginId(digitsOnly(e.target.value))} className={inputCls} placeholder="مثلاً ۱۱۸" />
             </label>
             <label className="block text-xs font-bold text-slate-600 space-y-1">۴ رقم آخر کد ملی
-              <input inputMode="numeric" dir="ltr" maxLength={4} value={loginLast4} onChange={(e) => setLoginLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls + ' text-center font-mono tracking-widest'} placeholder="----" />
+              <input inputMode="numeric" dir="ltr" maxLength={4} value={loginLast4} onChange={(e) => setLoginLast4(digitsOnly(e.target.value).slice(0, 4))} className={inputCls + ' text-center font-mono tracking-widest'} placeholder="----" />
             </label>
             {err && <p role="alert" className="text-xs text-rose-700 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">{err}</p>}
             <button disabled={loginBusy} onClick={login} className="w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 text-white text-sm font-bold flex items-center justify-center gap-2">
@@ -215,7 +226,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
                   <div className="text-[10px] text-slate-400">مانده کل</div>
                   <div className={`text-sm font-black ${totalRemaining > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fa(totalRemaining)} تومان</div>
                 </div>
-                <button onClick={() => load(activeToken)} className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50" aria-label="به‌روزرسانی"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
+                <button onClick={() => load(activeToken)} className="p-2 min-w-10 min-h-10 flex items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50" aria-label="به‌روزرسانی"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
               </div>
             )}
 
@@ -243,7 +254,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
                     {remaining > 0 && (
                       <div className="mt-3 space-y-2">
                         <div className="flex items-center gap-2">
-                          <input inputMode="numeric" value={amounts[e.id] ?? ''} onChange={(ev) => setAmounts({ ...amounts, [e.id]: ev.target.value.replace(/[^\d۰-۹]/g, '') })} className={inputCls + ' text-center font-mono'} placeholder="مبلغ (تومان)" />
+                          <input inputMode="numeric" value={amounts[e.id] ?? ''} onChange={(ev) => setAmounts({ ...amounts, [e.id]: digitsOnly(ev.target.value) })} className={inputCls + ' text-center font-mono'} placeholder="مبلغ (تومان)" />
                           <span className="text-[10px] text-slate-400 shrink-0">حداکثر {fa(remaining)}</span>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
@@ -273,7 +284,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
                         <div className="text-[10px] text-slate-400">{p.created_at?.slice(0, 16).replace('T', ' ')}{p.ref_id ? ` · کد پیگیری ${p.ref_id}` : ''}</div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {p.has_receipt && <a href={op.traineeReceiptUrl(activeToken, p.id)} target="_blank" rel="noreferrer" className="text-sky-600 text-[10px] font-bold hover:underline">رسید</a>}
+                        {p.has_receipt && <a href={op.traineeReceiptUrl(activeToken, p.id)} target="_blank" rel="noreferrer" className="inline-block py-1.5 px-1 text-sky-600 text-xs font-bold hover:underline">رسید</a>}
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${STATUS_STYLE[p.status]}`}>{op.ONLINE_STATUS_LABEL[p.status]}</span>
                       </div>
                     </li>
@@ -290,7 +301,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
           <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl p-5 space-y-3 max-h-[90dvh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-black">ارسال رسید پرداخت</h3>
             <label className="block text-xs font-bold text-slate-600 space-y-1">مبلغ (تومان)
-              <input inputMode="numeric" value={receiptAmount} onChange={(e) => setReceiptAmount(e.target.value.replace(/[^\d۰-۹]/g, ''))} className={inputCls + ' text-center font-mono'} />
+              <input inputMode="numeric" value={receiptAmount} onChange={(e) => setReceiptAmount(digitsOnly(e.target.value))} className={inputCls + ' text-center font-mono'} />
             </label>
             <label className="block text-xs font-bold text-slate-600 space-y-1">فایل رسید (تصویر یا PDF، حداکثر ۸ مگابایت)
               <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(e) => setReceiptFile(e.target.files?.[0] || null)} className="block w-full text-xs file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-sky-50 file:text-sky-700 file:font-bold" />

@@ -1000,7 +1000,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                         <td className="p-3 font-bold text-slate-900">{u.full_name}</td>
                         <td className="p-3 font-mono text-slate-600">
                           {u.username}
-                          {u.locked && <span className="mr-2 text-[9px] text-slate-400">سیستمی</span>}
+                          {u.locked && <span className="mr-2 text-[10px] text-slate-400">سیستمی</span>}
                         </td>
                         <td className="p-3">
                           {u.locked ? (

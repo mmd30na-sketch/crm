@@ -346,7 +346,7 @@ export default function LeadsPanel(props: { courses: Course[]; onConverted?: (st
             <div className="bg-white border border-slate-200 rounded-2xl p-5 w-full max-w-lg space-y-4 text-slate-800 shadow-2xl my-auto">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-bold text-slate-900">{leadDisplayName(selectedLead)}</h4>
-                <button type="button" onClick={closeDrawer} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"><X className="w-4 h-4" /></button>
+                <button type="button" onClick={closeDrawer} aria-label="بستن" className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"><X className="w-4 h-4" /></button>
               </div>
 
               <div className="grid grid-cols-2 gap-2.5 text-xs">

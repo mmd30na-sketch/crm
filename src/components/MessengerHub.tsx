@@ -469,7 +469,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
       rubika: { label: 'روبیکا', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
       sms:    { label: 'پیامک', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
     };
-    return <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${(map[channel] || map.rubika).cls}`}>{(map[channel] || map.rubika).label}</span>;
+    return <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${(map[channel] || map.rubika).cls}`}>{(map[channel] || map.rubika).label}</span>;
   };
 
   return (
@@ -616,7 +616,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                         <span className="text-[10px] text-slate-400 truncate">{thread.courseTitle}</span>
                         <ChannelBadge channel={thread.channel} />
                         {thread.person && (
-                          <span title={thread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${thread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                          <span title={thread.person.name} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${thread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
                             {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[thread.person.kind] || 'مرتبط'}
                           </span>
                         )}
@@ -650,7 +650,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                         <h3 className="text-xs font-bold text-slate-900">{activeThread.senderName}</h3>
                         <ChannelBadge channel={activeThread.channel} />
                         {activeThread.person && (
-                          <span title={activeThread.person.name} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${activeThread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                          <span title={activeThread.person.name} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${activeThread.person.kind === 'student' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
                             {({ student: 'هنرجو', registration: 'ثبت‌نام', legacy: 'هنرجوی قدیمی', lead: 'سرنخ' } as Record<string, string>)[activeThread.person.kind] || 'مرتبط'}
                           </span>
                         )}
@@ -696,7 +696,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                             <span className="text-[10px] font-bold text-slate-700">
                               {isStudent ? activeThread.senderName : 'اپراتور پذیرش'}
                             </span>
-                            <span className="text-[9px] text-slate-400 font-mono">{msg.time}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">{msg.time}</span>
                             {msg.account && msg.status !== 'sending' && (
                               <MessageMenu align={isStudent ? 'left' : 'right'}
                                 actions={[
@@ -725,7 +725,7 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
                                 onTranscribed={(t) => patchThreadMsg(msg.id, m => ({ ...m, transcription: t }))} />
                             )}
                             {(msg.edited || msg.deletedRemote) && (
-                              <span className={`block mt-1 text-[9px] font-bold ${isStudent ? 'text-slate-400' : 'text-white/75'}`}>
+                              <span className={`block mt-1 text-[10px] font-bold ${isStudent ? 'text-slate-400' : 'text-white/75'}`}>
                                 {msg.deletedRemote ? 'در روبیکا حذف شده' : 'ویرایش شده'}
                               </span>
                             )}
@@ -733,15 +733,15 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
 
                           {!isStudent && (
                             msg.status === 'failed' ? (
-                              <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-rose-600 font-bold">
+                              <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-rose-600 font-bold">
                                 <AlertCircle className="w-3 h-3" />{msg.error || 'ارسال نشد'}
                               </div>
                             ) : msg.status === 'sending' ? (
-                              <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-slate-400 font-bold">
+                              <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-slate-400 font-bold">
                                 <Clock className="w-3 h-3" />در حال ارسال...
                               </div>
                             ) : (
-                              <div className="flex items-center justify-end gap-1 mt-1 text-[9px] text-emerald-600 font-bold">
+                              <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-emerald-600 font-bold">
                                 <CheckCheck className="w-3 h-3" />ارسال شد
                               </div>
                             )

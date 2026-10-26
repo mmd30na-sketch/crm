@@ -919,7 +919,7 @@ export default function StudentRegistrationForm({
     <div className="w-full fade-in" id="registration-form-container">
       <form onSubmit={e => e.preventDefault()}>
         {/* Header */}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div>
             <h2 className="text-lg font-black text-slate-900">ثبت‌نام هوشمند هنرجو</h2>
             
@@ -952,7 +952,7 @@ export default function StudentRegistrationForm({
 
         {pendingRegs.length > 0 && (
           <div className="mb-4 bg-violet-50/70 border border-violet-200 rounded-2xl p-3.5">
-            <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <div className="inline-flex items-center gap-1.5 text-xs font-bold text-violet-800">
                 <Inbox className="w-3.5 h-3.5" />
                 ثبت‌نام‌های در انتظار وبسایت ({pendingRegs.length})
@@ -970,6 +970,7 @@ export default function StudentRegistrationForm({
                 value={regQuery}
                 onChange={(e) => setRegQuery(e.target.value)}
                 placeholder="جستجو نام / کد ملی / موبایل"
+                aria-label="جستجو نام / کد ملی / موبایل"
                 className="w-56 max-w-full px-2.5 py-1.5 text-[11px] border border-violet-200 rounded-lg bg-white"
               />
             </div>
@@ -1336,6 +1337,7 @@ export default function StudentRegistrationForm({
               <button
                 type="button"
                 onClick={stopCamera}
+                aria-label="بستن دوربین"
                 className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
               >
                 <X className="w-4 h-4" />
