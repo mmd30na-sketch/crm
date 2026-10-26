@@ -26,6 +26,8 @@ import {
   ChevronLeft,
   Download,
   Loader2,
+  RotateCw,
+  Sparkles,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment } from '../types';
 import * as api from '../api/client';
@@ -33,11 +35,24 @@ import * as debtApi from '../api/debtSms';
 import { studentBalance } from '../utils/finance';
 import { matchesStudentSearch, matchesCourseNumber, defaultCourseNumberFilter, financialStatus } from '../utils/studentFilters';
 import ModalPortal from './ModalPortal';
+import PhotoCropModal from './PhotoCropModal';
 import { useIsDesktop } from './FilterSheet';
 import { downloadCsv } from '../utils/exportCsv';
 import StudentDocsSection from './print/StudentDocsSection';
 import ActivityTimeline from './ActivityTimeline';
 import { RubikaContactButton, RubikaBulkContactsButton } from './RubikaContacts';
+
+const IRAN_ID_CARD_RATIO = 85.6 / 53.98;
+const PHOTO_3X4_RATIO = 3 / 4;
+type EditPhotoKind = 'idCard' | 'personal';
+
+async function urlToImageFile(url: string, name: string): Promise<File> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('خواندن عکس فعلی ناموفق بود.');
+  const blob = await res.blob();
+  const type = blob.type.startsWith('image/') ? blob.type : 'image/jpeg';
+  return new File([blob], name, { type });
+}
 
 interface StudentsListProps {
   students?: Student[];
@@ -76,7 +91,7 @@ function InfoCell({ icon: Icon, label, value, mono = false, accent = 'sky' }: {
     <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 hover:border-sky-200 hover:bg-sky-50/40 transition-all duration-200">
       <div className={`flex items-center gap-1.5 mb-1 ${accentMap[accent]}`}>
         <Icon className="w-3.5 h-3.5" />
-        <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
+        <span className="text-[10px] font-semibold text-slate-500">{label}</span>
       </div>
       <p className={`text-slate-800 font-semibold text-sm truncate ${mono ? 'font-mono' : ''}`}>{value || '—'}</p>
     </div>
@@ -176,6 +191,18 @@ export default function StudentsList({
   const [paymentDesc,           setPaymentDesc]           = useState('واریز قسط شهریه');
   const [isSubmittingPay,       setIsSubmittingPay]       = useState(false);
   const [editError,             setEditError]             = useState<string | null>(null);
+  const [editSaving,            setEditSaving]            = useState(false);
+  const [editPhotoPreview,      setEditPhotoPreview]      = useState<{ idCard: string; personal: string }>({ idCard: '', personal: '' });
+  const [editPhotoFiles,        setEditPhotoFiles]        = useState<{ idCard: File | null; personal: File | null; idCardOriginal: File | null; personalOriginal: File | null }>({ idCard: null, personal: null, idCardOriginal: null, personalOriginal: null });
+  const [cropTarget,            setCropTarget]            = useState<EditPhotoKind | null>(null);
+  const [cropFile,              setCropFile]              = useState<File | null>(null);
+  const [smartCropBusy,         setSmartCropBusy]         = useState<EditPhotoKind | null>(null);
+  const editBlobUrls = useRef<string[]>([]);
+  const rememberBlob = (url: string) => { editBlobUrls.current.push(url); return url; };
+  const clearEditBlobs = () => {
+    editBlobUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    editBlobUrls.current = [];
+  };
   const [payError,              setPayError]              = useState<string | null>(null);
   const [deleteError,           setDeleteError]           = useState<string | null>(null);
   const [messageError,          setMessageError]          = useState<string | null>(null);
@@ -270,15 +297,119 @@ export default function StudentsList({
   const hasActiveFilters = searchTerm || courseFilter !== 'all' || courseNumberFilter !== 'all' || financialFilter !== 'all';
 
   /* ── Handlers ── */
-  const handleSaveStudentEdit = async () => {
-    if (!editingStudent) return;
+  const openStudentEdit = (student: Student) => {
+    clearEditBlobs();
     setEditError(null);
+    setCropTarget(null);
+    setCropFile(null);
+    setEditPhotoFiles({ idCard: null, personal: null, idCardOriginal: null, personalOriginal: null });
+    setEditPhotoPreview({
+      idCard: student.id_card_photo_url || '',
+      personal: student.personal_photo_url || '',
+    });
+    setEditingStudent({ ...student });
+  };
+
+  const closeStudentEdit = () => {
+    setEditingStudent(null);
+    setEditError(null);
+    setCropTarget(null);
+    setCropFile(null);
+    clearEditBlobs();
+  };
+
+  const pickEditPhoto = (kind: EditPhotoKind, file: File) => {
+    const url = rememberBlob(URL.createObjectURL(file));
+    setEditPhotoFiles((prev) => kind === 'idCard'
+      ? { ...prev, idCard: file, idCardOriginal: file }
+      : { ...prev, personal: file, personalOriginal: file });
+    setEditPhotoPreview((prev) => ({ ...prev, [kind]: url }));
+    setCropFile(file);
+    setCropTarget(kind);
+  };
+
+  const openPhotoEditor = async (kind: EditPhotoKind) => {
+    setEditError(null);
+    const kept = kind === 'idCard'
+      ? (editPhotoFiles.idCardOriginal || editPhotoFiles.idCard)
+      : (editPhotoFiles.personalOriginal || editPhotoFiles.personal);
+    try {
+      let file = kept;
+      if (!file) {
+        const url = kind === 'idCard' ? editPhotoPreview.idCard : editPhotoPreview.personal;
+        if (!url) {
+          setEditError(kind === 'idCard' ? 'اسکن کارت ملی وجود ندارد؛ یک عکس انتخاب کنید.' : 'عکس پرسنلی وجود ندارد؛ یک عکس انتخاب کنید.');
+          return;
+        }
+        file = await urlToImageFile(url, kind === 'idCard' ? 'id-card.jpg' : 'personal.jpg');
+        setEditPhotoFiles((prev) => kind === 'idCard' ? { ...prev, idCardOriginal: file } : { ...prev, personalOriginal: file });
+      }
+      setCropFile(file);
+      setCropTarget(kind);
+    } catch (err: any) {
+      setEditError(err?.message || 'باز کردن ابزار ویرایش عکس ناموفق بود.');
+    }
+  };
+
+  const currentEditPhoto = async (kind: EditPhotoKind): Promise<File> => {
+    const kept = kind === 'idCard'
+      ? (editPhotoFiles.idCard || editPhotoFiles.idCardOriginal)
+      : (editPhotoFiles.personal || editPhotoFiles.personalOriginal);
+    if (kept) return kept;
+    const url = kind === 'idCard' ? editPhotoPreview.idCard : editPhotoPreview.personal;
+    if (!url) throw new Error(kind === 'idCard' ? 'اسکن کارت ملی وجود ندارد؛ یک عکس انتخاب کنید.' : 'عکس پرسنلی وجود ندارد؛ یک عکس انتخاب کنید.');
+    return urlToImageFile(url, kind === 'idCard' ? 'id-card.jpg' : 'personal.jpg');
+  };
+
+  const runSmartCrop = async (kind: EditPhotoKind) => {
+    if (!editingStudent || smartCropBusy) return;
+    setEditError(null);
+    setSmartCropBusy(kind);
+    try {
+      const source = await currentEditPhoto(kind);
+      const cropped = await api.smartCropStudentPhoto(editingStudent.id, kind, source);
+      const url = rememberBlob(URL.createObjectURL(cropped));
+      setEditPhotoFiles((prev) => kind === 'idCard'
+        ? { ...prev, idCard: cropped, idCardOriginal: prev.idCardOriginal || source }
+        : { ...prev, personal: cropped, personalOriginal: prev.personalOriginal || source });
+      setEditPhotoPreview((prev) => ({ ...prev, [kind]: url }));
+    } catch (err: any) {
+      setEditError(err?.message || 'برش هوشمند ناموفق بود.');
+    } finally {
+      setSmartCropBusy(null);
+    }
+  };
+
+  const applyPhotoCrop = (cropped: File) => {
+    if (!cropTarget) return;
+    const kind = cropTarget;
+    const url = rememberBlob(URL.createObjectURL(cropped));
+    setEditPhotoFiles((prev) => kind === 'idCard' ? { ...prev, idCard: cropped } : { ...prev, personal: cropped });
+    setEditPhotoPreview((prev) => ({ ...prev, [kind]: url }));
+    setCropTarget(null);
+    setCropFile(null);
+  };
+
+  const handleSaveStudentEdit = async () => {
+    if (!editingStudent || editSaving) return;
+    setEditError(null);
+    setEditSaving(true);
     try {
       await api.updateStudent(editingStudent);
+      if (editPhotoFiles.idCard || editPhotoFiles.personal) {
+        await api.uploadStudentPhotos(editingStudent.id, {
+          idCard: editPhotoFiles.idCard,
+          personal: editPhotoFiles.personal,
+          idCardOriginal: editPhotoFiles.idCardOriginal,
+          personalOriginal: editPhotoFiles.personalOriginal,
+        }, { last_name: editingStudent.last_name });
+      }
       onRefresh?.();
-      setEditingStudent(null);
+      closeStudentEdit();
     } catch (err: any) {
       setEditError(err?.message || 'ذخیره تغییرات ناموفق بود.');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -368,8 +499,8 @@ export default function StudentsList({
           style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
         >
           {/* ─── Card Top Bar ─── */}
-          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-l from-sky-50/60 to-white">
-            <div className="flex items-center gap-2">
+          <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-l from-sky-50/60 to-white">
+            <div className="flex flex-wrap items-center gap-2">
               <UserCheck className="w-4 h-4 text-sky-500" />
               <span className="text-sm font-bold text-slate-700">پرونده فعال</span>
               <span className="text-xs text-slate-400">/ هنرجوی انتخاب‌شده</span>
@@ -426,7 +557,7 @@ export default function StudentsList({
 
               {/* ID Card Photo */}
               <div className="shrink-0">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5 text-center">اسکن کارت ملی</p>
+                <p className="text-[10px] font-semibold text-slate-400 mb-1.5 text-center">اسکن کارت ملی</p>
                 <div className="relative group w-36 h-24 rounded-xl overflow-hidden border-2 border-slate-200 bg-slate-50 shadow-sm cursor-zoom-in"
                   onClick={() => selectedStudent?.id_card_photo_url && setZoomPhotoUrl({ url: selectedStudent?.id_card_photo_url, title: 'اسکن کارت ملی' })}>
                   {selectedStudent?.id_card_photo_url ? (
@@ -450,7 +581,7 @@ export default function StudentsList({
               <div className="md:col-span-2 bg-slate-50 border border-slate-100 rounded-xl p-3">
                 <div className="flex items-center gap-1.5 text-rose-400 mb-1">
                   <MapPin className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">نشانی سکونت</span>
+                  <span className="text-[10px] font-semibold text-slate-500">نشانی سکونت</span>
                 </div>
                 <p className="text-sm text-slate-700 font-medium leading-relaxed">{selectedStudent?.address || 'ثبت نشده'}</p>
               </div>
@@ -532,7 +663,7 @@ export default function StudentsList({
 
             {/* ─── Row 3: Action Buttons ─── */}
             {canManage && <div className="flex items-center flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
-              <button onClick={() => { setEditError(null); setEditingStudent({ ...selectedStudent }); }}
+              <button onClick={() => { if (selectedStudent) openStudentEdit(selectedStudent); }}
                 className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-sm">
                 <Edit3 className="w-3.5 h-3.5" />ویرایش پرونده
               </button>
@@ -591,7 +722,7 @@ export default function StudentsList({
           <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
 
             {/* Left: Title */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-slate-400" />
               <span className="text-sm font-bold text-slate-700">لیست هنرجویان</span>
               <span className="text-xs font-bold text-sky-600 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-full font-mono">
@@ -697,7 +828,7 @@ export default function StudentsList({
           </div>
         ) : (
           <div ref={tableScrollRef} className="overflow-auto max-h-[60vh]">
-            <table className="w-full text-right">
+            <table className="table-fit w-full text-right">
               <thead className="sticky top-0 z-10 bg-slate-50">
                                 <tr className="border-b border-slate-200 bg-slate-50/80">
                   {[
@@ -760,12 +891,12 @@ export default function StudentsList({
 
                       {/* Phone */}
                       <td className="px-3 py-3 hidden sm:table-cell">
-                        <span className="font-mono text-xs text-slate-600 dir-ltr">{s.phone_number}</span>
+                        <span className="font-mono text-xs text-slate-600" dir="ltr">{s.phone_number}</span>
                       </td>
 
                       {/* Course */}
                       <td className="px-3 py-3 max-w-[130px]">
-                        <span className="text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-lg truncate block">
+                        <span className="text-xs font-semibold text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded-lg truncate block max-w-[130px]">
                           {fin.primaryCourse.courseTitle}
                         </span>
                       </td>
@@ -833,7 +964,7 @@ export default function StudentsList({
               </nav>
             )}
 
-            <span className="text-[10px] text-slate-300">برای مشاهده پرونده روی هر ردیف کلیک کنید</span>
+            <span className="text-[11px] text-slate-400">برای مشاهده پرونده روی هر ردیف کلیک کنید</span>
           </div>
         )}
       </div>
@@ -850,7 +981,7 @@ export default function StudentsList({
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <ZoomIn className="w-4 h-4 text-sky-400" />{zoomPhotoUrl.title}
               </h3>
-              <button onClick={() => setZoomPhotoUrl(null)} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
+              <button type="button" onClick={() => setZoomPhotoUrl(null)} aria-label="بستن" className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -904,7 +1035,7 @@ export default function StudentsList({
       {/* 2. Edit Student Modal */}
       {editingStudent && (
         <ModalPortal><div className="carla-modal-overlay">
-          <div className="carla-modal p-6 space-y-4">
+          <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 760 }}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-sky-100 flex items-center justify-center"><Edit3 className="w-4 h-4 text-sky-600" /></div>
@@ -913,11 +1044,43 @@ export default function StudentsList({
                   <p className="text-xs text-slate-400">{editingStudent.first_name} {editingStudent.last_name}</p>
                 </div>
               </div>
-              <button onClick={() => setEditingStudent(null)} className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={closeStudentEdit} aria-label="بستن" className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {([
+                { kind: 'idCard' as const, title: 'اسکن کارت ملی', frame: 'w-full aspect-[85.6/53.98]', empty: 'بدون اسکن' },
+                { kind: 'personal' as const, title: 'عکس پرسنلی ۳×۴', frame: 'w-[120px] mx-auto aspect-[3/4]', empty: 'بدون عکس' },
+              ]).map(({ kind, title, frame, empty }) => {
+                const preview = kind === 'idCard' ? editPhotoPreview.idCard : editPhotoPreview.personal;
+                const inputId = `edit-photo-${kind}`;
+                return (
+                  <div key={kind} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[11px] font-bold text-slate-600 mb-2 text-center">{title}</p>
+                    <div className={`${frame} rounded-xl overflow-hidden border border-slate-200 bg-white mb-2 flex items-center justify-center`}>
+                      {preview
+                        ? <img src={preview} alt={title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        : <span className="text-[11px] text-slate-400">{empty}</span>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input id={inputId} type="file" accept="image/*" className="hidden"
+                        onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickEditPhoto(kind, file); }} />
+                      <label htmlFor={inputId} className="flex items-center justify-center gap-1 px-2 py-2 text-[11px] font-bold text-slate-700 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-100">تغییر عکس</label>
+                      <button type="button" onClick={() => void openPhotoEditor(kind)} className="flex items-center justify-center gap-1 px-2 py-2 text-[11px] font-bold text-teal-800 bg-white border border-teal-200 rounded-lg hover:bg-teal-50">
+                        <RotateCw className="w-3.5 h-3.5" />برش و چرخش
+                      </button>
+                    </div>
+                    <button type="button" disabled={smartCropBusy !== null} onClick={() => void runSmartCrop(kind)} className="mt-2 w-full flex items-center justify-center gap-1 px-2 py-2 text-[11px] font-bold text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-60 rounded-lg">
+                      {smartCropBusy === kind ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      {smartCropBusy === kind ? 'در حال برش...' : 'برش هوشمند'}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
                   { label: 'نام', key: 'first_name', type: 'text' },
                   { label: 'نام خانوادگی', key: 'last_name', type: 'text' },
@@ -946,11 +1109,22 @@ export default function StudentsList({
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <div className="flex flex-wrap justify-end gap-2 pt-3 border-t border-slate-100">
               {editError && <p role="alert" className="text-xs font-semibold text-rose-600 ml-auto self-center">{editError}</p>}
-              <button onClick={() => { setEditingStudent(null); setEditError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
-              <button onClick={handleSaveStudentEdit} className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition cursor-pointer shadow-sm">ذخیره تغییرات</button>
+              <button onClick={closeStudentEdit} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
+              <button onClick={handleSaveStudentEdit} disabled={editSaving} className="px-5 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-60 rounded-lg transition cursor-pointer shadow-sm flex items-center gap-1.5">
+                {editSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}ذخیره تغییرات
+              </button>
             </div>
+            {cropTarget && cropFile && (
+              <PhotoCropModal
+                file={cropFile}
+                aspect={cropTarget === 'personal' ? PHOTO_3X4_RATIO : IRAN_ID_CARD_RATIO}
+                title={cropTarget === 'personal' ? 'برش عکس پرسنلی ۳×۴' : 'برش کارت ملی'}
+                onCancel={() => { setCropTarget(null); setCropFile(null); }}
+                onDone={applyPhotoCrop}
+              />
+            )}
           </div>
         </div></ModalPortal>
       )}
@@ -1038,7 +1212,7 @@ export default function StudentsList({
               </div>
             </div>
             {payError && <p role="alert" className="text-xs font-semibold text-rose-600">{payError}</p>}
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <div className="flex flex-wrap justify-end gap-2 pt-3 border-t border-slate-100">
               <button onClick={() => { setPaymentStudent(null); setPayError(null); }} className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer">انصراف</button>
               <button onClick={handleSavePayment} disabled={isSubmittingPay || !paymentAmount || !paymentEnrollmentId}
                 className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition flex items-center gap-1.5 cursor-pointer">

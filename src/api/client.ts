@@ -342,6 +342,20 @@ export async function uploadStudentPhotos(
   return normaliseStudent(data.student ?? data);
 }
 
+/** Ask Gemini for the card or portrait frame and return the cropped JPEG. Nothing is saved until the edit form is submitted. */
+export async function smartCropStudentPhoto(studentId: number, kind: 'idCard' | 'personal', file: File): Promise<File> {
+  const formData = new FormData();
+  formData.append('kind', kind);
+  formData.append('image', file);
+  const res = await apiFetch(`/students/${studentId}/smart-crop`, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'برش هوشمند ناموفق بود.');
+  }
+  const blob = await res.blob();
+  return new File([blob], file.name.replace(/\.[^.]+$/, '') + '_ai.jpg', { type: 'image/jpeg' });
+}
+
 export async function fetchRegistrations(): Promise<WebsiteRegistration[]> {
   const res = await apiFetch(`/registrations`);
   if (!res.ok) throw new Error('Error fetching registrations');

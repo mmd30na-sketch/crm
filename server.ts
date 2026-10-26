@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import https from 'https';
 import http from 'http';
 import { execFile, spawn } from 'child_process';
@@ -11,7 +12,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
-import { createSms, toBracket, fromBracket, resolveApiKey } from '../shared/sms';
+import { createSms, toBracket, fromBracket, resolveApiKey } from './shared/sms';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
@@ -2203,6 +2204,107 @@ app.post('/api/students/:id/photos', requireExistingStudent, uploadStudentMedia.
   } catch (err: any) {
     removeUploadedFiles(files);
     res.status(500).json({ error: err.message });
+  }
+});
+
+function smartCropScriptPath(): string {
+  const candidates = [
+    path.join(__dirname, 'scripts', 'smart_crop.py'),
+    path.join(__dirname, '..', 'scripts', 'smart_crop.py'),
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || candidates[0];
+}
+
+function runSmartCropPy(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile('python3', [smartCropScriptPath(), ...args], { timeout: 20000, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(String(stderr || err.message).slice(0, 300)));
+      try {
+        const parsed = JSON.parse(String(stdout).trim());
+        if (!parsed.success) return reject(new Error(parsed.error || 'برش ناموفق بود.'));
+        resolve();
+      } catch (e: any) { reject(e); }
+    });
+  });
+}
+
+/** Gemini box is [ymin, xmin, ymax, xmax] on a 0–1000 grid. The file on disk is not changed; the caller saves later. */
+async function detectCropBox(fileBuffer: Buffer, kind: 'idCard' | 'personal'): Promise<number[] | null> {
+  if (!ai) return null;
+  const prompt = kind === 'personal'
+    ? `شما دستیار برش عکس هستید. کادر عکس پرسنلی ۳×۴ را پیدا کن.
+اگر عکس چاپ‌شده روی میز یا پس‌زمینه است، مرز همان کارت عکس را گرفته کن.
+اگر نمای روبه‌رو است، از بالای مو تا شانه، وسط کادر، با حاشیه معمول عکس پرسنلی.
+فقط JSON:
+{ "box_2d": [ymin, xmin, ymax, xmax] }
+عددها صحیح از ۰ تا ۱۰۰۰. توضیح ننویس.`
+    : `شما دستیار برش مدرک هستید. مرز کارت ملی هوشمند ایران را پیدا کن.
+اگر رو و پشت هر دو دیده می‌شود، روی کارت را بگیر که عکس و شماره ملی دارد.
+پس‌زمینه و میز را حذف کن و فقط خود کارت را کادر کن.
+فقط JSON:
+{ "box_2d": [ymin, xmin, ymax, xmax] }
+عددها صحیح از ۰ تا ۱۰۰۰. توضیح ننویس.`;
+  const models = [...new Set([...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'])];
+  for (let k = 0; k < geminiClients.length; k++) {
+    if (Date.now() < geminiCooldownUntil[k]) continue;
+    for (const model of models) {
+      try {
+        const response = await geminiClients[k].models.generateContent({
+          model,
+          contents: [
+            { inlineData: { data: fileBuffer.toString('base64'), mimeType: 'image/jpeg' } },
+            { text: prompt },
+          ],
+          config: { responseMimeType: 'application/json', temperature: 0 },
+        });
+        const raw = response.text || '';
+        const start = raw.indexOf('{');
+        const end = raw.lastIndexOf('}');
+        if (start === -1 || end === -1) continue;
+        const parsed = JSON.parse(raw.slice(start, end + 1));
+        const box = parsed.box_2d || parsed.bbox || parsed.bounding_box;
+        if (Array.isArray(box) && box.length === 4 && box.every((n: unknown) => Number.isFinite(Number(n)))) return box.map(Number);
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        console.warn('Smart crop Gemini failed', `key#${k + 1}`, model, msg.slice(0, 160));
+        if (/429|RESOURCE_EXHAUSTED|quota|API key|\b(401|403)\b/i.test(msg)) {
+          geminiCooldownUntil[k] = Date.now() + 10 * 60 * 1000;
+          break;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+const smartCropUpload = multer({ storage: multer.memoryStorage(), fileFilter: imageFileFilter, limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
+
+app.post('/api/students/:id/smart-crop', requireExistingStudent, smartCropUpload.single('image'), async (req, res) => {
+  const kind = req.body?.kind === 'personal' ? 'personal' : req.body?.kind === 'idCard' ? 'idCard' : '';
+  const uploaded = req.file;
+  if (!kind || !uploaded?.buffer?.length) return res.status(400).json({ error: 'عکس و نوع آن (کارت ملی یا پرسنلی) الزامی است.' });
+  if (!ai) return res.status(503).json({ error: 'سرویس هوش مصنوعی (GEMINI_API_KEY) فعال نیست.' });
+  if (!fs.existsSync(smartCropScriptPath())) return res.status(500).json({ error: 'اسکریپت برش روی سرور پیدا نشد.' });
+  const stamp = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  const src = path.join(os.tmpdir(), `crm_smart_${stamp}.img`);
+  const oriented = path.join(os.tmpdir(), `crm_smart_${stamp}_o.jpg`);
+  const cropped = path.join(os.tmpdir(), `crm_smart_${stamp}_c.jpg`);
+  try {
+    fs.writeFileSync(src, uploaded.buffer);
+    await runSmartCropPy(['orient', src, oriented]);
+    const box = await detectCropBox(fs.readFileSync(oriented), kind);
+    if (!box) return res.status(422).json({ error: 'هوش مصنوعی کادر عکس را پیدا نکرد. برش دستی را امتحان کنید.' });
+    const ratio = kind === 'personal' ? '0.75' : String(85.6 / 53.98);
+    await runSmartCropPy(['crop', oriented, cropped, String(box[0]), String(box[1]), String(box[2]), String(box[3]), ratio]);
+    const out = fs.readFileSync(cropped);
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(out);
+  } catch (err: any) {
+    console.error('Student smart crop failed:', err?.message || err);
+    if (!res.headersSent) res.status(500).json({ error: 'برش هوشمند ناموفق بود. برش دستی را امتحان کنید.' });
+  } finally {
+    for (const f of [src, oriented, cropped]) { try { fs.unlinkSync(f); } catch { /* temp already gone */ } }
   }
 });
 
