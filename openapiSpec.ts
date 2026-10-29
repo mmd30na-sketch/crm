@@ -30,11 +30,11 @@ export function buildOpenApiSpec(serverUrl: string): Record<string, unknown> {
     webhookOps[ev] = {
       post: {
         summary: `Webhook: ${ev}`,
-        description: 'Sent by Carla CRM to your URL. Verify X-Carla-Signature before trusting the body.',
+        description: 'Sent by Ham-Taraz CRM to your URL. Verify X-Ham-Taraz-Signature before trusting the body.',
         parameters: [
-          { name: 'X-Carla-Signature', in: 'header', required: true, schema: { type: 'string' }, description: 't=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>' },
-          { name: 'X-Carla-Event', in: 'header', required: true, schema: { type: 'string', example: ev } },
-          { name: 'X-Carla-Delivery', in: 'header', required: true, schema: { type: 'string', format: 'uuid' }, description: 'Event id (same on retries; use it to de-duplicate)' },
+          { name: 'X-Ham-Taraz-Signature', in: 'header', required: true, schema: { type: 'string' }, description: 't=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>' },
+          { name: 'X-Ham-Taraz-Event', in: 'header', required: true, schema: { type: 'string', example: ev } },
+          { name: 'X-Ham-Taraz-Delivery', in: 'header', required: true, schema: { type: 'string', format: 'uuid' }, description: 'Event id (same on retries; use it to de-duplicate)' },
         ],
         requestBody: { required: true, content: { 'application/json': { schema: ref('WebhookEvent') } } },
         responses: { '2XX': { description: 'Delivered. Any other status (or a 10s timeout) is retried after 1m, 5m, 30m, 2h, 6h.' } },
@@ -44,15 +44,15 @@ export function buildOpenApiSpec(serverUrl: string): Record<string, unknown> {
   return {
     openapi: '3.0.3',
     info: {
-      title: 'Carla CRM Public API',
+      title: 'Ham-Taraz CRM Public API',
       version: '1.0.0',
       description: [
-        'API عمومی کارلا CRM (آموزشگاه). احراز هویت با کلید API که مدیر در «تنظیمات ← API و وب‌هوک» می‌سازد.',
+        'API عمومی همتراز CRM (آموزشگاه). احراز هویت با کلید API که مدیر در «تنظیمات ← API و وب‌هوک» می‌سازد.',
         '',
         'Authentication: `Authorization: Bearer crm_live_…` or `X-API-Key: crm_live_…`. Keys have scopes `read` / `write`.',
         'Rate limit: per key, per minute (default 60). Every response carries `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (unix seconds); 429 adds `Retry-After`.',
         'Amounts are Toman (integer). Dates are Jalali `yyyy/mm/dd`. Errors are `{ "error": "<Persian message>" }`.',
-        'Webhooks: see `x-webhooks`; payloads are signed with HMAC-SHA256 (header `X-Carla-Signature`).',
+        'Webhooks: see `x-webhooks`; payloads are signed with HMAC-SHA256 (header `X-Ham-Taraz-Signature`).',
       ].join('\n'),
     },
     servers: [{ url: base }],
@@ -164,7 +164,7 @@ export function docsHtml(spec: any, specUrl: string): string {
   const events = (spec.components?.schemas?.WebhookEvent?.properties?.event?.enum || []).map((e: string) => `<code>${esc(e)}</code>`).join(' ');
   return `<!doctype html>
 <html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>مستندات API کارلا</title>
+<title>مستندات API همتراز</title>
 <style>
 body{font-family:Vazirmatn,Tahoma,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;line-height:1.8;color:#0f172a;background:#f8fafc}
 h1{font-size:1.6rem}h2{margin-top:2rem;border-bottom:1px solid #cbd5e1}h3{font-size:1rem;margin:.2rem 0}
@@ -173,7 +173,7 @@ code,pre{font-family:ui-monospace,Consolas,monospace;direction:ltr;unicode-bidi:
 .m{display:inline-block;min-width:3.5rem;text-align:center;border-radius:.4rem;color:#fff;font-size:.8rem;padding:0 .4rem}.get{background:#0284c7}.post{background:#16a34a}
 @media (prefers-color-scheme:dark){body{background:#0b1220;color:#e2e8f0}.op{background:#111827;border-color:#1f2937}.d{color:#94a3b8}}
 </style></head><body>
-<h1>مستندات API عمومی کارلا CRM <small>v${esc(spec.info?.version)}</small></h1>
+<h1>مستندات API عمومی همتراز CRM <small>v${esc(spec.info?.version)}</small></h1>
 <p>نسخهٔ ماشین‌خوان: <a href="${esc(specUrl)}">OpenAPI 3 (JSON)</a> — قابل استفاده در Postman / Insomnia / Swagger Editor.</p>
 <h2>احراز هویت</h2>
 <p>کلید را مدیر سیستم در «تنظیمات ← API و وب‌هوک» می‌سازد (فقط یک‌بار نمایش داده می‌شود). در هر درخواست یکی از این هدرها را بفرستید:</p>
@@ -185,14 +185,14 @@ X-API-Key: crm_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</pre>
 <h2>مسیرها</h2>
 ${rows.join('\n')}
 <h2>وب‌هوک‌ها</h2>
-<p>رویدادها: ${events}. بدنه: <code>{"id","event","created_at","data"}</code>. هدرها: <code>X-Carla-Event</code>، <code>X-Carla-Delivery</code> (شناسهٔ رویداد؛ در تلاش‌های مجدد ثابت است — برای حذف تکراری‌ها) و <code>X-Carla-Signature</code>.</p>
+<p>رویدادها: ${events}. بدنه: <code>{"id","event","created_at","data"}</code>. هدرها: <code>X-Ham-Taraz-Event</code>، <code>X-Ham-Taraz-Delivery</code> (شناسهٔ رویداد؛ در تلاش‌های مجدد ثابت است — برای حذف تکراری‌ها) و <code>X-Ham-Taraz-Signature</code>.</p>
 <p>پاسخ 2xx یعنی تحویل موفق؛ در غیر این صورت (یا پس از ۱۰ ثانیه) دوباره پس از ۱ دقیقه، ۵ دقیقه، ۳۰ دقیقه، ۲ ساعت و ۶ ساعت ارسال می‌شود (حداکثر ۶ تلاش).</p>
-<pre>// Node.js (Express): verify X-Carla-Signature on the RAW body
+<pre>// Node.js (Express): verify X-Ham-Taraz-Signature on the RAW body
 const crypto = require('crypto');
-app.post('/carla-webhook', express.raw({ type: 'application/json' }), (req, res) =&gt; {
-  const header = req.get('X-Carla-Signature') || '';
+app.post('/ham-taraz-webhook', express.raw({ type: 'application/json' }), (req, res) =&gt; {
+  const header = req.get('X-Ham-Taraz-Signature') || '';
   const { t, v1 } = Object.fromEntries(header.split(',').map((p) =&gt; p.split('=')));
-  const expected = crypto.createHmac('sha256', process.env.CARLA_WEBHOOK_SECRET)
+  const expected = crypto.createHmac('sha256', process.env.HAM_TARAZ_WEBHOOK_SECRET)
     .update(t + '.' + req.body.toString('utf8')).digest('hex');
   const fresh = Math.abs(Date.now() / 1000 - Number(t)) &lt; 300;
   if (!fresh || !v1 || v1.length !== 64 ||

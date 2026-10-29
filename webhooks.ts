@@ -4,8 +4,8 @@
  * db_store.json under "public_api". Admin-only management routes are registered in publicApi.ts.
  *
  * Every delivery is a POST with a JSON body {id, event, created_at, data} and the headers
- *   X-Carla-Event, X-Carla-Delivery (event id) and
- *   X-Carla-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>
+ *   X-Ham-Taraz-Event, X-Ham-Taraz-Delivery (event id) and
+ *   X-Ham-Taraz-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>
  * 2xx = delivered. Otherwise retried with backoff 1m, 5m, 30m, 2h, 6h (6 attempts in total), then 'failed'.
  * emit() never throws and never blocks the caller (the staff request that triggered the event).
  */
@@ -165,10 +165,10 @@ export function createWebhooks(deps: { readJsonDb: () => any; writeJsonDb: (s: a
         signal: ctrl.signal,
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'CarlaCRM-Webhooks/1.0',
-          'X-Carla-Event': event,
-          'X-Carla-Delivery': eventId,
-          'X-Carla-Signature': signPayload(secret, Math.floor(Date.now() / 1000), payload),
+          'User-Agent': 'Ham-TarazCRM-Webhooks/1.0',
+          'X-Ham-Taraz-Event': event,
+          'X-Ham-Taraz-Delivery': eventId,
+          'X-Ham-Taraz-Signature': signPayload(secret, Math.floor(Date.now() / 1000), payload),
         },
         body: payload,
       });
@@ -375,7 +375,7 @@ export function createWebhooks(deps: { readJsonDb: () => any; writeJsonDb: (s: a
       const sub = await getSub(id);
       if (!sub) throw httpError(404, 'وب‌هوک پیدا نشد.');
       const eventId = crypto.randomUUID();
-      const payload = JSON.stringify({ id: eventId, event: 'ping', created_at: new Date().toISOString(), data: { message: 'Carla CRM webhook test' } });
+      const payload = JSON.stringify({ id: eventId, event: 'ping', created_at: new Date().toISOString(), data: { message: 'Ham-Taraz CRM webhook test' } });
       return post(sub.url, sub.secret, 'ping', eventId, payload);
     },
 

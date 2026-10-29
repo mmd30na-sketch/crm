@@ -26,8 +26,8 @@ Lists: `?limit` (1–200, default 50), `?offset` → `{data, total, limit, offse
 ## Webhooks
 Events: `student.created`, `enrollment.created` (staff or API), `enrollment.approved` / `enrollment.rejected`
 (online registration review), `payment.succeeded` (staff, API, or an approved online/Zarinpal payment).
-Body `{id, event, created_at, data}`; headers `X-Carla-Event`, `X-Carla-Delivery` (= event id, stable across retries),
-`X-Carla-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + rawBody)>`. 2xx = delivered; otherwise retried after
+Body `{id, event, created_at, data}`; headers `X-Ham-Taraz-Event`, `X-Ham-Taraz-Delivery` (= event id, stable across retries),
+`X-Ham-Taraz-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + rawBody)>`. 2xx = delivered; otherwise retried after
 1m, 5m, 30m, 2h, 6h (6 attempts), then `failed`. Targets must be `https://` public hosts (no private IPs, no redirects
 followed). `CRM_WEBHOOK_ALLOW_LOCAL=1` allows `http://localhost` for local testing only — never set it on the server.
 
