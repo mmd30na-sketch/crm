@@ -29,7 +29,8 @@
     "mysql-socks.ts",
     "courseTerms.ts",
     "phase4.ts",
-    "copilot-*.ts"
+    "copilot-*.ts",
+    "leadPipeline.ts"
   ],
   "exclude": [
     "node_modules",

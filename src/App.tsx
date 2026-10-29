@@ -11,6 +11,7 @@ import {
   RefreshCw,
   LogOut,
   Contact,
+  KanbanSquare,
   ClipboardList,
   Megaphone,
   CalendarRange,
@@ -33,6 +34,7 @@ import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
 import { CopilotProvider, CopilotBar, CopilotPage } from './components/CopilotWidget';
 import LeadsPanel from './components/LeadsPanel';
+import LeadPipelinePanel from './components/LeadPipelinePanel';
 import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
@@ -132,6 +134,14 @@ const NAV_ITEMS = [
     sublabel: 'تماس‌گیرندگان و پیگیری',
     icon: Contact,
     color: 'teal',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'lead-pipeline',
+    label: 'پایپ‌لاین فروش',
+    sublabel: 'کانبان سرنخ‌ها و نرخ تبدیل',
+    icon: KanbanSquare,
+    color: 'purple',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -626,6 +636,9 @@ function AppShell() {
               )}
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />
+              )}
+              {activeTab === 'lead-pipeline' && (role === 'admin' || role === 'cashier') && (
+                <LeadPipelinePanel isAdmin={role === 'admin'} />
               )}
               {activeTab === 'site-requests' && (role === 'admin' || role === 'cashier') && (
                 <SiteRequestsHistory courses={courses} />

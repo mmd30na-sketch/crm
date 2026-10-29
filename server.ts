@@ -19,6 +19,7 @@ import { copilotDateRule } from './src/utils/copilotDate';
 import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
+import { registerLeadPipeline, ensureLeadPipelineSchema } from './leadPipeline';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import {
   ensureThemeSettingsSchema,
@@ -904,6 +905,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/message-templates')) return role === 'cashier'; // staff can manage reply templates
   if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
+  if (path.startsWith('/lead-pipeline')) return role === 'cashier'; // stage config writes: admin only (enforced in handler)
   if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
@@ -4707,6 +4709,12 @@ app.get('/p/:code', (req, res) => {
   res.redirect(302, `${base}/?trainee=1&code=${encodeURIComponent(code)}`);
 });
 
+function staffDirectory() {
+  const d = readDb();
+  return [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin', is_active: true },
+    ...d.staff_users.map((u: any) => ({ username: u.username, full_name: u.full_name, role: u.role, is_active: !!u.is_active }))];
+}
+
 registerPhase4(app, {
   session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -4731,11 +4739,13 @@ registerPhase4(app, {
     return { ok: r.ok, error: r.ok ? undefined : (r.detail || r.status) };
   },
   smsConfigured: () => { const g = getGateways(); return !!(g.sms_api_key && g.sms_sender_line); },
-  staffDirectory: () => {
-    const d = readDb();
-    return [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin', is_active: true },
-      ...d.staff_users.map((u: any) => ({ username: u.username, full_name: u.full_name, role: u.role, is_active: !!u.is_active }))];
-  },
+  staffDirectory,
+});
+
+registerLeadPipeline(app, {
+  session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  staffDirectory,
 });
 
 app.get('/api/settings/audit-log', requireAdmin, asyncHandler(async (req, res) => {
@@ -4815,6 +4825,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function startServer() {
   await chabokan.initMysql();
   await ensurePhase4Schema();
+  await ensureLeadPipelineSchema();
   await ensureCourseTermsSchema();
   await ensureThemeSettingsSchema();
   await ensureInstructorPaySchema();
