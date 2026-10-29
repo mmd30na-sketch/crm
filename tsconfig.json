@@ -27,6 +27,8 @@
     "src",
     "server.ts",
     "mysql-socks.ts",
+    "emailService.ts",
+    "emailTemplates.ts",
     "courseTerms.ts",
     "phase4.ts",
     "copilot-*.ts"

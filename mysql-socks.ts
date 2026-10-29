@@ -434,7 +434,7 @@ export async function listStudents() {
  * shares codes), so this named lock (plus FOR UPDATE on the lookup) is what makes "check, then insert" atomic.
  */
 async function lockNationalCode(conn: mysql.Connection, code: string) {
-  const [rows] = await conn.query('SELECT GET_LOCK(?, 15) AS ok', [`carla_ncode_${code}`]);
+  const [rows] = await conn.query('SELECT GET_LOCK(?, 15) AS ok', [`ham_taraz_ncode_${code}`]);
   if (Number((rows as any[])[0]?.ok) !== 1) throw httpError(503, 'سرور مشغول است؛ چند لحظه بعد دوباره تلاش کنید.');
 }
 

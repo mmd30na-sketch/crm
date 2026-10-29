@@ -511,8 +511,8 @@ export default function AccountingDashboard({
 
       {/* ── EXPENSE MODAL ── */}
       {isExpenseModalOpen && (
-        <ModalPortal><div className="carla-modal-overlay">
-          <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
+        <ModalPortal><div className="ham-taraz-modal-overlay">
+          <div className="ham-taraz-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <Plus className="w-4 h-4 text-rose-600" />ثبت هزینه جدید آموزشگاه
