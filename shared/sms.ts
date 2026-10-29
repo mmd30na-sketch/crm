@@ -95,9 +95,10 @@ export function createSms(sql: SqlFn, opts: { cacheMs?: number } = {}) {
   }
   async function deleteTemplate(key: string) { const r: any = await sql('DELETE FROM sms_templates WHERE `key` = ? AND `key` <> \'otp\'', [key]); tplCache = null; return r; }
 
-  /** Free-text SMS through the configured line. */
-  async function sendText(mobile: string, text: string): Promise<SmsSendResult> {
-    const c = await getConfig(); const apiKey = resolveApiKey(c.apiKeyRef);
+  /** Free-text SMS through the configured line (or `opts.lineNumber`, e.g. a branch's own line). */
+  async function sendText(mobile: string, text: string, opts: { lineNumber?: string | null } = {}): Promise<SmsSendResult> {
+    const base = await getConfig(); const apiKey = resolveApiKey(base.apiKeyRef);
+    const c = opts.lineNumber ? { ...base, lineNumber: String(opts.lineNumber) } : base;
     if (c.provider !== 'smsir' || !apiKey || !c.lineNumber) return { ok: false, status: 'not_configured', detail: 'درگاه پیامک تنظیم نشده است (SMS_API_KEY در env و شماره خط در app_settings).' };
     try { const r = await smsirBulk({ apiKey, lineNumber: c.lineNumber, mobile, text }); return r.ok ? { ok: true, status: 'sent' } : { ok: false, status: 'failed', detail: r.error }; }
     catch (e: any) { return { ok: false, status: 'failed', detail: e?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : (e?.message || 'خطا در اتصال به سرویس پیامک') }; }

@@ -2,6 +2,10 @@ import {StrictMode, lazy, Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { installBranchHeader } from './api/branches';
+
+// Multi-branch: sends the selected branch (if any) as x-branch-id on /api requests; a no-op with no branch selected.
+installBranchHeader();
 
 // ?print=all (without ?enrollment=) shows the three registration documents with synthetic sample data; no login needed.
 const params = new URLSearchParams(window.location.search);
