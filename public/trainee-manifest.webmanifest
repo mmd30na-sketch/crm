@@ -1,0 +1,19 @@
+{
+  "name": "پرتال کارآموز آموزشگاه",
+  "short_name": "پرتال کارآموز",
+  "description": "برنامه جلسات، بدهی و اقساط، پرداخت آنلاین و وضعیت ثبت‌نام",
+  "lang": "fa",
+  "dir": "rtl",
+  "id": "/?portal=1",
+  "start_url": "/?portal=1",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#0284c7",
+  "icons": [
+    { "src": "/trainee-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/trainee-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/trainee-icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

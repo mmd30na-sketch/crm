@@ -43,6 +43,8 @@ import LessonCalendarPanel from './components/LessonCalendarPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
 import DebtSmsPanel from './components/DebtSmsPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
+import TraineePortal from './components/TraineePortal';
+import { consumePortalPaymentReturn } from './api/traineePortal';
 import { taskSummary } from './api/phase4';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
 
@@ -210,6 +212,14 @@ const ACTIVE_BADGE_MAP: Record<string, string> = {
  */
 export default function App() {
   const params = new URLSearchParams(window.location.search);
+  // Trainee portal PWA (/?portal=1). A Zarinpal return (?trainee=1&payment=...) started from the portal goes back to it.
+  if (params.get('portal') === '1' || (params.get('trainee') === '1' && params.get('payment') && consumePortalPaymentReturn())) {
+    return (
+      <ThemeProvider>
+        <TraineePortal />
+      </ThemeProvider>
+    );
+  }
   if (params.get('trainee') === '1') {
     return (
       <ThemeProvider>
