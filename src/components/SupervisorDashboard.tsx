@@ -111,8 +111,8 @@ export default function SupervisorDashboard({
         // One-time move of notes that were kept in this browser before they were shared (only into empty server notes).
         if (loadedTasks.length === 0 && loadedEvents.length === 0) {
           try {
-            loadedTasks = JSON.parse(localStorage.getItem('carla_tasks') || '[]');
-            loadedEvents = JSON.parse(localStorage.getItem('carla_calendar_events') || '[]');
+            loadedTasks = JSON.parse((localStorage.getItem('ham_taraz_tasks') ?? localStorage.getItem('carla_tasks')) || '[]');
+            loadedEvents = JSON.parse((localStorage.getItem('ham_taraz_calendar_events') ?? localStorage.getItem('carla_calendar_events')) || '[]');
             if (loadedTasks.length || loadedEvents.length) notesEdited.current = true;
           } catch { /* ignore */ }
         }
@@ -485,8 +485,8 @@ export default function SupervisorDashboard({
 
       {/* ── CALENDAR POPUP MODAL ── */}
       {isCalendarOpen && (
-        <ModalPortal><div className="carla-modal-overlay" onClick={() => setIsCalendarOpen(false)}>
-          <div className="carla-modal p-6 space-y-4 max-w-lg" onClick={e => e.stopPropagation()}>
+        <ModalPortal><div className="ham-taraz-modal-overlay" onClick={() => setIsCalendarOpen(false)}>
+          <div className="ham-taraz-modal p-6 space-y-4 max-w-lg" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
                 <CalendarIcon className="w-5 h-5 text-sky-600" />

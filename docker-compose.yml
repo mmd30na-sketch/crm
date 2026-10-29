@@ -1,10 +1,10 @@
-# Local / transfer image for Carla CRM.
+# Local / transfer image for Ham-Taraz CRM.
 # Later on Chabokan: drop DB_SOCKS_* so MySQL is direct TCP.
 services:
   crm:
     build: .
-    image: carla-crm:local
-    container_name: carla-crm
+    image: ham-taraz-crm:local
+    container_name: ham-taraz-crm
     ports:
       - "3000:3000"
     environment:

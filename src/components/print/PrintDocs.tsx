@@ -17,7 +17,7 @@ export const PAGE_MM = { width: 148, height: 210 } as const;
 export function fontFaceCss(base: string = typeof window !== 'undefined' ? window.location.href : 'http://localhost/'): string {
   const abs = (u: string) => new URL(u, base).href;
   const face = (file: string, weight: number, range: string) =>
-    `@font-face{font-family:'CarlaVazir';font-style:normal;font-weight:${weight};font-display:block;src:url(${abs(file)}) format('woff2');unicode-range:${range};}`;
+    `@font-face{font-family:'HamTarazVazir';font-style:normal;font-weight:${weight};font-display:block;src:url(${abs(file)}) format('woff2');unicode-range:${range};}`;
   const latin = 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD';
   const arabic = 'U+0600-06FF,U+0750-077F,U+200C-200F,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFC';
   // Latin first, Arabic second: the later face wins for the overlapping zero-width/format characters.
@@ -26,7 +26,7 @@ export function fontFaceCss(base: string = typeof window !== 'undefined' ? windo
 
 export const PD_CSS = `
 .pd-page{box-sizing:border-box;width:148mm;min-height:210mm;padding:8mm 9mm 7mm;background:#fff;color:#111827;
-  font-family:'CarlaVazir','Vazirmatn',Tahoma,sans-serif;font-size:10.5pt;line-height:1.7;direction:rtl;text-align:right;
+  font-family:'HamTarazVazir','Vazirmatn',Tahoma,sans-serif;font-size:10.5pt;line-height:1.7;direction:rtl;text-align:right;
   display:flex;flex-direction:column;position:relative;overflow:hidden;-webkit-font-smoothing:antialiased}
 .pd-page *{box-sizing:border-box}
 .pd-receipt,.pd-summary{height:210mm}

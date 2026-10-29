@@ -1,4 +1,4 @@
-# Carla CRM — production image for later Chabokan move.
+# Ham-Taraz CRM — production image for later Chabokan move.
 # Listens on 0.0.0.0:3000 (Chabokan reverse proxy default).
 FROM node:22-alpine AS build
 WORKDIR /app

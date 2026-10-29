@@ -9,12 +9,13 @@ export const DEFAULT_THEME: ThemeConfig = {
   logo_url: null,
 };
 
-const STORAGE_KEY = 'carla_theme';
+const STORAGE_KEY = 'ham_taraz_theme';
+const LEGACY_STORAGE_KEY = 'carla_theme'; // read-only fallback from before the rebrand
 
 /** The last theme is kept in localStorage so the first paint never flashes the wrong theme. */
 function loadStoredTheme(): ThemeConfig {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = (localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY));
     if (raw) return normalizeTheme(JSON.parse(raw));
   } catch {}
   return DEFAULT_THEME;

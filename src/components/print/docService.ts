@@ -23,8 +23,8 @@ export async function ensureDocStyles(): Promise<void> {
   }
   try {
     await Promise.all([
-      document.fonts.load("400 12pt 'CarlaVazir'", 'سلام ۱۲۳ abc'),
-      document.fonts.load("700 12pt 'CarlaVazir'", 'سلام ۱۲۳ abc'),
+      document.fonts.load("400 12pt 'HamTarazVazir'", 'سلام ۱۲۳ abc'),
+      document.fonts.load("700 12pt 'HamTarazVazir'", 'سلام ۱۲۳ abc'),
     ]);
     await document.fonts.ready;
   } catch { /* font API unavailable: the system font stack is used */ }
@@ -153,7 +153,7 @@ export async function printDoc(kind: DocKind, data: DocData, opts: { timeoutMs?:
     doc.write(docPrintHtml(kind, data, `${DOC_LABELS[kind]} - ${data.student.fullName}`));
     doc.close();
     await waitImages(doc);
-    try { await Promise.all([doc.fonts.load("400 12pt 'CarlaVazir'", 'سلام ۱۲۳'), doc.fonts.load("700 12pt 'CarlaVazir'", 'سلام ۱۲۳')]); await doc.fonts.ready; } catch { /* ignore */ }
+    try { await Promise.all([doc.fonts.load("400 12pt 'HamTarazVazir'", 'سلام ۱۲۳'), doc.fonts.load("700 12pt 'HamTarazVazir'", 'سلام ۱۲۳')]); await doc.fonts.ready; } catch { /* ignore */ }
     await new Promise<void>((resolve, reject) => {
       let finished = false;
       const done = (err?: unknown) => { if (finished) return; finished = true; clearTimeout(timer); win.removeEventListener('afterprint', onAfter); err ? reject(err) : resolve(); };

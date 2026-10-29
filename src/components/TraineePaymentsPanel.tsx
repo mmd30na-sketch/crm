@@ -153,7 +153,7 @@ export default function TraineePaymentsPanel({ token, code }: { token: string; c
           <div className="w-9 h-9 rounded-xl bg-sky-500 flex items-center justify-center"><GraduationCap className="w-5 h-5" /></div>
           <div>
             <div className="text-sm font-bold leading-tight">پرداخت اقساط کارآموز</div>
-            <div className="text-[10px] text-slate-400 leading-tight">آموزشگاه کارلا</div>
+            <div className="text-[10px] text-slate-400 leading-tight">آموزشگاه همتراز</div>
           </div>
         </div>
         {activeToken && <button type="button" onClick={logout} className="min-h-10 px-2 text-xs text-slate-300 hover:text-white flex items-center gap-1"><LogOut className="w-4 h-4" />خروج</button>}

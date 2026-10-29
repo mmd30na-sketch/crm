@@ -27,7 +27,7 @@ export function sampleDocData(withImages = true): DocData {
 }
 
 const SCREEN_CSS = `
-.pdv-wrap{min-height:100vh;background:#e2e8f0;padding:16px 16px 40px;font-family:'CarlaVazir',Tahoma,sans-serif}
+.pdv-wrap{min-height:100vh;background:#e2e8f0;padding:16px 16px 40px;font-family:'HamTarazVazir',Tahoma,sans-serif}
 .pdv-bar{max-width:900px;margin:0 auto 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;direction:rtl}
 .pdv-bar button{padding:6px 12px;border-radius:8px;border:1px solid #0f766e;background:#0f766e;color:#fff;font:inherit;font-size:13px;cursor:pointer}
 .pdv-bar button.alt{background:#fff;color:#0f766e}
