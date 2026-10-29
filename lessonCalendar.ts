@@ -124,6 +124,9 @@ export function registerLessonCalendar(app: express.Express, deps: {
   sms: { sendTemplate: (key: string, mobile: string, vars: Record<string, unknown>, fallback?: { templateId?: string; param?: string }) => Promise<{ ok: boolean; status: string; detail?: string }>; configured: () => boolean };
   log: (msg: string) => void;
 }) {
+  /** normalizeMobile only normalises; a usable number must be 09xxxxxxxxx. */
+  const validMobile = (v: unknown): string => { const m = deps.normalizeMobile(v ?? ''); return /^09\d{9}$/.test(m) ? m : ''; };
+
   app.get('/api/lessons/vehicles', wrap(async (req, res) => {
     checkRole(req, deps);
     const rows = await db.sql<{
@@ -611,7 +614,7 @@ export function registerLessonCalendar(app: express.Express, deps: {
     const hours_before = Number(process.env.CRM_LESSON_SMS_HOURS_BEFORE) || 24;
     const template_key = process.env.CRM_LESSON_SMS_TEMPLATE_KEY || 'class_time';
     const template_id = process.env.CRM_LESSON_SMS_TEMPLATE_ID || '926976';
-    const test_mobile = deps.normalizeMobile(process.env.CRM_LESSON_SMS_TEST_MOBILE);
+    const test_mobile = validMobile(process.env.CRM_LESSON_SMS_TEST_MOBILE);
 
     return {
       enabled,
@@ -663,7 +666,7 @@ export function registerLessonCalendar(app: express.Express, deps: {
     const templateKey = process.env.CRM_LESSON_SMS_TEMPLATE_KEY || 'class_time';
     const templateId = process.env.CRM_LESSON_SMS_TEMPLATE_ID || '926976';
     const params = process.env.CRM_LESSON_SMS_PARAMS || 'NAME,DATE,TIME';
-    const testMobile = deps.normalizeMobile(process.env.CRM_LESSON_SMS_TEST_MOBILE);
+    const testMobile = validMobile(process.env.CRM_LESSON_SMS_TEST_MOBILE);
 
     const now = new Date();
     const windowStart = new Date(now.getTime() + hoursBefore * 60 * 60 * 1000);
@@ -679,7 +682,7 @@ export function registerLessonCalendar(app: express.Express, deps: {
 
     if (!dryRun && enabled) {
       for (const c of filtered) {
-        const mobile = testMobile || deps.normalizeMobile(c.phone_number);
+        const mobile = testMobile || validMobile(c.phone_number);
         if (!mobile) {
           await db.sqlExec(
             "UPDATE crm_lesson_bookings SET reminder_status='no_mobile', reminder_sent_at=NOW() WHERE id=?",
