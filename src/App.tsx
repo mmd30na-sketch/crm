@@ -19,6 +19,7 @@ import {
   BellRing,
   Wallet,
   CalendarClock,
+  Workflow,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -42,6 +43,7 @@ import InstructorPayPanel from './components/InstructorPayPanel';
 import LessonCalendarPanel from './components/LessonCalendarPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
 import DebtSmsPanel from './components/DebtSmsPanel';
+import AutomationRulesPanel from './components/AutomationRulesPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
 import { taskSummary } from './api/phase4';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
@@ -159,6 +161,14 @@ const NAV_ITEMS = [
     icon: ClipboardList,
     color: 'brand',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
+  },
+  {
+    id: 'automation',
+    label: 'اتوماسیون',
+    sublabel: 'قاعده، شرط، اقدام',
+    icon: Workflow,
+    color: 'purple',
+    roles: ['admin'] as StaffRole[],
   },
   {
     id: 'campaigns',
@@ -645,6 +655,9 @@ function AppShell() {
               )}
               {activeTab === 'tasks' && currentUser && (
                 <TasksPanel username={currentUser.username} isAdmin={role === 'admin'} onCountsChange={refreshTaskCounts} />
+              )}
+              {activeTab === 'automation' && role === 'admin' && (
+                <AutomationRulesPanel />
               )}
               {activeTab === 'campaigns' && role === 'admin' && (
                 <BulkMessaging courses={courses} />
