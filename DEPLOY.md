@@ -27,7 +27,7 @@ Server layout (read-only inspection, 2026-10-28): app in `/project/kermanshahcar
 # DB dump (credentials stay inside the container; nothing is printed)
 bash /project/kermanshahcart/crm/scripts/backup-db.sh && tail -1 /project/_archive/db-backups/backup.log
 #   equivalent one-off:
-# docker exec mysql-local sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers --no-tablespaces nodejs430_carla' | gzip -9 > /project/_archive/db-backups/carla-predeploy-$(date +%Y%m%d-%H%M).sql.gz
+# docker exec mysql-local sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --triggers --no-tablespaces nodejs430_carla' | gzip -9 > /project/_archive/db-backups/ham-taraz-predeploy-$(date +%Y%m%d-%H%M).sql.gz
 
 # App copy (code + .env + uploads); /root/deploy-crm.sh also archives the old dir automatically
 TS=$(date +%Y%m%d-%H%M); cp -a /project/kermanshahcart/crm/.env /project/_archive/crm-env-$TS.bak; chmod 600 /project/_archive/crm-env-$TS.bak
@@ -118,6 +118,6 @@ PORT=3001 NODE_ENV=production pm2 restart carla-crm --update-env && pm2 save
 - **Env:** restore `/project/_archive/crm-env-<TS>.bak` → `.env`, restart with `--update-env`.
 - **DB:** the migrations only add tables/columns, so the old code ignores them — normally **no DB rollback is needed**.
   Restore the dump only for data corruption (stops the app first):
-  `pm2 stop carla-crm && zcat /project/_archive/db-backups/carla-<TS>.sql.gz | docker exec -i mysql-local sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" nodejs430_carla' && pm2 start carla-crm`
+  `pm2 stop carla-crm && zcat /project/_archive/db-backups/ham-taraz-<TS>.sql.gz | docker exec -i mysql-local sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" nodejs430_carla' && pm2 start carla-crm` (backups made before the rename are named `carla-<TS>.sql.gz`)
   (this discards every write since the dump — online payments taken after it must be re-entered from the Zarinpal panel).
 - **shared/sms.ts:** restore `/project/_archive/shared-sms-<TS>.ts` and restart the site process too (`kermanshah-site`).
