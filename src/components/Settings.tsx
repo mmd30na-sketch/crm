@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DEFAULT_CONTRACT_TEXT } from '../utils/printDocs';
+import ApiIntegrationsPanel from './ApiIntegrationsPanel';
 import {
   Settings as SettingsIcon,
   BookOpen,
@@ -45,7 +46,7 @@ interface SettingsProps {
 }
 
 export default function Settings({ courses, onRefresh }: SettingsProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database' | 'theme'>('academy');
+  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database' | 'theme' | 'api'>('academy');
 
   /* ── 0. Theme («تم»): applied app-wide through the ThemeProvider, saved on the server ── */
   const { theme, setTheme } = useTheme();
@@ -391,6 +392,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     { id: 'database', label: 'دیتابیس، بکاپ و تغییرات', icon: Database, color: 'amber' },
     { id: 'payment', label: 'روش‌های پرداخت', icon: CreditCard, color: 'emerald' },
     { id: 'users', label: 'کاربران و دسترسی‌ها', icon: Users, color: 'rose' },
+    { id: 'api', label: 'API و وب‌هوک', icon: Key, color: 'violet' },
   ];
 
   return (
@@ -535,6 +537,13 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
                 </button>
               </div>
             </form>
+          )}
+
+          {/* SUBTAB: Public API keys + outbound webhooks (/api/v1) */}
+          {activeSubTab === 'api' && (
+            <div className="fade-in">
+              <ApiIntegrationsPanel />
+            </div>
           )}
 
           {/* ══════════════════════════════════════════════
