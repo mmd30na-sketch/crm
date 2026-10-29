@@ -35,6 +35,7 @@ import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPa
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
 import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
+import { registerBranches, ensureBranchSchema, branchMiddleware, startBranchReconcileJob, branchSmsLine } from './branches';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -909,6 +910,9 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
   if (path.startsWith('/copilot')) return role === 'cashier';
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
+  // Multi-branch: every role reads its own switcher config / branch settings; managing branches is admin only.
+  if (path === '/branches/config' || path === '/branches/active-settings') return !write;
+  if (path.startsWith('/branches')) return false;
   if (!write) return role === 'cashier';
   return false;
 }
@@ -933,6 +937,9 @@ app.use('/api', (req, res, next) => {
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
   next();
 });
+
+// Multi-branch scoping (CRM_MULTI_BRANCH=1 + MySQL + 2 active branches); a no-op otherwise. See branches.ts.
+app.use('/api', branchMiddleware);
 
 /** The instructor's students tab needs names, phone, photo and classes; nothing personal or financial. */
 function redactForInstructor(req: express.Request, kind: 'students' | 'enrollments', rows: any[]): any[] {
@@ -1678,7 +1685,8 @@ const normalizeMobile = (v: unknown) => toLatinDigits(String(v ?? '')).replace(/
 
 /** Sends one SMS through the shared helper (sms.ir bulk, line from app_settings). */
 async function sendSmsMessage(mobile: string, text: string): Promise<{ ok: boolean; status: 'sent' | 'not_configured' | 'failed'; detail?: string }> {
-  const r = await sharedSms.sendText(mobile, text);
+  // Multi-branch: a branch's own sender line when the request works in that branch; else the global line.
+  const r = await sharedSms.sendText(mobile, text, { lineNumber: await branchSmsLine() });
   return { ok: r.ok, status: (r.status === 'disabled' ? 'failed' : r.status) as any, detail: r.detail };
 }
 
@@ -4677,6 +4685,25 @@ registerOnlinePayments(app, {
 });
 
 // Remaining-debt SMS with a payment link: preview / single send / bulk send / settings / log.
+registerBranches(app, {
+  isAdmin: (req) => currentRole(req) === 'admin',
+  currentUser: (req) => {
+    const u = (req as any).user;
+    return u && currentRole(req) ? { username: String(u.username || ''), role: String(currentRole(req)) } : null;
+  },
+  listStaff: async () => {
+    const list: { username: string; full_name?: string; role?: string }[] = [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin' }];
+    for (const u of readDb().staff_users) list.push({ username: u.username, full_name: u.full_name, role: u.role });
+    if (chabokan.isMysqlEnabled()) {
+      try {
+        const rows = await chabokan.sql('SELECT username, full_name, role FROM staff_users WHERE is_active = 1');
+        for (const r of rows as any[]) list.push({ username: String(r.username), full_name: r.full_name || '', role: r.role || '' });
+      } catch { /* staff_users is optional */ }
+    }
+    return list;
+  },
+});
+
 registerDebtSms(app, {
   session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -4752,7 +4779,7 @@ app.get('/api/settings/backups', requireAdmin, (_req, res) => {
   const dir = process.env.CRM_BACKUP_DIR || '/project/_archive/db-backups';
   try {
     const files = fs.readdirSync(dir)
-      .filter((f) => /^carla-\d{8}-\d{4}\.sql\.gz$/.test(f))
+      .filter((f) => /^(?:ham-taraz|carla)-\d{8}-\d{4}\.sql\.gz$/.test(f))
       .map((f) => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
     res.json({ dir_configured: true, files });
@@ -4821,6 +4848,9 @@ async function startServer() {
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  // Multi-branch: only with CRM_MULTI_BRANCH=1 (additive DDL + backfill to the default branch); dormant otherwise.
+  await ensureBranchSchema();
+  startBranchReconcileJob();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
