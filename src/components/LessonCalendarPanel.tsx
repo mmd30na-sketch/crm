@@ -1096,7 +1096,7 @@ export default function LessonCalendarPanel({ students, isAdmin }: { students: {
 
                 <div className="flex justify-end gap-2 pt-2">
                   <button onClick={() => setShowModal(false)} className="px-4 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50">
-                    لغو
+                    بستن
                   </button>
                   <button onClick={handleModalSubmit} className="px-4 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-xl">
                     ذخیره
