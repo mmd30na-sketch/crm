@@ -20,6 +20,7 @@ import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
 import { registerLeadPipeline, ensureLeadPipelineSchema } from './leadPipeline';
+import { registerEmail, ensureEmailSchema } from './emailService';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import { registerPublicApi, ensureApiKeysSchema, apiStudent, apiEnrollment, apiPayment } from './publicApi';
 import { createWebhooks, ensureWebhooksSchema } from './webhooks';
@@ -929,6 +930,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
   if (path.startsWith('/lead-pipeline')) return role === 'cashier'; // stage config writes: admin only (enforced in handler)
+  if (path.startsWith('/email')) return role === 'cashier'; // campaigns + template edits: admin only (enforced in handlers)
   if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
   if (path.startsWith('/lessons')) return role === 'cashier'; // lesson calendar; reminder run is admin-only in the handler
@@ -958,13 +960,15 @@ app.use('/api', (req, res, next) => {
   if (req.path === '/settings/theme' && req.method === 'GET') return next();
   if (req.path === '/messenger/webhook') return next();
   if (req.path === '/messenger/account-ingest') return next();
+  // Signed (HMAC) campaign unsubscribe link opened from an email client; no session.
+  if (req.path === '/email/unsubscribe') return next();
   if (req.method === 'OPTIONS') return next();
   return requireAuth(req, res, next);
 });
 
 app.use('/api', (req, res, next) => {
   if (isPublicApiPath(req.path)) return next();
-  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
+  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/email/unsubscribe' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
@@ -983,7 +987,7 @@ const fieldPolicy = registerFieldPolicy(app, {
   log: (msg) => console.warn(`[field-policy] ${msg}`),
   skip: (req) => req.method === 'OPTIONS' || req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health'
     || req.path.startsWith('/settings/theme') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest'
-    || req.path.startsWith('/settings/field-policy') || req.path.startsWith('/settings/field-access-log') || req.path.startsWith('/v1/'),
+    || req.path.startsWith('/settings/field-policy') || req.path.startsWith('/settings/field-access-log') || req.path === '/email/unsubscribe' || req.path.startsWith('/v1/'),
 });
 
 // Uploads are multipart (not filtered by the JSON write guard): require "edit" on the document/photo groups.
@@ -5060,6 +5064,14 @@ registerLeadPipeline(app, {
   registerAutomation(app, automationDeps, automation);
 }
 
+registerEmail(app, {
+  session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  academyName: () => academyDisplayName(),
+  publicBaseUrl: publicBaseFromRequest,
+  log: (msg) => console.log(`[email] ${msg}`),
+});
+
 app.get('/api/settings/audit-log', requireAdmin, asyncHandler(async (req, res) => {
   const q = req.query as Record<string, string>;
   res.json(await chabokan.listAudit({
@@ -5157,6 +5169,7 @@ async function startServer() {
   await ensureBranchSchema();
   startBranchReconcileJob();
   await ensureFieldPolicySchema();
+  await ensureEmailSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

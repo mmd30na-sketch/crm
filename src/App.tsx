@@ -12,6 +12,7 @@ import {
   LogOut,
   Contact,
   KanbanSquare,
+  AtSign,
   ClipboardList,
   Megaphone,
   CalendarRange,
@@ -40,6 +41,7 @@ import LoginScreen from './components/LoginScreen';
 import { CopilotProvider, CopilotBar, CopilotPage } from './components/CopilotWidget';
 import LeadsPanel from './components/LeadsPanel';
 import LeadPipelinePanel from './components/LeadPipelinePanel';
+import EmailPanel from './components/EmailPanel';
 import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
@@ -180,6 +182,14 @@ const NAV_ITEMS = [
     sublabel: 'کانبان سرنخ‌ها و نرخ تبدیل',
     icon: KanbanSquare,
     color: 'purple',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'email',
+    label: 'ایمیل',
+    sublabel: 'رسید، گواهی، یادآوری و کمپین',
+    icon: AtSign,
+    color: 'rose',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -723,6 +733,9 @@ function AppShell() {
               )}
               {activeTab === 'lead-pipeline' && (role === 'admin' || role === 'cashier') && (
                 <LeadPipelinePanel isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'email' && (role === 'admin' || role === 'cashier') && (
+                <EmailPanel isAdmin={role === 'admin'} courses={courses.map((c) => ({ id: c.id, title: c.title }))} />
               )}
               {activeTab === 'site-requests' && (role === 'admin' || role === 'cashier') && (
                 <SiteRequestsHistory courses={courses} />
