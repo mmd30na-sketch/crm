@@ -46,6 +46,9 @@ import { registerTraineePortal } from './traineePortal';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
+import { registerInvoices, ensureInvoicesSchema } from './invoices';
+import { registerFinanceReports, ensureFinanceSchema } from './financeReports';
+import { registerAccounting } from './accounting';
 import { owedByEnrollment, allocatePayment as splitPayment, payableAmount } from './src/utils/finance';
 
 dotenv.config({ path: '.env.local' });
@@ -926,6 +929,8 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
   if (path.startsWith('/lessons')) return role === 'cashier'; // lesson calendar; reminder run is admin-only in the handler
   if (path.startsWith('/automation')) return false; // admin only (اتوماسیون قاعده‌محور)
+  if (path.startsWith('/invoices') || path.startsWith('/finance-reports')) return role === 'cashier'; // admin-only writes checked in the handlers
+  if (path.startsWith('/refunds') || path.startsWith('/accounting')) return false; // admin only
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
   if (path.startsWith('/copilot')) return role === 'cashier';
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
@@ -4811,6 +4816,37 @@ registerTraineePortal(app, {
   log: (msg) => console.warn(`[trainee-portal] ${msg}`),
 });
 
+// Official invoices (فاکتور رسمی), finance reports/refunds and the accounting journal export.
+const financeSession = (req: express.Request) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; };
+const loadPaymentsForFinance = async (): Promise<any[]> => (chabokan.isMysqlEnabled() ? chabokan.listPayments() : (readDb() as any).payments || []);
+const invoiceApi = registerInvoices(app, {
+  session: financeSession,
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  loadStudents, loadCourses, loadEnrollments,
+  jalaliToday: () => jalaliNow(),
+  log: (msg) => console.warn(`[invoices] ${msg}`),
+});
+const financeApi = registerFinanceReports(app, {
+  session: financeSession,
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  loadStudents, loadCourses, loadEnrollments,
+  loadPayments: loadPaymentsForFinance,
+  jalaliToday: () => jalaliNow(),
+  log: (msg) => console.warn(`[finance] ${msg}`),
+});
+registerAccounting(app, {
+  session: financeSession,
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  loadPayments: loadPaymentsForFinance,
+  loadStudents,
+  refunds: (from, to) => financeApi.refunds(from, to),
+  invoices: (from, to) => invoiceApi.list({ from, to, status: 'issued' }),
+  log: (msg) => console.warn(`[accounting] ${msg}`),
+});
+
 // Remaining-debt SMS with a payment link: preview / single send / bulk send / settings / log.
 registerDebtSms(app, {
   session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
@@ -5019,6 +5055,8 @@ async function startServer() {
   await ensureApiKeysSchema();
   await ensureWebhooksSchema();
   webhooks.start();
+  await ensureInvoicesSchema();
+  await ensureFinanceSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
