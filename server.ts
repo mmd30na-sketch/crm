@@ -4767,7 +4767,7 @@ app.get('/api/settings/backups', requireAdmin, (_req, res) => {
   const dir = process.env.CRM_BACKUP_DIR || '/project/_archive/db-backups';
   try {
     const files = fs.readdirSync(dir)
-      .filter((f) => /^carla-\d{8}-\d{4}\.sql\.gz$/.test(f))
+      .filter((f) => /^(?:ham-taraz|carla)-\d{8}-\d{4}\.sql\.gz$/.test(f))
       .map((f) => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
     res.json({ dir_configured: true, files });
