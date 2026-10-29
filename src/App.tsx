@@ -18,6 +18,7 @@ import {
   History,
   BellRing,
   Wallet,
+  Building2,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -41,6 +42,9 @@ import InstructorPayPanel from './components/InstructorPayPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
 import DebtSmsPanel from './components/DebtSmsPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
+import BranchSwitcher from './components/BranchSwitcher';
+import BranchesPanel from './components/BranchesPanel';
+import { fetchBranchConfig } from './api/branches';
 import { taskSummary } from './api/phase4';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
 
@@ -156,6 +160,15 @@ const NAV_ITEMS = [
     sublabel: 'کمپین روبیکا',
     icon: Megaphone,
     color: 'rose',
+    roles: ['admin'] as StaffRole[],
+  },
+  {
+    // Shown only when CRM_MULTI_BRANCH=1 on the server (see branchesEnabled below).
+    id: 'branches',
+    label: 'شعبه‌ها',
+    sublabel: 'شعب، کاربران و گزارش',
+    icon: Building2,
+    color: 'slate',
     roles: ['admin'] as StaffRole[],
   },
   {
@@ -314,6 +327,15 @@ function AppShell() {
     return () => { cancelled = true; };
   }, []);
 
+  // Multi-branch (CRM_MULTI_BRANCH): the admin's «شعبه‌ها» page only exists when the server has it on.
+  const [branchesEnabled, setBranchesEnabled] = useState(false);
+  useEffect(() => {
+    if (!authed) { setBranchesEnabled(false); return; }
+    let alive = true;
+    fetchBranchConfig().then((c) => { if (alive) setBranchesEnabled(!!c.enabled); });
+    return () => { alive = false; };
+  }, [authed]);
+
   useEffect(() => {
     if (!authed) return;
     api.startFileTokenRefresh();
@@ -331,7 +353,7 @@ function AppShell() {
   }, []);
 
   const role: StaffRole = currentUser?.role === 'cashier' || currentUser?.role === 'instructor' ? currentUser.role : 'admin';
-  const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role));
+  const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role) && (item.id !== 'branches' || branchesEnabled));
 
   const handleActiveTabChange = (newTab: string) => {
     if (!visibleNav.some(item => item.id === newTab)) return;
@@ -502,6 +524,9 @@ function AppShell() {
 
           {/* Right: Controls */}
           <div className="flex items-center gap-2">
+            {/* Branch picker: hidden unless multi-branch is on and 2+ branches exist */}
+            <BranchSwitcher />
+
             {/* Refresh */}
             <button
               onClick={refreshAllData}
@@ -635,6 +660,9 @@ function AppShell() {
               )}
               {activeTab === 'campaigns' && role === 'admin' && (
                 <BulkMessaging courses={courses} />
+              )}
+              {activeTab === 'branches' && role === 'admin' && branchesEnabled && (
+                <BranchesPanel />
               )}
               {activeTab === 'settings' && role === 'admin' && (
                 <Settings
