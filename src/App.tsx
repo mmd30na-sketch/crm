@@ -18,6 +18,7 @@ import {
   History,
   BellRing,
   Wallet,
+  CalendarClock,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -38,6 +39,7 @@ import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
 import SiteRequestsHistory from './components/SiteRequestsHistory';
 import InstructorPayPanel from './components/InstructorPayPanel';
+import LessonCalendarPanel from './components/LessonCalendarPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
 import DebtSmsPanel from './components/DebtSmsPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
@@ -91,6 +93,14 @@ const NAV_ITEMS = [
     sublabel: 'همان گفتگوی داشبورد',
     icon: Bot,
     color: 'brand',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'lessons',
+    label: 'تقویم جلسات عملی',
+    sublabel: 'رزرو مربی و خودرو',
+    icon: CalendarClock,
+    color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -273,8 +283,8 @@ function AppShell() {
 
   useEffect(() => {
     const onLost = () => setAuthed(false);
-    window.addEventListener('carla-auth-lost', onLost);
-    return () => window.removeEventListener('carla-auth-lost', onLost);
+    window.addEventListener('ham-taraz-auth-lost', onLost);
+    return () => window.removeEventListener('ham-taraz-auth-lost', onLost);
   }, []);
 
   useEffect(() => {
@@ -373,7 +383,7 @@ function AppShell() {
         <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden="true" />
       )}
       <aside
-        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 lg:static lg:z-auto ${
+        className={`ham-taraz-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 lg:static lg:z-auto ${
           isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden invisible'
         }`}
         id="app-sidebar"
@@ -381,7 +391,7 @@ function AppShell() {
         {/* Brand Header */}
         <div className="p-5 pb-4">
           <div className="flex items-center gap-3 mb-1">
-            <div className="carla-brand-logo overflow-hidden">
+            <div className="ham-taraz-brand-logo overflow-hidden">
               {theme?.logo_url ? (
                 <img src={theme.logo_url} alt="لوگوی آموزشگاه" className="w-full h-full object-cover" />
               ) : (
@@ -399,7 +409,7 @@ function AppShell() {
 
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          <p className="carla-section-title px-3 mb-2">منوی اصلی</p>
+          <p className="ham-taraz-section-title px-3 mb-2">منوی اصلی</p>
 
           {visibleNav.map((item) => {
             const isActive = activeTab === item.id;
@@ -474,7 +484,7 @@ function AppShell() {
 
         {/* ── HEADER ── */}
         <header
-          className="carla-header h-16 px-3 sm:px-6 gap-2 flex items-center justify-between shrink-0"
+          className="ham-taraz-header h-16 px-3 sm:px-6 gap-2 flex items-center justify-between shrink-0"
           id="main-header"
         >
           {/* Left: Sidebar Toggle + Breadcrumb */}
@@ -549,7 +559,7 @@ function AppShell() {
               <PrintPreview enrollmentId={Number(new URLSearchParams(window.location.search).get('enrollment')) || undefined} />
           ) : loading ? (
             <div className="flex flex-col items-center justify-center py-40 space-y-4 fade-in">
-              <div className="carla-spinner" />
+              <div className="ham-taraz-spinner" />
               <p className="text-sm text-slate-400 font-medium">در حال بارگذاری داده‌ها...</p>
             </div>
           ) : (
@@ -614,6 +624,9 @@ function AppShell() {
               )}
               {activeTab === 'terms' && (role === 'admin' || role === 'cashier') && (
                 <CourseTermsPanel courses={courses} isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'lessons' && (role === 'admin' || role === 'cashier') && (
+                <LessonCalendarPanel students={students} isAdmin={role === 'admin'} />
               )}
               {activeTab === 'pay' && role === 'admin' && (
                 <InstructorPayPanel />

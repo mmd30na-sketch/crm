@@ -35,6 +35,7 @@ import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPa
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
 import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
+import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -906,6 +907,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
   if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
+  if (path.startsWith('/lessons')) return role === 'cashier'; // lesson calendar; reminder run is admin-only in the handler
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
   if (path.startsWith('/copilot')) return role === 'cashier';
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
@@ -4699,6 +4701,19 @@ registerDebtSms(app, {
   log: (msg: string) => console.warn(`[debt-sms] ${msg}`),
 });
 
+// Practical-lesson calendar (lessonCalendar.ts): bookings, vehicles, availability; SMS reminder is flag-gated.
+const lessonCalendar = registerLessonCalendar(app, {
+  role: (req) => currentRole(req) || null,
+  username: (req) => { const s = sessionFromRequest(req); return String(s?.username || ''); },
+  normalizeMobile,
+  // Class-time reminder goes through the shared helper (sms_templates key class_time -> sms.ir verify 926976).
+  sms: {
+    sendTemplate: (key, mobile, vars, fallback) => sharedSms.sendTemplate(key, mobile, vars, fallback),
+    configured: () => !!resolveApiKey(smsCfg?.apiKeyRef || 'env:SMS_API_KEY'),
+  },
+  log: (msg: string) => console.warn(`[lessons] ${msg}`),
+});
+
 // Short public payment URL: /p/<code> opens the trainee panel with the amount preset.
 app.get('/p/:code', (req, res) => {
   const code = sanitizeString(req.params.code, 16);
@@ -4752,7 +4767,7 @@ app.get('/api/settings/backups', requireAdmin, (_req, res) => {
   const dir = process.env.CRM_BACKUP_DIR || '/project/_archive/db-backups';
   try {
     const files = fs.readdirSync(dir)
-      .filter((f) => /^carla-\d{8}-\d{4}\.sql\.gz$/.test(f))
+      .filter((f) => /^(?:ham-taraz|carla)-\d{8}-\d{4}\.sql\.gz$/.test(f))
       .map((f) => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
     res.json({ dir_configured: true, files });
@@ -4821,6 +4836,8 @@ async function startServer() {
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  await ensureLessonCalendarSchema();
+  startLessonReminderJob(lessonCalendar, (m) => console.warn(`[lessons] ${m}`));
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
