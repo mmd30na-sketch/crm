@@ -29,7 +29,10 @@
     "mysql-socks.ts",
     "courseTerms.ts",
     "phase4.ts",
-    "copilot-*.ts"
+    "copilot-*.ts",
+    "automation.ts",
+    "automationConditions.ts",
+    "automationSources.ts"
   ],
   "exclude": [
     "node_modules",

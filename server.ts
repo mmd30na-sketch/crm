@@ -35,6 +35,9 @@ import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPa
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
 import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
+import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
+import { createAutomationSources, registrationContext } from './automationSources';
+import type { AutomationEvent, EventContext } from './automationConditions';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -906,6 +909,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
   if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
+  if (path.startsWith('/automation')) return false; // admin only (اتوماسیون قاعده‌محور)
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
   if (path.startsWith('/copilot')) return role === 'cashier';
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
@@ -2397,6 +2401,7 @@ app.post('/api/enrollments', async (req, res) => {
         ...b, student_id: studentId, course_id: courseId, course_number: courseNumber, final_price: finalPrice, signup_date_jalali: signupDate,
       });
       void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
+      emitAutomation('enrollment_created', studentId, { enrollment_id: Number((created as any)?.id ?? (created as any)?.enrollment_id) || undefined, course_id: courseId, course_title: course?.title || '', amount: finalPrice });
       return res.json(created);
     }
     const db = readDb();
@@ -2411,6 +2416,7 @@ app.post('/api/enrollments', async (req, res) => {
     db.enrollments.push(newEnrollment);
     writeDb(db);
     void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
+    emitAutomation('enrollment_created', studentId, { enrollment_id: newEnrollment.id, course_id: courseId, course_title: course?.title || '', amount: finalPrice });
     res.json(newEnrollment);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -2421,6 +2427,18 @@ app.get('/api/enrollments', async (req, res) => {
     res.json(redactForInstructor(req, 'enrollments', readDb().enrollments));
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
+
+// Rule-based automation (automation.ts). Created at the bottom of this file; until then (and whenever
+// CRM_AUTOMATION_ENABLED is not '1') emitting is a no-op. Never throws and never delays the response.
+let automation: AutomationEngine | null = null;
+let automationSources: ReturnType<typeof createAutomationSources> | null = null;
+function emitAutomation(event: AutomationEvent, studentId: number | null, extra: EventContext = {}) {
+  try {
+    if (!automation || !automation.isEnabled()) return;
+    const src = automationSources;
+    automation.emit(event, async () => (studentId && src ? await src.withStudent(studentId, extra) : extra));
+  } catch (err: any) { console.warn(`[automation] emit ${event} failed:`, err?.message || err); }
+}
 
 // 7. POST payments (always for one enrollment; at most what is still owed on it and by the student)
 /**
@@ -2434,7 +2452,9 @@ async function createPaymentCore(input: {
 }): Promise<any[]> {
   if (chabokan.isMysqlEnabled()) {
     // Check + every part + the cached amount_paid in one transaction with the enrollment rows locked.
-    return chabokan.insertPaymentAtomic(input);
+    const rows = await chabokan.insertPaymentAtomic(input);
+    emitAutomation('payment_succeeded', input.studentId, { payment_id: Number(rows?.[0]?.id) || undefined, enrollment_id: input.linkedEnrollmentId || undefined, amount: input.amount, pay_method: input.payMethod });
+    return rows;
   }
   const db = readDb();
   if (!db.students.some(s => s.id === input.studentId)) throw Object.assign(new Error('هنرجو یافت نشد.'), { status: 404 });
@@ -2462,6 +2482,7 @@ async function createPaymentCore(input: {
   }));
   db.payments.push(...created);
   writeDb(db);
+  emitAutomation('payment_succeeded', input.studentId, { payment_id: Number(created[0]?.id) || undefined, enrollment_id: input.linkedEnrollmentId || undefined, amount: input.amount, pay_method: input.payMethod });
   return created;
 }
 
@@ -3098,6 +3119,11 @@ app.post('/api/registrations/:code/approve', async (req, res) => {
     loadCourses()
       .then((courses) => notifyRegistration(result.student, courses.find(c => Number(c.id) === courseId), code))
       .catch((err) => console.warn('Registration SMS skipped:', err?.message || err));
+    {
+      const sid = Number((result as any)?.student?.id ?? (result as any)?.student?.student_id) || null;
+      const enr: any = (result as any)?.enrollment || {};
+      emitAutomation('enrollment_approved', sid, { registration_code: code, tracking_code: code, enrollment_id: Number(enr.id ?? enr.enrollment_id) || undefined, course_id: courseId, amount: finalPrice ?? undefined });
+    }
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
@@ -3116,6 +3142,7 @@ app.post('/api/registrations/:code/reject', async (req, res) => {
     // Fire-and-forget 'registration rejected' SMS. Runs only after a real pending -> rejected transition
     // (rejectWebsiteRegistration throws 409 for already-processed rows), so past rejections are never re-sent.
     void notifyRejection(registration, reason);
+    emitAutomation('enrollment_rejected', null, registrationContext(registration, reason, REG_COURSE_NAMES_FA));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
@@ -4738,6 +4765,49 @@ registerPhase4(app, {
   },
 });
 
+// Rule-based automation: admin-only rules / preview / run history (automation.ts). Hard-gated by
+// CRM_AUTOMATION_ENABLED; rules start disabled and in dry-run mode; CRM_AUTOMATION_TEST_MOBILE redirects SMS.
+{
+  automationSources = createAutomationSources({ readJsonDb: () => readDb() });
+  const sources = automationSources;
+  const automationDeps = {
+    session: (req: express.Request) => { const x = sessionFromRequest(req); return x ? { username: String(x.username || ''), role: String(x.role || '') } : null; },
+    sanitize: (v: unknown, max: number) => sanitizeString(v, max),
+    normalizeMobile,
+    readJsonDb: () => readDb(),
+    writeJsonDb: (store: any) => writeDb(store),
+    sms: {
+      sendTemplate: (key: string, mobile: string, vars: Record<string, unknown>) => sharedSms.sendTemplate(key, mobile, vars),
+      sendText: (mobile: string, text: string) => sharedSms.sendText(mobile, text),
+    },
+    notify: {
+      telegram: (chatId: string, text: string) => sendTelegramMessage(chatId, text),
+      rubika: async (chatId: string, text: string) => {
+        try { const r = await sendRubikaMessage(chatId, text); return r?.status === 'OK' ? { ok: true } : { ok: false, error: String(r?.status || 'خطا').slice(0, 120) }; }
+        catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 120) }; }
+      },
+    },
+    createTask: async (t: { title: string; description: string; assignee: string | null; due_at: string | null; priority: string; student_id: number | null; created_by: string }) => {
+      if (!chabokan.isMysqlEnabled()) return { ok: false, error: 'تسک‌ها به MySQL نیاز دارند' };
+      const r: any = await chabokan.sqlExec(
+        'INSERT INTO crm_tasks (title, description, assignee_username, created_by, due_at, priority, status, entity_type, entity_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [t.title, t.description || null, t.assignee, t.created_by, t.due_at, t.priority, 'open', t.student_id ? 'student' : null, t.student_id]);
+      return { ok: true, id: Number(r?.insertId) || undefined };
+    },
+    addNote: async (studentId: number, text: string, by: string) => {
+      if (!chabokan.isMysqlEnabled()) return { ok: false, error: 'یادداشت‌ها به MySQL نیاز دارند' };
+      await chabokan.sqlExec("INSERT INTO crm_activities (entity_type, entity_id, kind, outcome, body, staff_username) VALUES ('student', ?, 'note', 'automation', ?, ?)", [studentId, text, by]);
+      return { ok: true };
+    },
+    scheduledContexts: (event: AutomationEvent, rule: any) => sources.scheduledContexts(event, rule),
+    sampleContexts: (event: AutomationEvent, limit: number) => sources.sampleContexts(event, limit),
+    jalaliToday: () => jalaliNow(),
+    log: (msg: string) => console.warn(`[automation] ${msg}`),
+  };
+  automation = createAutomationEngine(automationDeps);
+  registerAutomation(app, automationDeps, automation);
+}
+
 app.get('/api/settings/audit-log', requireAdmin, asyncHandler(async (req, res) => {
   const q = req.query as Record<string, string>;
   res.json(await chabokan.listAudit({
@@ -4821,6 +4891,8 @@ async function startServer() {
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  await ensureAutomationSchema();
+  automation?.startScheduler();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
