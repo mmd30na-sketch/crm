@@ -13,6 +13,7 @@
     "scanner": "node scripts/scanner-bridge.mjs",
     "test:ocr": "node --import tsx scripts/test-ocr-validate.mjs",
     "test:logic": "node --import tsx scripts/test-crm-logic.mjs",
+    "test:lead-pipeline": "node --import tsx scripts/test-lead-pipeline.mjs",
     "test:print": "node --import tsx scripts/test-print-docs.mjs",
     "test:copilot-date": "node --import tsx scripts/test-copilot-date.mjs",
     "test:copilot-labels": "node --import tsx scripts/test-copilot-labels.mjs",
