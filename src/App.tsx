@@ -18,6 +18,7 @@ import {
   History,
   BellRing,
   Wallet,
+  CalendarClock,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -38,6 +39,7 @@ import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
 import SiteRequestsHistory from './components/SiteRequestsHistory';
 import InstructorPayPanel from './components/InstructorPayPanel';
+import LessonCalendarPanel from './components/LessonCalendarPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
 import DebtSmsPanel from './components/DebtSmsPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
@@ -91,6 +93,14 @@ const NAV_ITEMS = [
     sublabel: 'همان گفتگوی داشبورد',
     icon: Bot,
     color: 'brand',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'lessons',
+    label: 'تقویم جلسات عملی',
+    sublabel: 'رزرو مربی و خودرو',
+    icon: CalendarClock,
+    color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
@@ -614,6 +624,9 @@ function AppShell() {
               )}
               {activeTab === 'terms' && (role === 'admin' || role === 'cashier') && (
                 <CourseTermsPanel courses={courses} isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'lessons' && (role === 'admin' || role === 'cashier') && (
+                <LessonCalendarPanel students={students} isAdmin={role === 'admin'} />
               )}
               {activeTab === 'pay' && role === 'admin' && (
                 <InstructorPayPanel />
