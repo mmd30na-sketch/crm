@@ -41,7 +41,7 @@ if (phase === 'one') {
   ok(br.s === 200 && br.j.branches[0].is_default && br.j.branches[0].students === 2 && br.j.branches[0].enrollments === 2, 'default branch with backfilled counts ' + JSON.stringify(br.j.branches[0]));
   const bad = await req('POST', '/branches', A, { code: 'West Side', name: 'x' });
   ok(bad.s === 400, 'bad code 400');
-  const w = await req('POST', '/branches', A, { code: 'west', name: 'شعبه غرب', sms_sender_line: '۳۰۰۰۱۲۳۴', academy_name: 'آموزشگاه کارلا - غرب' });
+  const w = await req('POST', '/branches', A, { code: 'west', name: 'شعبه غرب', sms_sender_line: '۳۰۰۰۱۲۳۴', academy_name: 'آموزشگاه همتراز - غرب' });
   ok(w.s === 200 && w.j.branch?.id && w.j.branch.sms_sender_line === '30001234', 'create west ' + JSON.stringify(w.j).slice(0, 200));
   const dup = await req('POST', '/branches', A, { code: 'west', name: 'y' });
   ok(dup.s === 409, 'duplicate code 409');

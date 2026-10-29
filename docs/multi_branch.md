@@ -23,7 +23,7 @@ Deactivating every branch except one returns to the dormant behaviour. Rollback 
 - **Admin**: all branches («همه شعبه‌ها», default) or one branch picked in the header.
 - **Other roles**: the branches assigned in «شعبه‌ها → کاربران و شعبه»; nobody assigned → the default branch only.
   A request for a branch the user does not have → 403.
-- The picked branch is sent as header `x-branch-id` (sessionStorage `carla_crm_branch`, added to every `/api/` fetch).
+- The picked branch is sent as header `x-branch-id` (sessionStorage `ham_taraz_crm_branch`, added to every `/api/` fetch).
 
 ## Scoping (2+ branches)
 - Lists filtered on the response: `GET /api/students, /enrollments, /courses, /payments, /expenses,

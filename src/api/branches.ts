@@ -17,7 +17,7 @@ export interface BranchReportRow {
 export interface BranchReport { from: string | null; to: string | null; rows: BranchReportRow[]; totals: Omit<BranchReportRow, 'branch_id' | 'name' | 'is_active'> }
 export interface BranchSettings { branch_id: number; name: string; academy_name: string | null; address: string | null; phone: string | null; sms_sender_line: string | null; manager_name: string | null }
 
-export const BRANCH_KEY = 'carla_crm_branch';
+export const BRANCH_KEY = 'ham_taraz_crm_branch';
 export function getActiveBranch(): string | null {
   try { return sessionStorage.getItem(BRANCH_KEY); } catch { return null; }
 }
