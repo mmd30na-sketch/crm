@@ -20,6 +20,9 @@ import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
+import { registerPublicApi, ensureApiKeysSchema, apiStudent, apiEnrollment, apiPayment } from './publicApi';
+import { createWebhooks, ensureWebhooksSchema } from './webhooks';
+import { buildOpenApiSpec, docsHtml as publicApiDocsHtml } from './openapiSpec';
 import {
   ensureThemeSettingsSchema,
   readThemeConfig,
@@ -468,6 +471,16 @@ function writeDb(data: typeof initialDb) {
   fs.renameSync(tmp, DB_PATH);
 }
 
+/** Outbound webhooks (webhooks.ts). emit() is fire-and-forget: it never delays or fails the staff request. */
+const webhooks = createWebhooks({
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  log: (msg) => console.warn(`[webhooks] ${msg}`),
+});
+const webhookStudent = (s: any) => (s ? apiStudent(s) : null);
+const webhookEnrollment = (e: any) => (e ? apiEnrollment(e) : null);
+const webhookPayment = (p: any) => apiPayment(p);
+
 // Seed if not exists
 if (!fs.existsSync(DB_PATH)) {
   writeDb(initialDb);
@@ -915,6 +928,8 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
 
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth')) return next();
+  // Public API v1 carries its own API-key auth, rate limit and scopes (publicApi.ts), never a staff session.
+  if (isPublicApiPath(req.path)) return next();
   // Trainee payment routes carry their own signed trainee token (never a staff session).
   if (req.path.startsWith('/trainee-payments')) return next();
   if (req.path === '/health') return next();
@@ -927,6 +942,7 @@ app.use('/api', (req, res, next) => {
 });
 
 app.use('/api', (req, res, next) => {
+  if (isPublicApiPath(req.path)) return next();
   if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
@@ -946,6 +962,11 @@ function redactForInstructor(req: express.Request, kind: 'students' | 'enrollmen
   return rows.map((e) => ({
     id: e.id, student_id: e.student_id, course_id: e.course_id, course_number: e.course_number, signup_date_jalali: e.signup_date_jalali,
   }));
+}
+
+/** /api/v1 and /api/v1/... (case-insensitive like Express routing); not /api/v10 or /api/v1x. */
+function isPublicApiPath(p: string): boolean {
+  return /^\/v1(\/|$)/i.test(p);
 }
 
 function envAdminUsername() {
@@ -2045,19 +2066,24 @@ app.get('/api/students', async (req, res) => {
 
 const sameCode = (s: any, code: string | undefined) => !!code && normalizeNationalCode(s?.national_code) === code;
 
-app.post('/api/students', asyncHandler(async (req, res) => {
-  const { data, error, warnings } = parseStudentInput(req.body, false);
-  if (error) return res.status(400).json({ error });
+/**
+ * Creates a student (or returns the existing one with the same national code). Shared by POST /api/students
+ * and the public API (POST /api/v1/students); answers as { status, body } so both send the same JSON.
+ */
+async function createStudentCore(input: any): Promise<{ status: number; body: any }> {
+  const { data, error, warnings } = parseStudentInput(input, false);
+  if (error) return { status: 400, body: { error } };
 
   if (chabokan.isMysqlEnabled()) {
     // Same national code = same person (e.g. a second course): the existing record is reused. The lookup
     // and the insert run in one locked transaction, so two concurrent submits cannot both insert.
-    const { student, alreadyExists } = await chabokan.insertStudent({ ...req.body, ...data });
-    return res.json({ status: 'success', ...(alreadyExists ? { already_exists: true } : {}), student, warnings });
+    const { student, alreadyExists } = await chabokan.insertStudent({ ...input, ...data });
+    if (!alreadyExists) webhooks.emit('student.created', { student: webhookStudent(student) });
+    return { status: 200, body: { status: 'success', ...(alreadyExists ? { already_exists: true } : {}), student, warnings } };
   }
   const db = readDb();
   const existing = db.students.find(s => sameCode(s, data.national_code));
-  if (existing) return res.json({ status: 'success', already_exists: true, student: existing, warnings });
+  if (existing) return { status: 200, body: { status: 'success', already_exists: true, student: existing, warnings } };
   const newStudent: Student = {
     id: db.students.length > 0 ? Math.max(...db.students.map(s => s.id)) + 1 : 1,
     first_name: data.first_name!,
@@ -2072,7 +2098,13 @@ app.post('/api/students', asyncHandler(async (req, res) => {
   };
   db.students.push(newStudent);
   writeDb(db);
-  res.json({ status: 'success', student: newStudent, warnings });
+  webhooks.emit('student.created', { student: webhookStudent(newStudent) });
+  return { status: 200, body: { status: 'success', student: newStudent, warnings } };
+}
+
+app.post('/api/students', asyncHandler(async (req, res) => {
+  const r = await createStudentCore(req.body);
+  res.status(r.status).json(r.body);
 }));
 
 
@@ -2358,46 +2390,51 @@ async function notifyRegistration(student: any, course: any, trackingCode?: stri
 }
 
 // 6. POST enrollment
-app.post('/api/enrollments', async (req, res) => {
-  try {
-    const b = req.body || {};
+/**
+ * Creates one enrollment (validation, duplicate check, class number). Shared by POST /api/enrollments and the
+ * public API (POST /api/v1/enrollments); emits the enrollment.created webhook.
+ */
+async function createEnrollmentCore(input: any): Promise<{ status: number; body: any }> {
+  {
+    const b = input || {};
     const studentId = parseInt(b.student_id, 10);
     const courseId = parseInt(b.course_id, 10);
-    if (!studentId || !courseId) return res.status(400).json({ error: 'student_id و course_id الزامی است.' });
+    if (!studentId || !courseId) return { status: 400, body: { error: 'student_id و course_id الزامی است.' } };
 
     const [students, courses, enrollments] = await Promise.all([loadStudents(), loadCourses(), loadEnrollments()]);
-    if (!students.some(s => Number(s.id) === studentId)) return res.status(404).json({ error: 'هنرجو یافت نشد.' });
+    if (!students.some(s => Number(s.id) === studentId)) return { status: 404, body: { error: 'هنرجو یافت نشد.' } };
     const course = courses.find(c => Number(c.id) === courseId);
-    if (!course) return res.status(404).json({ error: 'دوره آموزشی یافت نشد.' });
-    if (!courseIsActive(course)) return res.status(409).json({ error: 'این دوره غیرفعال است و ثبت‌نام جدید ندارد.' });
+    if (!course) return { status: 404, body: { error: 'دوره آموزشی یافت نشد.' } };
+    if (!courseIsActive(course)) return { status: 409, body: { error: 'این دوره غیرفعال است و ثبت‌نام جدید ندارد.' } };
 
     const hasPrice = b.final_price !== undefined && b.final_price !== null && b.final_price !== '';
     const finalPrice = hasPrice ? Number(b.final_price) : coursePrice(course);
-    if (!Number.isFinite(finalPrice) || finalPrice < 0) return res.status(400).json({ error: 'شهریه نامعتبر است.' });
+    if (!Number.isFinite(finalPrice) || finalPrice < 0) return { status: 400, body: { error: 'شهریه نامعتبر است.' } };
 
     const numbers = enrollments.map(e => Number(e.course_number)).filter(n => Number.isFinite(n) && n > 0);
     let courseNumber: number | null;
     if (b.course_number !== undefined && b.course_number !== null && b.course_number !== '') {
       courseNumber = parseInt(b.course_number, 10);
-      if (!Number.isInteger(courseNumber) || courseNumber <= 0) return res.status(400).json({ error: 'شماره دوره نامعتبر است.' });
+      if (!Number.isInteger(courseNumber) || courseNumber <= 0) return { status: 400, body: { error: 'شماره دوره نامعتبر است.' } };
     } else {
       courseNumber = numbers.length > 0 ? Math.max(...numbers) : null;
     }
     // A missing class number (null) must still match another enrollment without one.
     const sameClass = (e: any) => (e.course_number === null || e.course_number === undefined || e.course_number === '' ? null : Number(e.course_number)) === courseNumber;
     if (enrollments.some(e => Number(e.student_id) === studentId && Number(e.course_id) === courseId && sameClass(e))) {
-      return res.status(409).json({ error: 'این هنرجو قبلاً در همین دوره و کلاس ثبت‌نام شده است.' });
+      return { status: 409, body: { error: 'این هنرجو قبلاً در همین دوره و کلاس ثبت‌نام شده است.' } };
     }
 
     const signup = requestDate(b.signup_date_jalali, 'تاریخ ثبت‌نام');
-    if (signup.error) return res.status(400).json({ error: signup.error });
+    if (signup.error) return { status: 400, body: { error: signup.error } };
     const signupDate = signup.value;
     if (chabokan.isMysqlEnabled()) {
       const created = await chabokan.insertEnrollment({
         ...b, student_id: studentId, course_id: courseId, course_number: courseNumber, final_price: finalPrice, signup_date_jalali: signupDate,
       });
       void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
-      return res.json(created);
+      webhooks.emit('enrollment.created', { enrollment: webhookEnrollment(created), source: 'staff' });
+      return { status: 200, body: created };
     }
     const db = readDb();
     const newEnrollment = {
@@ -2411,7 +2448,15 @@ app.post('/api/enrollments', async (req, res) => {
     db.enrollments.push(newEnrollment);
     writeDb(db);
     void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
-    res.json(newEnrollment);
+    webhooks.emit('enrollment.created', { enrollment: webhookEnrollment(newEnrollment), source: 'staff' });
+    return { status: 200, body: newEnrollment };
+  }
+}
+
+app.post('/api/enrollments', async (req, res) => {
+  try {
+    const r = await createEnrollmentCore(req.body);
+    res.status(r.status).json(r.body);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2429,6 +2474,19 @@ app.get('/api/enrollments', async (req, res) => {
  * rejected/overpaid payment so both callers answer with the same Persian error.
  */
 async function createPaymentCore(input: {
+  studentId: number; linkedEnrollmentId: number; amount: number;
+  payDate: string; payMethod: string; paymentKind: string; description: string;
+}, source: 'staff' | 'api' | 'online' = 'staff'): Promise<any[]> {
+  const rows = await recordPaymentRows(input);
+  webhooks.emit('payment.succeeded', {
+    student_id: input.studentId, enrollment_id: input.linkedEnrollmentId || null, amount: input.amount,
+    pay_date_jalali: input.payDate, pay_method: input.payMethod, payment_kind: input.paymentKind, source,
+    payments: rows.map(webhookPayment),
+  });
+  return rows;
+}
+
+async function recordPaymentRows(input: {
   studentId: number; linkedEnrollmentId: number; amount: number;
   payDate: string; payMethod: string; paymentKind: string; description: string;
 }): Promise<any[]> {
@@ -2465,29 +2523,35 @@ async function createPaymentCore(input: {
   return created;
 }
 
-app.post('/api/payments', asyncHandler(async (req, res) => {
-  const paymentData = req.body || {};
+/** Validates a staff/API payment request and records it. Shared by POST /api/payments and POST /api/v1/payments. */
+async function createPaymentFromRequest(input: any, source: 'staff' | 'api'): Promise<{ status: number; body: any }> {
+  const paymentData = input || {};
   const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
-  if (!studentId) return res.status(400).json({ error: 'هنرجوی پرداخت مشخص نیست.' });
+  if (!studentId) return { status: 400, body: { error: 'هنرجوی پرداخت مشخص نیست.' } };
   const rawAmount = paymentData.amount;
   const amount = typeof rawAmount === 'number' || typeof rawAmount === 'string' ? Math.round(Number(rawAmount)) : NaN;
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'مبلغ پرداخت باید بیشتر از صفر باشد.' });
+  if (!Number.isFinite(amount) || amount <= 0) return { status: 400, body: { error: 'مبلغ پرداخت باید بیشتر از صفر باشد.' } };
   // Every payment belongs to one enrollment (course registration); unlinked payments are not accepted.
   const linkedEnrollmentId = /^\d+$/.test(String(paymentData.enrollment_id ?? '')) ? parseInt(paymentData.enrollment_id, 10) : 0;
-  if (!linkedEnrollmentId) return res.status(400).json({ error: 'دوره (ثبت‌نام) مربوط به این پرداخت را انتخاب کنید.' });
+  if (!linkedEnrollmentId) return { status: 400, body: { error: 'دوره (ثبت‌نام) مربوط به این پرداخت را انتخاب کنید.' } };
   const payDate = requestDate(paymentData.pay_date_jalali, 'تاریخ پرداخت');
-  if (payDate.error) return res.status(400).json({ error: payDate.error });
+  if (payDate.error) return { status: 400, body: { error: payDate.error } };
   const payMethod = sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos';
   const paymentKind = sanitizeString(paymentData.payment_kind, 40) || 'downpayment';
   const description = sanitizeString(paymentData.description ?? paymentData.notes, 400);
 
   try {
-    const rows = await createPaymentCore({ studentId, linkedEnrollmentId, amount, payDate: payDate.value, payMethod, paymentKind, description });
-    return res.json({ ...rows[0], allocations: rows.length });
+    const rows = await createPaymentCore({ studentId, linkedEnrollmentId, amount, payDate: payDate.value, payMethod, paymentKind, description }, source);
+    return { status: 200, body: { ...rows[0], allocations: rows.length } };
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return { status: err.status, body: { error: err.message } };
     throw err;
   }
+}
+
+app.post('/api/payments', asyncHandler(async (req, res) => {
+  const r = await createPaymentFromRequest(req.body, 'staff');
+  res.status(r.status).json(r.body);
 }));
 
 app.get('/api/payments', async (req, res) => {
@@ -3098,6 +3162,10 @@ app.post('/api/registrations/:code/approve', async (req, res) => {
     loadCourses()
       .then((courses) => notifyRegistration(result.student, courses.find(c => Number(c.id) === courseId), code))
       .catch((err) => console.warn('Registration SMS skipped:', err?.message || err));
+    webhooks.emit('enrollment.approved', {
+      tracking_code: code, enrollment: webhookEnrollment(result.enrollment), student: webhookStudent(result.student),
+      student_created: !!result.student_created,
+    });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
@@ -3113,6 +3181,10 @@ app.post('/api/registrations/:code/reject', async (req, res) => {
     const reason = sanitizeString(req.body?.reason, 300);
     if (reason) console.log(`Registration ${code} rejected by ${(req as any).user?.username}: ${reason}`);
     res.json({ success: true, registration });
+    webhooks.emit('enrollment.rejected', {
+      tracking_code: code, reason: reason || null,
+      registration: registration ? { id: (registration as any).id ?? null, full_name: (registration as any).full_name ?? null, category: (registration as any).category ?? null, status: (registration as any).status ?? 'rejected' } : null,
+    });
     // Fire-and-forget 'registration rejected' SMS. Runs only after a real pending -> rejected transition
     // (rejectWebsiteRegistration throws 409 for already-processed rows), so past rejections are never re-sent.
     void notifyRejection(registration, reason);
@@ -4643,6 +4715,26 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
   res.json({ ok: true, active: g.rubika_account_active });
 });
 
+// Public REST API v1 + outbound webhooks (publicApi.ts / webhooks.ts / openapiSpec.ts). Writes reuse the
+// staff cores (createStudentCore / createEnrollmentCore / createPaymentFromRequest), which also emit webhooks.
+registerPublicApi(app, {
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  isAdmin: (req) => currentRole(req) === 'admin',
+  username: (req) => String((req as any).user?.username || ''),
+  loadStudents,
+  loadEnrollments,
+  loadCourses,
+  loadPayments: async () => (chabokan.isMysqlEnabled() ? chabokan.listPayments() : readDb().payments),
+  createStudent: (body) => createStudentCore(body),
+  createEnrollment: (body) => createEnrollmentCore(body),
+  createPayment: (body) => createPaymentFromRequest(body, 'api'),
+  openApiSpec: (req) => buildOpenApiSpec(publicBaseFromRequest(req)),
+  docsHtml: (req) => publicApiDocsHtml(buildOpenApiSpec(publicBaseFromRequest(req)), '/api/v1/openapi.json'),
+  webhooks,
+  log: (msg) => console.warn(`[public-api] ${msg}`),
+});
+
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
 registerCourseTerms(app, { isAdmin: (req) => currentRole(req) === 'admin' });
 // Instructor pay (حق‌التدریس): admin-only; falls back to db_store.json ("instructor_pay") when MySQL is off.
@@ -4656,7 +4748,7 @@ registerInstructorPay(app, {
 // flow below and the legacy installment-link store stays available for links sent before this change.
 const installmentStore = createInstallmentStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
 const debtLinkStore = createDebtLinkStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
-const publicBaseFromRequest = (req: express.Request) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`);
+function publicBaseFromRequest(req: express.Request) { return String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`); }
 registerOnlinePayments(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
@@ -4666,7 +4758,7 @@ registerOnlinePayments(app, {
   jalaliToday: () => jalaliNow(),
   signToken: (payload, ttlMs) => signToken(payload, ttlMs),
   verifyToken: (token) => verifyToken(token),
-  createPayment: (input) => createPaymentCore(input),
+  createPayment: (input) => createPaymentCore(input, 'online'),
   zarinpalMerchantId: () => {
     try { return String((readDb().settings as any)?.gateways?.zarinpal_merchant_id || ''); } catch { return ''; }
   },
@@ -4752,7 +4844,7 @@ app.get('/api/settings/backups', requireAdmin, (_req, res) => {
   const dir = process.env.CRM_BACKUP_DIR || '/project/_archive/db-backups';
   try {
     const files = fs.readdirSync(dir)
-      .filter((f) => /^carla-\d{8}-\d{4}\.sql\.gz$/.test(f))
+      .filter((f) => /^(?:ham-taraz|carla)-\d{8}-\d{4}\.sql\.gz$/.test(f))
       .map((f) => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
     res.json({ dir_configured: true, files });
@@ -4821,6 +4913,9 @@ async function startServer() {
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  await ensureApiKeysSchema();
+  await ensureWebhooksSchema();
+  webhooks.start();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
