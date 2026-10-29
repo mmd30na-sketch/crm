@@ -19,7 +19,8 @@
     "test:copilot-labels": "node --import tsx scripts/test-copilot-labels.mjs",
     "test:copilot-eval": "esbuild scripts/copilot-eval/run-eval.ts --bundle --platform=node --format=cjs --packages=external --outfile=scripts/copilot-eval/.run-eval.cjs --log-level=error && node scripts/copilot-eval/.run-eval.cjs",
     "preflight": "node scripts/preflight-check.mjs",
-    "test:automation": "node --import tsx scripts/test-automation.mjs"
+    "test:automation": "node --import tsx scripts/test-automation.mjs",
+    "test:public-api": "node --import tsx scripts/test-public-api.mjs"
   },
   "dependencies": {
     "@fontsource/vazirmatn": "^5.3.0",
