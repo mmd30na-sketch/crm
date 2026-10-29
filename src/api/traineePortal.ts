@@ -87,9 +87,9 @@ type PayOnlineResponse = {
 
 const API_BASE = '/api/trainee-portal';
 const PAYMENTS_BASE = '/api/trainee-payments';
-const SESSION_KEY = 'carla_trainee_portal';
-const CACHE_PREFIX = 'carla_tp_cache:';
-const RETURN_KEY = 'carla_tp_return';
+const SESSION_KEY = 'ham_taraz_trainee_portal';
+const CACHE_PREFIX = 'ham_taraz_tp_cache:';
+const RETURN_KEY = 'ham_taraz_tp_return';
 let lastFromCache = false;
 /** True when the most recent GET was served from the offline cache. */
 export const servedFromCache = () => lastFromCache;
