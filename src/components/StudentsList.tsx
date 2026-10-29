@@ -146,10 +146,10 @@ export default function StudentsList({
   // Mobile (<1024px): the profile opens in a full-screen popup. The phone back button closes it.
   const openMobileProfile = () => {
     setMobileProfileOpen(true);
-    try { window.history.pushState({ carlaProfile: true }, ''); } catch {}
+    try { window.history.pushState({ hamTarazProfile: true }, ''); } catch {}
   };
   const closeMobileProfile = () => {
-    if (window.history.state && window.history.state.carlaProfile) window.history.back();
+    if (window.history.state && window.history.state.hamTarazProfile) window.history.back();
     else setMobileProfileOpen(false);
   };
   useEffect(() => {
@@ -608,8 +608,8 @@ export default function StudentsList({
                 </div>
 
                 {/* Progress Bar */}
-                <div className="carla-progress mb-3">
-                  <div className="carla-progress-fill" style={{ width: `${pct(selectedFinance?.totalPaid, selectedFinance?.totalTuition)}%` }} />
+                <div className="ham-taraz-progress mb-3">
+                  <div className="ham-taraz-progress-fill" style={{ width: `${pct(selectedFinance?.totalPaid, selectedFinance?.totalTuition)}%` }} />
                 </div>
 
                 <div className="grid grid-cols-3 gap-3 text-center">
@@ -1034,8 +1034,8 @@ export default function StudentsList({
 
       {/* 2. Edit Student Modal */}
       {editingStudent && (
-        <ModalPortal><div className="carla-modal-overlay">
-          <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 760 }}>
+        <ModalPortal><div className="ham-taraz-modal-overlay">
+          <div className="ham-taraz-modal p-6 space-y-4" style={{ maxWidth: 760 }}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-sky-100 flex items-center justify-center"><Edit3 className="w-4 h-4 text-sky-600" /></div>
@@ -1131,8 +1131,8 @@ export default function StudentsList({
 
       {/* 4. Messaging Modal */}
       {messagingStudent && (
-        <ModalPortal><div className="carla-modal-overlay">
-          <div className="carla-modal p-6 space-y-4">
+        <ModalPortal><div className="ham-taraz-modal-overlay">
+          <div className="ham-taraz-modal p-6 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center"><MessageSquare className="w-4 h-4 text-violet-600" /></div>
@@ -1164,8 +1164,8 @@ export default function StudentsList({
 
       {/* 5. New Payment Modal */}
       {paymentStudent && (
-        <ModalPortal><div className="carla-modal-overlay">
-          <div className="carla-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
+        <ModalPortal><div className="ham-taraz-modal-overlay">
+          <div className="ham-taraz-modal p-6 space-y-4" style={{ maxWidth: 420 }}>
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center"><CreditCard className="w-4 h-4 text-emerald-600" /></div>
@@ -1225,8 +1225,8 @@ export default function StudentsList({
 
       {/* 6. Delete Confirm */}
       {deleteConfirmStudent && (
-        <ModalPortal><div className="carla-modal-overlay">
-          <div className="carla-modal p-6 text-center space-y-4" style={{ maxWidth: 400 }}>
+        <ModalPortal><div className="ham-taraz-modal-overlay">
+          <div className="ham-taraz-modal p-6 text-center space-y-4" style={{ maxWidth: 400 }}>
             <div className="w-14 h-14 rounded-2xl bg-rose-100 flex items-center justify-center mx-auto">
               <AlertCircle className="w-7 h-7 text-rose-600" />
             </div>
