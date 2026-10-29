@@ -19,6 +19,7 @@ import { copilotDateRule } from './src/utils/copilotDate';
 import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
+import { registerEmail, ensureEmailSchema } from './emailService';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
 import {
   ensureThemeSettingsSchema,
@@ -904,6 +905,7 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/message-templates')) return role === 'cashier'; // staff can manage reply templates
   if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
+  if (path.startsWith('/email')) return role === 'cashier'; // campaigns + template edits: admin only (enforced in handlers)
   if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
@@ -922,12 +924,14 @@ app.use('/api', (req, res, next) => {
   if (req.path === '/settings/theme' && req.method === 'GET') return next();
   if (req.path === '/messenger/webhook') return next();
   if (req.path === '/messenger/account-ingest') return next();
+  // Signed (HMAC) campaign unsubscribe link opened from an email client; no session.
+  if (req.path === '/email/unsubscribe') return next();
   if (req.method === 'OPTIONS') return next();
   return requireAuth(req, res, next);
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
+  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/email/unsubscribe' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
@@ -4738,6 +4742,14 @@ registerPhase4(app, {
   },
 });
 
+registerEmail(app, {
+  session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  academyName: () => academyDisplayName(),
+  publicBaseUrl: publicBaseFromRequest,
+  log: (msg) => console.log(`[email] ${msg}`),
+});
+
 app.get('/api/settings/audit-log', requireAdmin, asyncHandler(async (req, res) => {
   const q = req.query as Record<string, string>;
   res.json(await chabokan.listAudit({
@@ -4821,6 +4833,7 @@ async function startServer() {
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  await ensureEmailSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
