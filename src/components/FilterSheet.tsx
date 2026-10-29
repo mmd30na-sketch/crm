@@ -37,7 +37,7 @@ export default function FilterSheet({ count, onClear, children, mobileExtra, tit
       {open && (
         <ModalPortal>
           <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-end justify-center" dir="rtl" onClick={() => setOpen(false)} role="dialog" aria-modal="true" aria-label={title}>
-            <div className="carla-filter-sheet bg-white w-full max-w-lg rounded-t-2xl shadow-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[85dvh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="ham-taraz-filter-sheet bg-white w-full max-w-lg rounded-t-2xl shadow-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[85dvh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="mx-auto w-10 h-1.5 rounded-full bg-slate-200 mb-3" />
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-black text-slate-800">{title}</h3>

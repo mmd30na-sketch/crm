@@ -179,7 +179,7 @@ async def cmd_sign_in(args):
         c.import_key = pkcs1_15.new(RSA.import_key(private_key.encode()))
         reg_err = None
         try:
-            await c.register_device(device_model='Carla CRM')
+            await c.register_device(device_model='Ham-Taraz CRM')
         except Exception as e:
             reg_err = str(e)[:200]
         backup_existing()
