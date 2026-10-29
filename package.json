@@ -22,7 +22,8 @@
     "preflight": "node scripts/preflight-check.mjs",
     "test:automation": "node --import tsx scripts/test-automation.mjs",
     "test:public-api": "node --import tsx scripts/test-public-api.mjs",
-    "test:invoices": "node --import tsx scripts/test-invoices-finance.mjs"
+    "test:invoices": "node --import tsx scripts/test-invoices-finance.mjs",
+    "test:field-policy": "node --import tsx scripts/test-field-policy.mjs"
   },
   "dependencies": {
     "@fontsource/vazirmatn": "^5.3.0",
