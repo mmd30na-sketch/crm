@@ -37,6 +37,7 @@ import {
 import { Course, StaffRole, StaffUser, ThemeConfig } from '../types';
 import * as api from '../api/client';
 import AuditBackupPanel from './AuditBackupPanel';
+import FieldPolicyPanel from './FieldPolicyPanel';
 import { useTheme } from '../theme/ThemeProvider';
 
 interface SettingsProps {
@@ -45,7 +46,7 @@ interface SettingsProps {
 }
 
 export default function Settings({ courses, onRefresh }: SettingsProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database' | 'theme'>('academy');
+  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database' | 'theme' | 'fields'>('academy');
 
   /* ── 0. Theme («تم»): applied app-wide through the ThemeProvider, saved on the server ── */
   const { theme, setTheme } = useTheme();
@@ -391,6 +392,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     { id: 'database', label: 'دیتابیس، بکاپ و تغییرات', icon: Database, color: 'amber' },
     { id: 'payment', label: 'روش‌های پرداخت', icon: CreditCard, color: 'emerald' },
     { id: 'users', label: 'کاربران و دسترسی‌ها', icon: Users, color: 'rose' },
+    { id: 'fields', label: 'دسترسی به فیلدهای حساس', icon: Shield, color: 'rose' },
   ];
 
   return (
@@ -948,6 +950,12 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
           {/* ══════════════════════════════════════════════
               SUBTAB 6: USERS & ROLES
           ══════════════════════════════════════════════ */}
+          {activeSubTab === 'fields' && (
+            <div className="fade-in">
+              <FieldPolicyPanel />
+            </div>
+          )}
+
           {activeSubTab === 'users' && (
             <div className="space-y-4 fade-in">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">

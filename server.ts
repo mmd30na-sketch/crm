@@ -38,6 +38,7 @@ import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './deb
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
+import { registerFieldPolicy, ensureFieldPolicySchema, accessFor, FIELD_GROUPS, DEFAULT_POLICY } from './fieldPolicy';
 import { owedByEnrollment, allocatePayment as splitPayment, payableAmount } from './src/utils/finance';
 
 dotenv.config({ path: '.env.local' });
@@ -934,18 +935,65 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-/** The instructor's students tab needs names, phone, photo and classes; nothing personal or financial. */
+// Field-level access policy (fieldPolicy.ts): masks/strips sensitive keys in every /api JSON response for the
+// caller's role, drops non-editable keys from write bodies and audits sensitive-field access. Admin: unchanged.
+const fieldPolicy = registerFieldPolicy(app, {
+  session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  log: (msg) => console.warn(`[field-policy] ${msg}`),
+  skip: (req) => req.method === 'OPTIONS' || req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path === '/health'
+    || req.path.startsWith('/settings/theme') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest'
+    || req.path.startsWith('/settings/field-policy') || req.path.startsWith('/settings/field-access-log') || req.path.startsWith('/v1/'),
+});
+
+// Uploads are multipart (not filtered by the JSON write guard): require "edit" on the document/photo groups.
+const requireFieldEdit = (groups: string[]) => (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const role = currentRole(req);
+  if (!role || role === 'admin') return next();
+  const policy = fieldPolicy.get().policy;
+  const blocked = groups.filter((g) => accessFor(role, g, policy) !== 'edit');
+  if (!blocked.length) return next();
+  const s = sessionFromRequest(req);
+  fieldPolicy.audit({ username: s?.username || null, role, method: req.method, path: req.originalUrl.split('?')[0], fields: blocked, records: 1, action: 'blocked_edit' });
+  return res.status(403).json({ error: 'دسترسی ویرایش این مدارک برای نقش شما بسته است.' });
+};
+app.post('/api/students/:id/photos', requireFieldEdit(['id_documents', 'personal_photo']));
+app.post('/api/enrollments/:id/receipt', requireFieldEdit(['id_documents']));
+// Website-registration document files (national card scan / personal photo) need view access on that group.
+app.get('/api/registrations/:code/file/:kind', (req, res, next) => {
+  const role = currentRole(req);
+  if (!role || role === 'admin') return next();
+  const group = req.params.kind === 'personal_photo' ? 'personal_photo' : 'id_documents';
+  const a = accessFor(role, group, fieldPolicy.get().policy);
+  const s = sessionFromRequest(req);
+  if (a !== 'edit' && a !== 'view') return res.status(403).json({ error: 'Forbidden' });
+  fieldPolicy.audit({ username: s?.username || null, role, method: 'GET', path: '/api/registrations/:code/file', fields: [group], records: 1, action: 'file' });
+  next();
+});
+
+/**
+ * The instructor's students tab needs names, phone, photo and classes; nothing personal or financial.
+ * The field policy may widen this list (to keys of field groups not "hidden" for the instructor); the
+ * response filter then applies view/masked.
+ */
+const INSTRUCTOR_BASE_KEYS = {
+  students: ['id', 'first_name', 'last_name', 'phone_number', 'personal_photo_url', 'status', 'created_at'],
+  enrollments: ['id', 'student_id', 'course_id', 'course_number', 'signup_date_jalali'],
+};
 function redactForInstructor(req: express.Request, kind: 'students' | 'enrollments', rows: any[]): any[] {
   if (currentRole(req) !== 'instructor') return rows;
-  if (kind === 'students') {
-    return rows.map((s) => ({
-      id: s.id, first_name: s.first_name, last_name: s.last_name, phone_number: s.phone_number,
-      personal_photo_url: s.personal_photo_url, status: s.status, created_at: s.created_at,
-    }));
+  const policy = fieldPolicy.get().policy;
+  const keys = new Set(INSTRUCTOR_BASE_KEYS[kind]);
+  // Only groups the admin opened beyond the defaults add keys, so the default output is exactly as before.
+  for (const g of FIELD_GROUPS) {
+    if (DEFAULT_POLICY.instructor[g.id] === 'hidden' && accessFor('instructor', g.id, policy) !== 'hidden') for (const k of g.keys) keys.add(k);
   }
-  return rows.map((e) => ({
-    id: e.id, student_id: e.student_id, course_id: e.course_id, course_number: e.course_number, signup_date_jalali: e.signup_date_jalali,
-  }));
+  return rows.map((r) => {
+    const out: any = {};
+    for (const k of keys) if (r && r[k] !== undefined) out[k] = r[k];
+    return out;
+  });
 }
 
 function envAdminUsername() {
@@ -1095,11 +1143,21 @@ async function instructorPhotoPaths(): Promise<Set<string>> {
 
 // Student documents (national card, photos) are personal data: staff login required. The instructor
 // only sees personal photos (positively identified as a student's personal_photo), never ID scans.
+// The field policy decides per role: "id_documents" (ID scans, registration PDFs) and "personal_photo".
+// Defaults: cashier both, instructor personal photos only (as before).
 app.use('/StudentFiles', fileRateLimit, requireStaff, asyncHandler(async (req, res, next) => {
-  if (currentRole(req) !== 'instructor') return next();
+  const role = currentRole(req);
+  const s = sessionFromRequest(req);
+  const auditFile = (group: string) => fieldPolicy.audit({ username: s?.username || null, role: role || null, method: req.method, path: '/StudentFiles', fields: [group], records: 1, action: 'file' });
   let requested = '';
   try { requested = decodeURIComponent(req.originalUrl.split('?')[0]); } catch { return res.status(400).json({ error: 'Bad path' }); }
-  if (!(await instructorPhotoPaths()).has(requested)) return res.status(403).json({ error: 'Forbidden' });
+  const isPhoto = (await instructorPhotoPaths()).has(requested);
+  const group = isPhoto ? 'personal_photo' : 'id_documents';
+  if (role !== 'admin') {
+    const a = accessFor(String(role || ''), group, fieldPolicy.get().policy);
+    if (a !== 'edit' && a !== 'view') return res.status(403).json({ error: 'Forbidden' });
+  }
+  auditFile(group);
   next();
 }), express.static(studentFilesBase));
 
@@ -4821,6 +4879,7 @@ async function startServer() {
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  await ensureFieldPolicySchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
