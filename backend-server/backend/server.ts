@@ -546,7 +546,7 @@ app.get('/api/enrollments/:id/report-context', async (req: Request, res: Respons
       course:  crsRows[0] || null,
       payments: payRows,
       settings: {
-        academy_name: settings.academy_name || 'آموزشگاه رانندگی کارلا',
+        academy_name: settings.academy_name || 'آموزشگاه رانندگی همتراز',
         logo_url:     settings.logo_url || '',
         phone_number: settings.phone_number || '',
         address:      settings.address || '',
