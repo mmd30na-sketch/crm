@@ -42,6 +42,7 @@ import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminder
 import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
 import { createAutomationSources, registrationContext } from './automationSources';
 import type { AutomationEvent, EventContext } from './automationConditions';
+import { registerTraineePortal } from './traineePortal';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
@@ -938,6 +939,8 @@ app.use('/api', (req, res, next) => {
   if (isPublicApiPath(req.path)) return next();
   // Trainee payment routes carry their own signed trainee token (never a staff session).
   if (req.path.startsWith('/trainee-payments')) return next();
+  // Trainee portal (PWA) routes: public OTP login + views guarded by the same signed trainee token.
+  if (req.path.startsWith('/trainee-portal')) return next();
   if (req.path === '/health') return next();
   // The theme (and with it the login logo) is read by the public login screen, so it needs no session.
   if (req.path === '/settings/theme' && req.method === 'GET') return next();
@@ -949,7 +952,7 @@ app.use('/api', (req, res, next) => {
 
 app.use('/api', (req, res, next) => {
   if (isPublicApiPath(req.path)) return next();
-  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
+  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
@@ -4795,6 +4798,17 @@ registerOnlinePayments(app, {
   installments: installmentStore,
   debtLinks: debtLinkStore,
   log: (msg) => console.warn(`[online-payments] ${msg}`),
+});
+
+// Trainee portal PWA (traineePortal.ts): OTP login (flag-gated SMS), my lessons, installments, enrollment status.
+// Payment reuses /api/trainee-payments/zarinpal/request with the same trainee token.
+registerTraineePortal(app, {
+  normalizeMobile,
+  signToken: (payload, ttlMs) => signToken(payload, ttlMs),
+  verifyToken: (token) => verifyToken(token),
+  readJsonDb: () => readDb(),
+  sms: { sendTemplate: (key, mobile, vars, fallback) => sharedSms.sendTemplate(key, mobile, vars, fallback) },
+  log: (msg) => console.warn(`[trainee-portal] ${msg}`),
 });
 
 // Remaining-debt SMS with a payment link: preview / single send / bulk send / settings / log.
