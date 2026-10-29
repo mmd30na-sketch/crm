@@ -32,7 +32,8 @@
     "copilot-*.ts",
     "automation.ts",
     "automationConditions.ts",
-    "automationSources.ts"
+    "automationSources.ts",
+    "leadPipeline.ts"
   ],
   "exclude": [
     "node_modules",
