@@ -716,6 +716,11 @@ export function registerLessonCalendar(app: express.Express, deps: {
             );
             sent.push(c.id);
             deps.log(`Sent reminder to ${maskPhone(mobile)} for booking ${c.id}`);
+          } else if (result.status === 'not_configured' || result.status === 'disabled') {
+            // Gateway/template not set up: leave the booking untouched so it is retried once SMS is configured.
+            skipped.push(c.id);
+            deps.log(`Reminder not sent (${result.status}); SMS gateway/template is not configured`);
+            break;
           } else {
             await db.sqlExec(
               "UPDATE crm_lesson_bookings SET reminder_status='failed', reminder_sent_at=NOW() WHERE id=?",
