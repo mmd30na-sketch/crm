@@ -27,7 +27,6 @@ const CRM_TABLES = new Set([
   'crm_tasks', 'crm_activities', 'crm_course_terms', 'crm_campaigns', 'crm_campaign_recipients', 'crm_audit_log',
   'messenger_threads', 'messenger_messages', 'messenger_outbox', 'enrollment_documents', 'enrollment_settle_log',
   'instructor_settlements', 'report_templates', 'id_renumber_map',
-  'tblcourse', 'tblenroll', 'tblpeyment', 'tblstudents', 'tblexpenses',
   'v_daily_cashflow', 'v_enrollment_balances', 'v_expenses_by_category', 'v_messenger_thread_summary',
   'v_overdue_installments', 'v_pending_lead_followups', 'v_profit_and_loss_monthly', 'v_sales_funnel_summary',
 ]);

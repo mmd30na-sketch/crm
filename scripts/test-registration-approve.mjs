@@ -184,7 +184,6 @@ try {
         await q('UPDATE registrations SET student_id = NULL WHERE student_id = ?', [id]);
         await q('DELETE FROM students WHERE student_id = ?', [id]);
       }
-      try { await q('DELETE FROM TblStudents WHERE Ncode = ?', [nc]); } catch {}
     }
     for (const code of created.regs) await q('DELETE FROM registrations WHERE tracking_code = ?', [code]);
     for (const id of created.courseIds) await q('DELETE FROM courses WHERE course_id = ?', [id]);

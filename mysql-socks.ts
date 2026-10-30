@@ -1,7 +1,7 @@
 import fs from 'fs';
 import net from 'net';
 import mysql from 'mysql2/promise';
-import { jalaliToday as tehranJalaliToday, nationalCodeVariants, normalizeNationalCode, sameName, cleanText } from './src/utils/normalize';
+import { jalaliToday as tehranJalaliToday, nationalCodeVariants, normalizeNationalCode, cleanText } from './src/utils/normalize';
 import { owedByEnrollment, allocatePayment, payableAmount } from './src/utils/finance';
 
 /**
@@ -254,108 +254,7 @@ async function fetchStudentById(studentId: number) {
   return rows[0];
 }
 
-type Queryable = Pick<mysql.Connection, 'query'>;
 
-async function rowsOn<T = any>(conn: Queryable | null, query: string, params: any[] = []): Promise<T[]> {
-  if (!conn) return sql<T>(query, params);
-  const [rows] = await conn.query(query, params);
-  return rows as T[];
-}
-
-/**
- * Legacy TblStudents rows for a national code. The legacy StudentID is NOT our student_id (the CRM tables
- * were renumbered), so the national code is the only link; it is compared normalized (any digit script,
- * spaces/dashes ignored). Rows with an empty Ncode never match.
- */
-async function findLegacyStudents(nationalCode: unknown, conn: Queryable | null = null) {
-  const code = normalizeNationalCode(nationalCode);
-  const variants = nationalCodeVariants(code);
-  if (!code || !variants.length) return [];
-  const rows = await rowsOn<any>(
-    conn,
-    `SELECT StudentID, Ncode, firstName, lastName FROM TblStudents
-     WHERE REPLACE(REPLACE(TRIM(Ncode), ' ', ''), '-', '') IN (${variants.map(() => '?').join(', ')})`,
-    variants
-  );
-  return rows.filter((r) => normalizeNationalCode(r.Ncode) === code);
-}
-
-/** One row, or null when several rows share the code and the name does not single one out. */
-function pickLegacyRow(rows: any[], firstName: string, lastName: string): { row: any | null; ambiguous: boolean } {
-  if (rows.length <= 1) return { row: rows[0] || null, ambiguous: false };
-  const named = rows.filter((r) => sameName(r.firstName, r.lastName, firstName, lastName));
-  return named.length === 1 ? { row: named[0], ambiguous: false } : { row: null, ambiguous: true };
-}
-
-async function syncTblStudent(payload: {
-  firstName: string;
-  lastName: string;
-  nationalCode: string;
-  /** The code before an edit: the legacy row is still filed under it. */
-  previousNationalCode?: string | null;
-  phoneNumber: string;
-  address: string;
-  idCard?: string | null;
-  personalPhoto?: string | null;
-  photosOnly?: boolean;
-}) {
-  const { firstName, lastName, phoneNumber, address } = payload;
-  const idCard = payload.idCard ?? null;
-  const personalPhoto = payload.personalPhoto ?? null;
-  const code = normalizeNationalCode(payload.nationalCode);
-  if (!code) {
-    console.warn('TblStudents sync skipped: student has no national code');
-    return;
-  }
-
-  let found = pickLegacyRow(await findLegacyStudents(code), firstName, lastName);
-  let renamed = false;
-  const previous = normalizeNationalCode(payload.previousNationalCode);
-  if (!found.row && !found.ambiguous && previous && previous !== code) {
-    found = pickLegacyRow(await findLegacyStudents(previous), firstName, lastName);
-    renamed = !!found.row;
-  }
-  if (found.ambiguous) {
-    console.warn(`TblStudents sync skipped: several legacy rows share national code ${code}`);
-    return;
-  }
-
-  if (found.row) {
-    // StudentID + the stored Ncode: a row whose code changed in the meantime is never written.
-    const where = 'WHERE StudentID = ? AND Ncode = ?';
-    const key = [found.row.StudentID, found.row.Ncode];
-    if (payload.photosOnly) {
-      if (idCard) await sqlExec(`UPDATE TblStudents SET IdCartPht = ? ${where}`, [idCard, ...key]);
-      if (personalPhoto) await sqlExec(`UPDATE TblStudents SET PersonalPht = ? ${where}`, [personalPhoto, ...key]);
-      return;
-    }
-    await sqlExec(
-      `UPDATE TblStudents SET firstName = ?, lastName = ?, ${renamed ? 'Ncode = ?, ' : ''}phoneNumber = ?, Address = ?,
-              IdCartPht = COALESCE(?, IdCartPht), PersonalPht = COALESCE(?, PersonalPht)
-       ${where}`,
-      [firstName, lastName, ...(renamed ? [code] : []), phoneNumber, address, idCard, personalPhoto, ...key]
-    );
-    return;
-  }
-
-  // New legacy row: StudentID is left to the table (auto-increment). If the column has no default,
-  // fall back to the next free id; it is never derived from our student_id.
-  const values = [firstName, lastName, code, phoneNumber, address, idCard, personalPhoto];
-  try {
-    await sqlExec(
-      `INSERT INTO TblStudents (firstName, lastName, Ncode, phoneNumber, Address, IdCartPht, PersonalPht)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      values
-    );
-  } catch (err: any) {
-    if (err?.errno !== 1364 && err?.errno !== 1048) throw err; // ER_NO_DEFAULT_FOR_FIELD / ER_BAD_NULL_ERROR
-    await sqlExec(
-      `INSERT INTO TblStudents (StudentID, firstName, lastName, Ncode, phoneNumber, Address, IdCartPht, PersonalPht)
-       SELECT COALESCE(MAX(StudentID), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM TblStudents`,
-      values
-    );
-  }
-}
 
 export async function listCourses() {
   return sql(
@@ -504,12 +403,6 @@ export async function insertStudent(body: any): Promise<{ student: any; alreadyE
     try { await conn.end(); } catch {}
   }
 
-  try {
-    await syncTblStudent({ firstName, lastName, nationalCode, phoneNumber, address, idCard, personalPhoto });
-  } catch (err: any) {
-    console.warn('Sync insert to TblStudents warning:', err.message);
-  }
-
   return { student: await fetchStudentById(studentId), alreadyExists: false };
 }
 
@@ -535,7 +428,7 @@ export async function updateStudent(id: number, body: any) {
   }
   params.push(id);
 
-  // The legacy row is found by the code it is filed under, i.e. the one before this edit.
+  // The national code before this edit (used for the duplicate-code check below).
   const before = await sql<any>('SELECT national_code FROM students WHERE student_id = ? LIMIT 1', [id]);
   const conn = await createConn();
   try {
@@ -556,14 +449,6 @@ export async function updateStudent(id: number, body: any) {
     try { await conn.end(); } catch {}
   }
 
-  try {
-    await syncTblStudent({
-      firstName, lastName, nationalCode, previousNationalCode: before[0]?.national_code ?? null, phoneNumber, address,
-    });
-  } catch (err: any) {
-    console.warn('Sync update to TblStudents warning:', err.message);
-  }
-
   return fetchStudentById(id);
 }
 
@@ -572,11 +457,7 @@ export async function deleteStudent(id: number) {
   const conn = await createConn();
   try {
     await conn.beginTransaction();
-    const [found] = await conn.query(
-      'SELECT national_code, first_name, last_name FROM students WHERE student_id = ? LIMIT 1 FOR UPDATE',
-      [id]
-    );
-    const student = (found as any[])[0];
+    await conn.query('SELECT 1 FROM students WHERE student_id = ? LIMIT 1 FOR UPDATE', [id]);
     await conn.query('DELETE FROM payments WHERE student_id = ?', [id]);
     await conn.query('DELETE FROM enrollments WHERE student_id = ?', [id]);
     // A website registration that was approved into this student goes back to the pending queue.
@@ -586,21 +467,6 @@ export async function deleteStudent(id: number) {
       [id]
     );
     await conn.query('DELETE FROM students WHERE student_id = ?', [id]);
-    // The legacy row (its StudentID is not ours) is removed only when exactly one row has this
-    // national code AND this name; anything else is left alone.
-    if (student && normalizeNationalCode(student.national_code)) {
-      try {
-        const rows = (await findLegacyStudents(student.national_code, conn))
-          .filter((r) => sameName(r.firstName, r.lastName, student.first_name, student.last_name));
-        if (rows.length === 1) {
-          await conn.query('DELETE FROM TblStudents WHERE StudentID = ? AND Ncode = ? LIMIT 1', [rows[0].StudentID, rows[0].Ncode]);
-        } else if (rows.length > 1) {
-          console.warn(`TblStudents delete skipped: ${rows.length} legacy rows match student ${id}`);
-        }
-      } catch (err: any) {
-        console.warn('Sync delete from TblStudents warning:', err.message);
-      }
-    }
     await conn.commit();
   } catch (err) {
     try { await conn.rollback(); } catch {}
@@ -622,23 +488,6 @@ export async function updateStudentPhotos(id: number, idCard?: string, personal?
   }
   if (personal) {
     await sqlExec('UPDATE students SET personal_photo = ? WHERE student_id = ?', [personal, id]);
-  }
-  try {
-    const row = await fetchStudentById(id);
-    if (row) {
-      await syncTblStudent({
-        firstName: row.first_name,
-        lastName: row.last_name,
-        nationalCode: row.national_code,
-        phoneNumber: row.phone_number,
-        address: row.address || '',
-        idCard: idCard || row.id_card_photo_url,
-        personalPhoto: personal || row.personal_photo_url,
-        photosOnly: true,
-      });
-    }
-  } catch (err: any) {
-    console.warn('Sync photos to TblStudents warning:', err.message);
   }
 }
 
@@ -999,20 +848,6 @@ export async function approveWebsiteRegistration(input: ApproveRegistrationInput
     committed = true;
     result = { studentId, enrollmentId, photos: Boolean(copied.idCard || copied.personal), isNewStudent, student };
     const out = result;
-    // The legacy table is updated best-effort after the commit, like the other student writes.
-    try {
-      const row = await fetchStudentById(out.studentId);
-      if (row) {
-        await syncTblStudent({
-          firstName: row.first_name, lastName: row.last_name, nationalCode: row.national_code,
-          phoneNumber: row.phone_number, address: row.address || '',
-          idCard: row.id_card_photo_url, personalPhoto: row.personal_photo_url,
-          photosOnly: !out.isNewStudent,
-        });
-      }
-    } catch (err: any) {
-      console.warn('Sync approved registration to TblStudents warning:', err.message);
-    }
     // The approval is committed: a failing read-back must not turn it into an error for the client.
     let enrollmentOut: any = { id: enrollmentId, student_id: studentId, course_id: input.courseId, course_number: courseNumber, signup_date_jalali: input.signupDate || jalaliToday(), final_price: finalPrice, amount_paid: 0 };
     let registrationOut: any = { id: reg.registration_id, tracking_code: reg.tracking_code, status: 'approved', student_id: studentId };
@@ -1151,7 +986,7 @@ export function mobileKey(v: unknown): string {
 export type PhonePerson = { kind: 'student' | 'registration' | 'legacy' | 'lead'; id: number | string; student_id?: number; name: string };
 let phoneDirCache: { at: number; map: Map<string, PhonePerson[]> } | null = null;
 
-/** Every phone number the shared DB knows (students, registrations, legacy TblStudents, leads), keyed by mobileKey. Read-only. */
+/** Every phone number the shared DB knows (students, registrations, leads), keyed by mobileKey. Read-only. */
 export async function phoneDirectory(maxAgeMs = 60_000): Promise<Map<string, PhonePerson[]>> {
   if (phoneDirCache && Date.now() - phoneDirCache.at < maxAgeMs) return phoneDirCache.map;
   const map = new Map<string, PhonePerson[]>();
@@ -1169,11 +1004,6 @@ export async function phoneDirectory(maxAgeMs = 60_000): Promise<Map<string, Pho
   for (const r of await safe(`SELECT registration_id, full_name, phone_number, student_id, national_code FROM registrations`)) {
     const sid = r.student_id || byNc.get(String(r.national_code || '').replace(/\D/g, ''))?.student_id;
     add(r.phone_number, sid ? { kind: 'student', id: sid, student_id: sid, name: r.full_name || '' } : { kind: 'registration', id: r.registration_id, name: r.full_name || '' });
-  }
-  for (const t of await safe(`SELECT StudentID, firstName, lastName, Ncode, phoneNumber FROM TblStudents`)) {
-    const s = byNc.get(String(t.Ncode || '').replace(/\D/g, ''));
-    const name = `${t.firstName || ''} ${t.lastName || ''}`.trim();
-    add(t.phoneNumber, s ? { kind: 'student', id: s.student_id, student_id: s.student_id, name } : { kind: 'legacy', id: t.StudentID, name });
   }
   for (const l of await safe(`SELECT lead_id, first_name, last_name, phone_number FROM leads`)) {
     add(l.phone_number, { kind: 'lead', id: l.lead_id, name: `${l.first_name || ''} ${l.last_name || ''}`.trim() });

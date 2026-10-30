@@ -1212,7 +1212,7 @@ ingestSecret();
 const rubikaAccountActive = () => (readDb().settings as any)?.gateways?.rubika_account_active !== false;
 const stableThreadId = (guid: string) => 9e12 + (parseInt(crypto.createHash('sha1').update(guid).digest('hex').slice(0, 10), 16) % 1e12);
 
-/** Phone -> person in the shared MySQL DB (students, registrations, legacy TblStudents, leads); JSON store fallback. */
+/** Phone -> person in the shared MySQL DB (students, registrations, leads); JSON store fallback. */
 async function lookupPerson(k: string): Promise<chabokan.PhonePerson | null> {
   if (!k) return null;
   if (chabokan.isMysqlEnabled()) { try { return await chabokan.findPersonByPhone(k); } catch { return null; } }

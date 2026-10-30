@@ -1,7 +1,7 @@
 /**
  * Course terms («مدیریت دوره‌ها»): one row per (course, course_number).
  * Additive only: new table crm_course_terms; existing tables are only read.
- * Seed (once, when the table is empty): distinct (course_id, course_number > 0) from enrollments and TblEnroll.
+ * Seed (once, when the table is empty): distinct (course_id, course_number > 0) from enrollments.
  * course_number is a global cohort counter (same numbers start at the same time across courses), so the
  * single highest number overall is 'active' and everything else 'finished'.
  * Writes go through /api/course-terms, so the global audit middleware logs them (entity "course-terms").
@@ -40,11 +40,10 @@ export async function ensureCourseTermsSchema(): Promise<void> {
     const [{ n }] = await db.sql<{ n: number }>('SELECT COUNT(*) AS n FROM crm_course_terms');
     if (Number(n) === 0) {
       const pairs = await db.sql<{ course_id: number; course_number: number }>(`
-        SELECT DISTINCT p.course_id, p.course_number FROM (
-          SELECT course_id, course_number FROM enrollments WHERE course_number > 0
-          UNION SELECT courseRef, courseNumber FROM TblEnroll WHERE courseNumber > 0
-        ) p JOIN courses c ON c.course_id = p.course_id`).catch(async () =>
-        db.sql<any>('SELECT DISTINCT e.course_id, e.course_number FROM enrollments e JOIN courses c ON c.course_id = e.course_id WHERE e.course_number > 0'));
+        SELECT DISTINCT e.course_id, e.course_number
+        FROM enrollments e
+        JOIN courses c ON c.course_id = e.course_id
+        WHERE e.course_number > 0`);
       const maxNum = (pairs as any[]).reduce((m: number, p: any) => Math.max(m, Number(p.course_number)), 0);
       for (const p of pairs) {
         await db.sqlExec('INSERT IGNORE INTO crm_course_terms (course_id, course_number, status, notes) VALUES (?, ?, ?, ?)',
