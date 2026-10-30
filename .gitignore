@@ -1,19 +1,29 @@
+# Dependencies & builds
 node_modules/
 build/
 dist/
 coverage/
-.DS_Store
-*.log
+scripts/copilot-eval/.run-eval.cjs
+__pycache__/
+
+# Secrets (never commit)
 .env*
 !.env.example
 .crm-jwt-secret
+*.pem
+*.key
+
+# Logs, OS, backups
+*.log
+.DS_Store
 *.bak
+*.bak_*
+*.tgz
+*.sql.gz
 
-ocr-eval-data/
-__pycache__/
-scripts/copilot-eval/.run-eval.cjs
-
-# runtime data (not source)
+# Runtime / personal data (never commit: this repo is public)
 db_store.json
 db_store.json.bak_*
 StudentFiles/
+uploads/
+ocr-eval-data/
