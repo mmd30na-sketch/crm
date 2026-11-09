@@ -467,12 +467,19 @@ export async function setRegistrationReviewed(trackingCode: string, reviewed: bo
 
 export async function fetchRegistrationFileUrl(trackingCode: string, kind: 'national_card' | 'personal_photo'): Promise<string | null> {
   try {
-    const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/file/${kind}`);
+    const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/file/${kind}?t=${Date.now()}`);
     if (!res.ok) return null;
     return URL.createObjectURL(await res.blob());
   } catch {
     return null;
   }
+}
+
+export async function smartCropRegistration(trackingCode: string): Promise<{ success: boolean; personal_photo?: boolean; national_card?: boolean; errors?: string[] }> {
+  const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/smart-crop`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'برش هوشمند ناموفق بود.');
+  return data;
 }
 
 // ─────────────────────────────────────────────────────────

@@ -3224,6 +3224,57 @@ app.get('/api/registrations/:code/file/:kind', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// Smart-crop site registration files in place (personal photo 3x4 and national ID). Unwired in the UI.
+// Originals are kept once, beside the file, with a .orig suffix.
+app.post('/api/registrations/:code/smart-crop', async (req, res) => {
+  try {
+    if (!requireRegistrationStore(res)) return;
+    if (!ai) return res.status(503).json({ error: 'سرویس هوش مصنوعی (GEMINI_API_KEY) فعال نیست.' });
+    if (!fs.existsSync(smartCropScriptPath())) return res.status(500).json({ error: 'اسکریپت برش روی سرور پیدا نشد.' });
+    const code = sanitizeString(req.params.code, 50);
+    if (!code) return res.status(400).json({ error: 'کد پیگیری الزامی است.' });
+    const row = await chabokan.getWebsiteRegistrationFiles(code);
+    if (!row) return res.status(404).json({ error: 'ثبت‌نام یافت نشد.' });
+
+    const results: { personal_photo?: boolean; national_card?: boolean; errors: string[] } = { errors: [] };
+    const processDoc = async (storedPath: string | null | undefined, kind: 'personal_photo' | 'national_card') => {
+      const abs = resolveSiteFile(storedPath);
+      if (!abs) return;
+      const stamp = `${code}_${kind}_${Date.now()}`;
+      const tmpOriented = path.join(os.tmpdir(), `crm_orient_${stamp}.jpg`);
+      const tmpCropped = path.join(os.tmpdir(), `crm_crop_${stamp}.jpg`);
+      try {
+        await runSmartCropPy(['orient', abs, tmpOriented]);
+        const box = await detectCropBox(fs.readFileSync(tmpOriented), kind === 'personal_photo' ? 'personal' : 'idCard');
+        if (!box) {
+          results.errors.push(`تشخیص کادر برای ${kind === 'personal_photo' ? 'عکس پرسنلی' : 'کارت ملی'} ناموفق بود.`);
+          return;
+        }
+        const ratio = kind === 'personal_photo' ? '0.75' : 'none';
+        await runSmartCropPy(['crop', tmpOriented, tmpCropped, String(box[0]), String(box[1]), String(box[2]), String(box[3]), ratio]);
+        const origBackup = abs + '.orig';
+        if (!fs.existsSync(origBackup)) fs.copyFileSync(abs, origBackup);
+        fs.copyFileSync(tmpCropped, abs);
+        if (kind === 'personal_photo') results.personal_photo = true;
+        if (kind === 'national_card') results.national_card = true;
+      } catch (err: any) {
+        console.error(`Smart crop error on ${kind}:`, err?.message || err);
+        results.errors.push(err?.message || `خطا در برش ${kind}`);
+      } finally {
+        try { if (fs.existsSync(tmpOriented)) fs.unlinkSync(tmpOriented); } catch { /* temp */ }
+        try { if (fs.existsSync(tmpCropped)) fs.unlinkSync(tmpCropped); } catch { /* temp */ }
+      }
+    };
+
+    if (row.personal_photo_path) await processDoc(row.personal_photo_path, 'personal_photo');
+    if (row.national_card_path) await processDoc(row.national_card_path, 'national_card');
+    res.json({ success: !!(results.personal_photo || results.national_card), ...results });
+  } catch (err: any) {
+    console.error('Smart crop endpoint error:', err?.message || err);
+    res.status(500).json({ error: err?.message || 'خطای سرور در برش خودکار' });
+  }
+});
+
 // Approves a website registration: student (new or reused) + enrollment + photos + status, in one transaction.
 app.post('/api/registrations/:code/approve', async (req, res) => {
   try {
