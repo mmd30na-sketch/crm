@@ -1,5 +1,6 @@
 # SMS
 
+The sms.ir contract is written in [docs/smsir/README.md](smsir/README.md).
 sms.ir is called directly from `shared/sms.ts`. There is no `smsir-js` or `sms-typescript` dependency.
 The site process uses `/project/kermanshahcart/shared/sms.ts`; that copy must stay identical to this one.
 
