@@ -317,7 +317,7 @@ export function CopilotBar() {
       className={`flex flex-col rounded-2xl border border-slate-200 bg-white shadow-sm ${
         expanded ? 'max-h-[40vh] sm:max-h-[320px]' : 'h-12'
       }`}
-      aria-label="دستیار هوشمند"
+      aria-label="همراز"
     >
       <div className="flex h-12 shrink-0 items-center gap-2 px-3">
         <button
@@ -329,7 +329,7 @@ export function CopilotBar() {
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
             <Bot size={16} />
           </span>
-          <span className="shrink-0 text-sm font-bold text-slate-800">دستیار هوشمند</span>
+          <span className="shrink-0 text-sm font-bold text-slate-800">همراز</span>
           {preview && (
             <span className={`min-w-0 flex-1 truncate text-xs ${showErrorInBar ? 'text-rose-700' : 'text-slate-500'}`}>
               {preview}
@@ -420,13 +420,13 @@ export function CopilotPage() {
   }, [messages, isLoading]);
 
   return (
-    <section dir="rtl" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="دستیار هوشمند">
+    <section dir="rtl" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="همراز">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-100 px-4">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
           <Bot size={16} />
         </span>
         <div className="min-w-0 text-right">
-          <h2 className="text-sm font-bold text-slate-800">دستیار هوشمند</h2>
+          <h2 className="text-sm font-bold text-slate-800">همراز</h2>
           <p className="truncate text-[11px] text-slate-500">همان گفتگوی داشبورد، این‌جا کامل است.</p>
         </div>
       </div>

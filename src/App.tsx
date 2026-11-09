@@ -25,6 +25,7 @@ import {
   FileText,
   PieChart,
   Building2,
+  ChevronDown,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -121,7 +122,7 @@ const NAV_ITEMS = [
   },
   {
     id: 'copilot',
-    label: 'دستیار هوشمند',
+    label: 'همراز',
     sublabel: 'همان گفتگوی داشبورد',
     icon: Bot,
     color: 'brand',
@@ -243,6 +244,39 @@ const NAV_ITEMS = [
   },
 ];
 
+const NAV_GROUPS = [
+  { id: 'edu', label: 'آموزش' },
+  { id: 'finance', label: 'مالی' },
+  { id: 'comms', label: 'ارتباط' },
+  { id: 'sales', label: 'فروش' },
+  { id: 'system', label: 'سیستم' },
+] as const;
+
+/** copilot (همراز) is intentionally absent: it stays above the groups. */
+const NAV_GROUP_BY_ID: Record<string, (typeof NAV_GROUPS)[number]['id']> = {
+  supervisor: 'edu',
+  students: 'edu',
+  terms: 'edu',
+  register: 'edu',
+  lessons: 'edu',
+  tasks: 'edu',
+  accounting: 'finance',
+  invoices: 'finance',
+  'finance-reports': 'finance',
+  pay: 'finance',
+  'online-payments': 'finance',
+  'debt-sms': 'finance',
+  messenger: 'comms',
+  email: 'comms',
+  campaigns: 'comms',
+  leads: 'sales',
+  'lead-pipeline': 'sales',
+  'site-requests': 'sales',
+  automation: 'system',
+  branches: 'system',
+  settings: 'system',
+};
+
 const ROLE_LABEL: Record<StaffRole, string> = {
   admin: 'مدیر سیستم',
   cashier: 'صندوقدار',
@@ -303,6 +337,7 @@ function AppShell() {
   const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>('supervisor');
+  const [openGroups, setOpenGroups] = useState<string[]>(['edu']);
   const [taskCounts, setTaskCounts] = useState<{ open: number; overdue: number }>({ open: 0, overdue: 0 });
   const refreshTaskCounts = () => { taskSummary().then(setTaskCounts).catch(() => undefined); };
   useEffect(() => {
@@ -440,6 +475,61 @@ function AppShell() {
 
   const activeNavItem = visibleNav.find(n => n.id === activeTab) || NAV_ITEMS.find(n => n.id === activeTab);
 
+  useEffect(() => {
+    const group = NAV_GROUP_BY_ID[activeTab];
+    setOpenGroups(group ? [group] : []);
+  }, [activeTab]);
+
+  const toggleGroup = (id: string) => {
+    setOpenGroups((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const renderNavItem = (item: (typeof NAV_ITEMS)[number]) => {
+    const isActive = activeTab === item.id;
+    const Icon = item.icon;
+    return (
+      <button
+        key={item.id}
+        id={`tab-${item.id}`}
+        onClick={() => handleActiveTabChange(item.id)}
+        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 text-right group ${
+          isActive
+            ? 'text-white shadow-lg'
+            : 'text-slate-400 hover:text-white hover:bg-white/6'
+        }`}
+        style={isActive ? {
+          background: 'linear-gradient(to left, var(--brand-primary-dark), var(--brand-primary))',
+          boxShadow: '0 10px 15px -3px rgba(var(--brand-primary-rgb), 0.45)',
+        } : undefined}
+      >
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all ${
+          isActive ? 'bg-white/20' : 'bg-white/5 group-hover:bg-white/10'
+        }`}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="flex-1 text-right min-w-0">
+          <div className={`text-sm font-semibold leading-tight truncate ${isActive ? 'text-white' : ''}`}>
+            {item.label}
+          </div>
+          <div className={`text-[10px] leading-tight truncate transition-all ${
+            isActive ? 'text-white/70' : 'text-slate-400 group-hover:text-slate-300'
+          }`}>
+            {item.sublabel}
+          </div>
+        </div>
+        {item.id === 'tasks' && taskCounts.open > 0 && (
+          <span title={taskCounts.overdue ? `${taskCounts.overdue} کار عقب‌افتاده` : 'کارهای باز'}
+            className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${taskCounts.overdue ? 'bg-rose-500 text-white animate-pulse' : 'bg-white/15 text-white'}`}>
+            {(taskCounts.overdue || taskCounts.open).toLocaleString('fa-IR')}
+          </span>
+        )}
+        {isActive && (
+          <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)] shrink-0" />
+        )}
+      </button>
+    );
+  };
+
   const jalaliDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' });
 
   if (authChecking) {
@@ -490,52 +580,25 @@ function AppShell() {
         <div className="mx-4 h-px bg-white/5" />
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          <p className="ham-taraz-section-title px-3 mb-2">منوی اصلی</p>
-
-          {visibleNav.map((item) => {
-            const isActive = activeTab === item.id;
-            const Icon = item.icon;
+        <nav className="flex-1 px-3 py-3 overflow-y-auto">
+          {visibleNav.filter((item) => !NAV_GROUP_BY_ID[item.id]).map((item) => renderNavItem(item))}
+          {NAV_GROUPS.map((group) => {
+            const items = visibleNav.filter((item) => NAV_GROUP_BY_ID[item.id] === group.id);
+            if (!items.length) return null;
+            const open = openGroups.includes(group.id);
             return (
-              <button
-                key={item.id}
-                id={`tab-${item.id}`}
-                onClick={() => handleActiveTabChange(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 text-right group ${
-                  isActive
-                    ? 'text-white shadow-lg'
-                    : 'text-slate-400 hover:text-white hover:bg-white/6'
-                }`}
-                style={isActive ? {
-                  background: 'linear-gradient(to left, var(--brand-primary-dark), var(--brand-primary))',
-                  boxShadow: '0 10px 15px -3px rgba(var(--brand-primary-rgb), 0.45)',
-                } : undefined}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all ${
-                  isActive ? 'bg-white/20' : `bg-white/5 group-hover:bg-white/10`
-                }`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-                <div className="flex-1 text-right min-w-0">
-                  <div className={`text-sm font-semibold leading-tight truncate ${isActive ? 'text-white' : ''}`}>
-                    {item.label}
-                  </div>
-                  <div className={`text-[10px] leading-tight truncate transition-all ${
-                    isActive ? 'text-white/70' : 'text-slate-400 group-hover:text-slate-300'
-                  }`}>
-                    {item.sublabel}
-                  </div>
-                </div>
-                {item.id === 'tasks' && taskCounts.open > 0 && (
-                  <span title={taskCounts.overdue ? `${taskCounts.overdue} کار عقب‌افتاده` : 'کارهای باز'}
-                    className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${taskCounts.overdue ? 'bg-rose-500 text-white animate-pulse' : 'bg-white/15 text-white'}`}>
-                    {(taskCounts.overdue || taskCounts.open).toLocaleString('fa-IR')}
-                  </span>
-                )}
-                {isActive && (
-                  <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)] shrink-0" />
-                )}
-              </button>
+              <div key={group.id} className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.id)}
+                  aria-expanded={open}
+                  className="ham-taraz-section-title w-full flex items-center justify-between px-3 py-1.5 text-right hover:text-slate-200"
+                >
+                  <span>{group.label}</span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? '' : '-rotate-90'}`} />
+                </button>
+                {open && <div className="space-y-0.5">{items.map((item) => renderNavItem(item))}</div>}
+              </div>
             );
           })}
         </nav>
