@@ -44,12 +44,9 @@ import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
 import SiteRequestsHistory from './components/SiteRequestsHistory';
 import InstructorPayPanel from './components/InstructorPayPanel';
-<<<<<<< HEAD
 import LessonCalendarPanel from './components/LessonCalendarPanel';
-=======
 import InvoicesPanel from './components/InvoicesPanel';
 import FinanceReportsPanel from './components/FinanceReportsPanel';
->>>>>>> cb43f31 (Official invoices, finance reports, refunds and accounting export)
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
 import DebtSmsPanel from './components/DebtSmsPanel';
 import AutomationRulesPanel from './components/AutomationRulesPanel';
