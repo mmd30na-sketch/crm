@@ -68,7 +68,6 @@ const NAV_ITEMS = [
   {
     id: 'supervisor',
     label: 'داشبورد نظارت',
-    sublabel: 'کنترل و نمای کلی',
     icon: LayoutDashboard,
     color: 'brand',
     roles: ['admin'] as StaffRole[],
@@ -76,7 +75,6 @@ const NAV_ITEMS = [
   {
     id: 'students',
     label: 'هنرجویان',
-    sublabel: 'مدیریت هنرجویان',
     icon: Users,
     color: 'teal',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
@@ -84,7 +82,6 @@ const NAV_ITEMS = [
   {
     id: 'terms',
     label: 'مدیریت دوره‌ها',
-    sublabel: 'شماره دوره، ظرفیت و وضعیت',
     icon: CalendarRange,
     color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -92,7 +89,6 @@ const NAV_ITEMS = [
   {
     id: 'register',
     label: 'ثبت‌نام هوشمند',
-    sublabel: 'OCR کارت ملی',
     icon: UserPlus,
     color: 'purple',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -100,7 +96,6 @@ const NAV_ITEMS = [
   {
     id: 'accounting',
     label: 'حسابداری مالی',
-    sublabel: 'درآمد و مخارج',
     icon: BarChart3,
     color: 'amber',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -108,7 +103,6 @@ const NAV_ITEMS = [
   {
     id: 'invoices',
     label: 'فاکتورها',
-    sublabel: 'فاکتور رسمی و چاپ',
     icon: FileText,
     color: 'amber',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -116,7 +110,6 @@ const NAV_ITEMS = [
   {
     id: 'finance-reports',
     label: 'گزارش مالی',
-    sublabel: 'درآمد، مطالبات، اقساط، خروجی حسابداری',
     icon: PieChart,
     color: 'amber',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -124,7 +117,6 @@ const NAV_ITEMS = [
   {
     id: 'copilot',
     label: 'همراز',
-    sublabel: 'همان گفتگوی داشبورد',
     icon: Bot,
     color: 'brand',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -132,7 +124,6 @@ const NAV_ITEMS = [
   {
     id: 'lessons',
     label: 'تقویم جلسات عملی',
-    sublabel: 'رزرو مربی و خودرو',
     icon: CalendarClock,
     color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -140,7 +131,6 @@ const NAV_ITEMS = [
   {
     id: 'pay',
     label: 'حق‌التدریس',
-    sublabel: 'مربیان و تسویه ماهانه',
     icon: Wallet,
     color: 'amber',
     roles: ['admin'] as StaffRole[],
@@ -148,7 +138,6 @@ const NAV_ITEMS = [
   {
     id: 'online-payments',
     label: 'پرداخت‌های آنلاین',
-    sublabel: 'تأیید اقساط و رسید',
     icon: Wallet,
     color: 'emerald',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -156,7 +145,6 @@ const NAV_ITEMS = [
   {
     id: 'debt-sms',
     label: 'ارسال به بدهکاران',
-    sublabel: 'پیامک بدهی و لینک پرداخت',
     icon: BellRing,
     color: 'rose',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -164,7 +152,6 @@ const NAV_ITEMS = [
   {
     id: 'messenger',
     label: 'پیام‌رسان',
-    sublabel: 'مرکز ارتباطی',
     icon: MessageSquare,
     color: 'rose',
     // The server allows /api/messenger for admin and cashier only.
@@ -173,7 +160,6 @@ const NAV_ITEMS = [
   {
     id: 'leads',
     label: 'سرنخ‌ها',
-    sublabel: 'تماس‌گیرندگان و پیگیری',
     icon: Contact,
     color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -181,7 +167,6 @@ const NAV_ITEMS = [
   {
     id: 'lead-pipeline',
     label: 'پایپ‌لاین فروش',
-    sublabel: 'کانبان سرنخ‌ها و نرخ تبدیل',
     icon: KanbanSquare,
     color: 'purple',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -189,7 +174,6 @@ const NAV_ITEMS = [
   {
     id: 'email',
     label: 'ایمیل',
-    sublabel: 'رسید، گواهی، یادآوری و کمپین',
     icon: AtSign,
     color: 'rose',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -197,7 +181,6 @@ const NAV_ITEMS = [
   {
     id: 'site-requests',
     label: 'تاریخچه درخواست‌های سایت',
-    sublabel: 'همه ثبت‌نام‌های آنلاین',
     icon: History,
     color: 'purple',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -205,7 +188,6 @@ const NAV_ITEMS = [
   {
     id: 'tasks',
     label: 'کارها',
-    sublabel: 'ارجاع و مهلت',
     icon: ClipboardList,
     color: 'brand',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
@@ -213,7 +195,6 @@ const NAV_ITEMS = [
   {
     id: 'automation',
     label: 'اتوماسیون',
-    sublabel: 'قاعده، شرط، اقدام',
     icon: Workflow,
     color: 'purple',
     roles: ['admin'] as StaffRole[],
@@ -221,7 +202,6 @@ const NAV_ITEMS = [
   {
     id: 'campaigns',
     label: 'پیام انبوه',
-    sublabel: 'کمپین روبیکا',
     icon: Megaphone,
     color: 'rose',
     roles: ['admin'] as StaffRole[],
@@ -230,7 +210,6 @@ const NAV_ITEMS = [
     // Shown only when CRM_MULTI_BRANCH=1 on the server (see branchesEnabled below).
     id: 'branches',
     label: 'شعبه‌ها',
-    sublabel: 'شعب، کاربران و گزارش',
     icon: Building2,
     color: 'slate',
     roles: ['admin'] as StaffRole[],
@@ -238,7 +217,6 @@ const NAV_ITEMS = [
   {
     id: 'settings',
     label: 'تنظیمات آموزشگاه',
-    sublabel: 'پیکربندی سیستم',
     icon: SettingsIcon,
     color: 'slate',
     roles: ['admin'] as StaffRole[],
@@ -508,15 +486,8 @@ function AppShell() {
         }`}>
           <Icon className="h-4 w-4" />
         </div>
-        <div className="flex-1 text-right min-w-0">
-          <div className={`text-sm font-semibold leading-tight truncate ${isActive ? 'text-white' : ''}`}>
-            {item.label}
-          </div>
-          <div className={`text-[10px] leading-tight truncate transition-all ${
-            isActive ? 'text-white/70' : 'text-slate-400 group-hover:text-slate-300'
-          }`}>
-            {item.sublabel}
-          </div>
+        <div className={`flex-1 text-right min-w-0 text-sm font-semibold leading-tight truncate ${isActive ? 'text-white' : ''}`}>
+          {item.label}
         </div>
         {item.id === 'tasks' && taskCounts.open > 0 && (
           <span title={taskCounts.overdue ? `${taskCounts.overdue} کار عقب‌افتاده` : 'کارهای باز'}
