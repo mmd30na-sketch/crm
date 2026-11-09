@@ -72,7 +72,8 @@ Names only — see `.env.example`. Never paste values into chat, tickets or git.
 | `CRM_DEBT_SMS_ENABLED` | hard gate for debt SMS (`1` = on) | **empty/0** until tested |
 | `CRM_DEBT_SMS_TEST_MOBILE` | when set, the ONLY number that can receive debt SMS | the admin's own mobile |
 | `CRM_PAYMENT_LINK_BASE` | base of the SMS payment link (code appended) | `https://kermanshahcart.ir/p/` |
-| `SMS_API_KEY`, `SMS_SENDER_LINE` | sms.ir (already present) | — |
+| `SMS_API_KEY` | sms.ir key. Env only; verify and bulk both use it | — |
+| `SMS_SENDER_LINE` | bulk line, used only when `sms.config.lineNumber` is empty | — |
 
 - [ ] `PUBLIC_BASE_URL` callback host is reachable from Zarinpal (`<base>/api/trainee-payments/zarinpal/callback`)
 - [ ] `CRM_PAYMENT_LINK_BASE` host actually serves `/p/<code>` (the site must proxy `/p/` to the CRM, or point it at the CRM host)

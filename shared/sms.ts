@@ -1,9 +1,15 @@
 /**
- * Shared SMS helper (site + CRM). Canonical stores (MySQL nodejs430_carla):
- *   app_settings['sms.config'] = { provider, lineNumber, apiKeyRef: 'env:SMS_API_KEY', autoRegister, autoExam }
- *   sms_templates (key, channel_kind verify|bulk, provider_template_id, param_names, body_fa, enabled, ...)
- * Placeholders in body_fa use one style: {name} {family} {course} {debt} {date} {time} {amount} {tracking_code}.
- * The API key is never stored in DB/JSON; only the env var name is.
+ * Shared SMS helper (site + CRM). Keep this file identical to the site copy
+ * `/project/kermanshahcart/shared/sms.ts`. No sms.ir SDK; these calls match the panel docs.
+ *
+ * Config, and nothing else:
+ *   SMS_API_KEY                 env only. Header `x-api-key`. Never stored in DB or JSON.
+ *   app_settings['sms.config']  { provider:'smsir', lineNumber, apiKeyRef:'env:SMS_API_KEY', autoRegister, autoExam }
+ *   SMS_SENDER_LINE             bulk-send fallback, used only when `lineNumber` is empty. Verify does not use a line.
+ *   sms_templates               verify rows need provider_template_id and status 2 (approved) before they can send.
+ *
+ * Calls: POST /v1/send/verify, POST /v1/send/bulk, GET /v1/credit, GET /v1/line, GET /v1/templates.
+ * A verify parameter value is at most 25 characters. Template review status: 1 pending, 2 approved, 3 rejected.
  */
 export type SqlFn = (query: string, params?: any[]) => Promise<any[]>;
 export type SmsSendResult = { ok: boolean; status: 'sent' | 'not_configured' | 'failed' | 'disabled'; detail?: string };
@@ -26,6 +32,13 @@ export const render = (body: string, vars: Record<string, unknown> = {}) =>
     return k === 'tracking_code' ? v.replace(/^KRM-/i, '') : v; // SMS shows the bare tracking number
   });
 
+const SMSIR_API = 'https://api.sms.ir';
+/** Delivery states from the sms.ir status table. 8 is the documented "unknown". */
+export const SMSIR_DELIVERY_FA: Record<number, string> = {
+  1: 'رسیده', 2: 'نرسیده به گوشی', 3: 'رسیده به مخابرات', 4: 'نرسیده به مخابرات',
+  5: 'رسیده به اپراتور', 6: 'ناموفق', 7: 'لیست سیاه', 8: 'نامشخص',
+};
+
 const fetchJson = async (url: string, init: any = {}) => {
   const r = await fetch(url, { ...init, signal: AbortSignal.timeout(15000) });
   const txt = await r.text();
@@ -34,24 +47,49 @@ const fetchJson = async (url: string, init: any = {}) => {
 };
 const scrubKey = (s: any, key: string) => { const t = typeof s === 'string' ? s : JSON.stringify(s); return (key ? t.split(key).join('***') : t).slice(0, 300); };
 
-/** sms.ir low-level calls (shared by both apps). */
+/** Bulk line: an explicit line, then sms.config.lineNumber, then SMS_SENDER_LINE. */
+export function resolveSenderLine(configured?: string | null, override?: string | null): string {
+  return String(override ?? '').trim() || String(configured ?? '').trim() || String(process.env.SMS_SENDER_LINE || '').trim();
+}
+
+async function smsirCall(o: { apiKey: string; method?: string; path: string; body?: unknown }) {
+  const headers: Record<string, string> = { 'x-api-key': o.apiKey, Accept: 'application/json' };
+  const init: any = { method: o.method || 'GET', headers };
+  if (o.body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(o.body); }
+  return fetchJson(`${SMSIR_API}${o.path}`, init);
+}
+
+/** Read-only sms.ir GET. `path` includes the query string. Does not log the key. */
+export async function smsirRead(apiKey: string, path: string): Promise<{ ok: boolean; data?: any; error?: string }> {
+  if (!apiKey) return { ok: false, error: 'درگاه پیامک تنظیم نشده است.' };
+  try {
+    const { status, body } = await smsirCall({ apiKey, path });
+    if (body && body.status === 1) return { ok: true, data: body.data };
+    if (body && body.status === 20) return { ok: false, error: 'محدودیت تعداد درخواست پنل پیامک؛ چند ثانیه دیگر دوباره تلاش کنید.' };
+    return { ok: false, error: scrubKey(body && body.message || `HTTP ${status}`, apiKey) };
+  } catch (e: any) {
+    return { ok: false, error: e?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : 'خطا در اتصال به سرویس پیامک' };
+  }
+}
+
+/** sms.ir sends. Parameter names are camelCase, as in the panel samples. */
 export async function smsirVerify(o: { apiKey: string; mobile: string; templateId: number; parameters: { name: string; value: string }[] }): Promise<{ ok: boolean; error?: string }> {
-  const { body } = await fetchJson('https://api.sms.ir/v1/send/verify', {
-    method: 'POST', headers: { 'x-api-key': o.apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ mobile: o.mobile, templateId: o.templateId, parameters: o.parameters }),
+  const { body } = await smsirCall({
+    apiKey: o.apiKey, method: 'POST', path: '/v1/send/verify',
+    body: { mobile: o.mobile, templateId: o.templateId, parameters: o.parameters },
   });
   return body && body.status === 1 ? { ok: true } : { ok: false, error: scrubKey(body && body.message || body, o.apiKey) };
 }
 export async function smsirBulk(o: { apiKey: string; lineNumber: string; mobile: string; text: string }): Promise<{ ok: boolean; error?: string }> {
-  const { status, body } = await fetchJson('https://api.sms.ir/v1/send/bulk', {
-    method: 'POST', headers: { 'x-api-key': o.apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ lineNumber: Number(o.lineNumber), messageText: o.text, mobiles: [o.mobile] }),
+  const { status, body } = await smsirCall({
+    apiKey: o.apiKey, method: 'POST', path: '/v1/send/bulk',
+    body: { lineNumber: Number(o.lineNumber), messageText: o.text, mobiles: [o.mobile] },
   });
   return body && body.status === 1 ? { ok: true } : { ok: false, error: scrubKey(body && body.message || `HTTP ${status}`, o.apiKey) };
 }
 export async function smsirCredit(apiKey: string): Promise<{ ok: boolean; credit?: number; error?: string }> {
-  const { body } = await fetchJson('https://api.sms.ir/v1/credit', { headers: { 'x-api-key': apiKey, Accept: 'application/json' } });
-  return body && body.status === 1 ? { ok: true, credit: body.data } : { ok: false, error: scrubKey(body && body.message || body, apiKey) };
+  const r = await smsirRead(apiKey, '/v1/credit');
+  return r.ok ? { ok: true, credit: r.data } : { ok: false, error: r.error };
 }
 
 /** Lesson reminders still ask for `class_time`; the sms.ir row is stored as `class_schedule` (template 926976). */
@@ -86,9 +124,7 @@ export function matchSmsTemplate(rows: any[], key: string, templateId?: string |
 export async function smsirListTemplates(apiKey: string): Promise<any[]> {
   const out: any[] = [];
   for (let page = 1; page <= 10; page++) {
-    const { status, body } = await fetchJson(`https://api.sms.ir/v1/templates?PageNumber=${page}&PageSize=100`, {
-      headers: { 'x-api-key': apiKey, Accept: 'application/json' },
-    });
+    const { status, body } = await smsirCall({ apiKey, path: `/v1/templates?pageNumber=${page}&pageSize=100` });
     const data = body && Array.isArray(body.data) ? body.data : null;
     if (status !== 200 || !body || body.status !== 1 || !data) {
       if (page === 1) throw new Error('sms.ir template list failed');
@@ -183,9 +219,9 @@ export function createSms(sql: SqlFn, opts: { cacheMs?: number } = {}) {
   /** Free-text SMS through the configured line (or `opts.lineNumber`, e.g. a branch's own line). */
   async function sendText(mobile: string, text: string, opts: { lineNumber?: string | null } = {}): Promise<SmsSendResult> {
     const base = await getConfig(); const apiKey = resolveApiKey(base.apiKeyRef);
-    const c = opts.lineNumber ? { ...base, lineNumber: String(opts.lineNumber) } : base;
-    if (c.provider !== 'smsir' || !apiKey || !c.lineNumber) return { ok: false, status: 'not_configured', detail: 'درگاه پیامک تنظیم نشده است (SMS_API_KEY در env و شماره خط در app_settings).' };
-    try { const r = await smsirBulk({ apiKey, lineNumber: c.lineNumber, mobile, text }); return r.ok ? { ok: true, status: 'sent' } : { ok: false, status: 'failed', detail: r.error }; }
+    const lineNumber = resolveSenderLine(base.lineNumber, opts.lineNumber);
+    if (base.provider !== 'smsir' || !apiKey || !lineNumber) return { ok: false, status: 'not_configured', detail: 'درگاه پیامک تنظیم نشده است (SMS_API_KEY در env و شماره خط در تنظیمات یا SMS_SENDER_LINE).' };
+    try { const r = await smsirBulk({ apiKey, lineNumber, mobile, text }); return r.ok ? { ok: true, status: 'sent' } : { ok: false, status: 'failed', detail: r.error }; }
     catch (e: any) { return { ok: false, status: 'failed', detail: e?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : (e?.message || 'خطا در اتصال به سرویس پیامک') }; }
   }
   /** Builds the sms.ir verify parameters for a row ({TEMPLATE_PARAM: ourVar}); empty values are reported, never sent. */

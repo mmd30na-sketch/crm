@@ -12,7 +12,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
-import { createSms, toBracket, fromBracket, resolveApiKey } from './shared/sms';
+import { createSms, toBracket, fromBracket, resolveApiKey, resolveSenderLine, smsirRead, SMSIR_DELIVERY_FA } from './shared/sms';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
@@ -1771,7 +1771,7 @@ function getGateways(): Gateways {
   return {
     sms_provider: smsCfg.provider || 'smsir',
     sms_api_key: process.env.SMS_API_KEY || '',
-    sms_sender_line: smsCfg.lineNumber || process.env.SMS_SENDER_LINE || '',
+    sms_sender_line: resolveSenderLine(smsCfg.lineNumber),
     sms_auto_register: smsCfg.autoRegister === true, // default OFF
     sms_auto_exam: smsCfg.autoExam === true, // default OFF
     rubika_bot_token: g.rubika_bot_token || RUBIKA_BOT_TOKEN,
@@ -3954,22 +3954,13 @@ const COPILOT_SMS_TOOLS = [
     text: { type: 'string', description: 'متن آزاد پیامک (اگر template_key داده نشده)' } }, required: ['recipients'] } } },
 ];
 
-const SMSIR_DELIVERY_FA: Record<number, string> = { 1: 'رسیده به گوشی', 2: 'نرسیده به گوشی', 3: 'پردازش در مخابرات', 4: 'نرسیده به مخابرات', 5: 'رسیده به اپراتور', 6: 'ناموفق', 7: 'لیست سیاه' };
 let smsirLastCall = 0;
 /** Read-only GET against sms.ir (key from env, never returned). Spaces calls ~2s apart. */
 async function smsirGet(path: string): Promise<{ ok: boolean; data?: any; error?: string }> {
-  const apiKey = process.env.SMS_API_KEY || '';
-  if (!apiKey) return { ok: false, error: 'درگاه پیامک تنظیم نشده است.' };
   const wait = smsirLastCall + 2000 - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   smsirLastCall = Date.now();
-  try {
-    const r = await fetch(`https://api.sms.ir${path}`, { headers: { 'x-api-key': apiKey, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-    const t = await r.text(); let b: any = null; try { b = JSON.parse(t); } catch { /* non-JSON */ }
-    if (b && b.status === 1) return { ok: true, data: b.data };
-    if (b && b.status === 20) return { ok: false, error: 'محدودیت تعداد درخواست پنل پیامک؛ چند ثانیه دیگر دوباره تلاش کنید.' };
-    return { ok: false, error: String((b && b.message) || `HTTP ${r.status}`).split(apiKey).join('***').slice(0, 200) };
-  } catch (e: any) { return { ok: false, error: e?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : 'خطا در اتصال به سرویس پیامک' }; }
+  return smsirRead(process.env.SMS_API_KEY || '', path);
 }
 /** OTP codes must never reach the model: mask digits in verification-code texts. */
 const redactSmsText = (t: unknown) => { const s = String(t ?? ''); return /کد\s*(تایید|تأیید|ورود)|code|رمز/i.test(s) ? s.replace(/\d{3,8}/g, '****') : s; };
@@ -4074,7 +4065,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
     const c = await smsirGet('/v1/credit');
     const l = await smsirGet('/v1/line');
-    let cfgLine = ''; try { cfgLine = String((await sharedSms.getConfig()).lineNumber || ''); } catch { /* ignore */ }
+    let cfgLine = ''; try { cfgLine = resolveSenderLine((await sharedSms.getConfig()).lineNumber); } catch { /* ignore */ }
     if (!c.ok) return { error: c.error };
     return { credit: c.data, credit_unit: 'اعتبار پنل sms.ir', lines: l.ok ? l.data : [], configured_line: cfgLine || null };
   }

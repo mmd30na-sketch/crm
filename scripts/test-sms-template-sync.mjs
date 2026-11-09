@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { matchSmsTemplate, smsirTemplateFields } from '../shared/sms.ts';
+import { matchSmsTemplate, resolveSenderLine, smsirTemplateFields } from '../shared/sms.ts';
 
 const row = smsirTemplateFields({
   id: 926976,
@@ -22,5 +22,13 @@ assert.equal(matchSmsTemplate(rows, 'class_time')?.key, 'class_schedule');
 assert.equal(matchSmsTemplate(rows, 'missing', 472328)?.key, 'debt_balance');
 assert.equal(matchSmsTemplate(rows, 'debt_balance')?.enabled, 0);
 assert.equal(matchSmsTemplate(rows, 'nope', ''), null);
+
+delete process.env.SMS_SENDER_LINE;
+assert.equal(resolveSenderLine(''), '');
+assert.equal(resolveSenderLine('30001111'), '30001111');
+process.env.SMS_SENDER_LINE = '30002222';
+assert.equal(resolveSenderLine(''), '30002222');
+assert.equal(resolveSenderLine('30001111', '30003333'), '30003333');
+delete process.env.SMS_SENDER_LINE;
 
 console.log('sms template sync: ok');
