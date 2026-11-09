@@ -1,0 +1,143 @@
+{
+  "target": "https://kermanshahcart.ir/",
+  "href": "https://kermanshahcart.ir/",
+  "title": "کارت هوشمند رانندگان کرمانشاه | ثبت‌نام آنلاین و شهریه دوره‌ها",
+  "ready": "complete",
+  "page": {
+    "root": true,
+    "seo": false,
+    "h1": "آموزشگاه کارت هوشمند رانندگان کرمانشاه",
+    "text": "حساب کاربری\nآموزشگاه کارت هوشمند کرمانشاه\nتماس با ما\nثبت نام آنلاین\nخدمات کارت هوشمند\nسوالات\nآدرس دفتر\nآموزشگاه کارت هوشمند رانندگان کرمانشاه\n\nثبت‌نام دوره‌های بدو خدمت باری و مسافری، حمل مواد خطرناک، مسئول فنی و مدیرعامل. آنلاین ثبت‌نام کنید، پرونده‌تان را با کد پیگیری دنبال کنید و با بانک سوالات برای آزمون آماده شوید.\n\nثبت‌نام آنلاین دوره\nتماس: ۰۹۱۸۳۳۰۷۱۵۳\nکارت هوشمند رانندگان چیست؟\n\nکارت هوشمند رانندگان، در واقع شناسنامه هویتی و مجوز رسمی فعالیت حرفه‌ای رانندگان ناوگان حمل‌ونقل جاده‌ای است که تحت نظارت مستقیم سازمان راهداری صادر می‌شود. این کارت تمامی سوابق شغلی، کارکرد جاده‌ای، سلامت و دوره‌های آموزشی را به صورت یکپارچه ثبت می‌کند.\n\nکاربردهای حیاتی در ناوگان جاده‌ای:\nصدور بارنامه و صورت‌وضعیت: امکان فعالیت قانونی بدون ثبت اطلاعات این کارت در سامانه‌های راهداری غیرممکن است.\nتخصیص سهمیه سوخت: شارژ سهمیه گازوئیل یارانه‌ای مستقیماً به پیمایش ثبت‌شده در کارت بستگی دارد.\nبیمه و خدمات رفاهی: برخورداری از یارانه بیمه تامین اجتماعی ویژه رانندگان و حواله لاستیک دولتی.\nمرکز تخصصی خدمات در کرمانشاه\n\nرانندگان محترم جهت تشکیل پرونده، آموزش و تمدید کارت خود می‌توانند به آدرس کامل و دقیق کرمانشاه، جاده بیستون، پایانه باربری کرمانشاه، غرفه آموزشگاه رانندگی کرمانشاه مراجعه فرمایند.\n⚠️ توجه بسیار مهم: قبل از مراجعه حضوری، جهت هماهنگی حتماً تماس بگیرید.\n\nانتخاب رشته آموزشی و ثبت نام دوره\n\nبرای کسب اطلاعات بیشتر و شروع ثبت‌نام اینترنتی، لطفاً رشته مدنظر خود را انتخاب کنید.\n\nبدو خدمت\nحمل و نقل باری\n\nناوگان باری، کامیون و تریلر جاده‌ای\n\nکسب اطلاعات\nبدو خدمت\nحمل و نقل مسافری\n\nاتوبوس، مینی‌بوس و ",
+    "scripts": [
+      "https://scripts.clarity.ms/0.8.72-beta/clarity.js",
+      "https://www.clarity.ms/tag/z17xbsoj1e",
+      "https://kermanshahcart.ir/u/script.js",
+      "https://kermanshahcart.ir/assets/index-B7Nb07zE.js"
+    ]
+  },
+  "consoleLogs": [],
+  "exceptions": [],
+  "failed": [
+    {
+      "url": "https://kermanshahcart.ir/api/track/view",
+      "error": "net::ERR_ABORTED",
+      "canceled": true,
+      "type": "Fetch"
+    }
+  ],
+  "requests": [
+    {
+      "url": "https://kermanshahcart.ir/",
+      "status": 200,
+      "mime": "text/html",
+      "method": "GET",
+      "type": "Document"
+    },
+    {
+      "url": "https://kermanshahcart.ir/fonts/vazirmatn-arabic-wght-normal.woff2",
+      "status": 200,
+      "mime": "font/woff2",
+      "method": "GET",
+      "type": "Font"
+    },
+    {
+      "url": "https://kermanshahcart.ir/assets/banner-1200-De1V3Z0V.avif",
+      "status": 200,
+      "mime": "application/octet-stream",
+      "method": "GET",
+      "type": "Image"
+    },
+    {
+      "url": "https://kermanshahcart.ir/u/script.js",
+      "status": 200,
+      "mime": "application/javascript",
+      "method": "GET",
+      "type": "Script"
+    },
+    {
+      "url": "https://www.clarity.ms/tag/z17xbsoj1e",
+      "status": 200,
+      "mime": "application/x-javascript",
+      "method": "GET",
+      "type": "Script"
+    },
+    {
+      "url": "https://scripts.clarity.ms/0.8.72-beta/clarity.js",
+      "status": 200,
+      "mime": "application/javascript",
+      "method": "GET",
+      "type": "Script"
+    },
+    {
+      "url": "https://kermanshahcart.ir/assets/index-zRBPd_Tk.css",
+      "status": 200,
+      "mime": "text/css",
+      "method": "GET",
+      "type": "Stylesheet"
+    },
+    {
+      "url": "https://kermanshahcart.ir/fonts/vazirmatn-latin-wght-normal.woff2",
+      "status": 200,
+      "mime": "font/woff2",
+      "method": "GET",
+      "type": "Font"
+    },
+    {
+      "url": "https://u.clarity.ms/collect",
+      "status": 204,
+      "mime": "text/plain",
+      "method": "POST",
+      "type": "XHR"
+    },
+    {
+      "url": "https://kermanshahcart.ir/assets/index-B7Nb07zE.js",
+      "status": 200,
+      "mime": "application/javascript",
+      "method": "GET",
+      "type": "Script"
+    },
+    {
+      "url": "https://kermanshahcart.ir/fonts/jetbrains-mono-latin-wght-normal.woff2",
+      "status": 200,
+      "mime": "font/woff2",
+      "method": "GET",
+      "type": "Font"
+    },
+    {
+      "url": "https://kermanshahcart.ir/assets/driver-1024-CwIp0VJk.avif",
+      "status": 200,
+      "mime": "application/octet-stream",
+      "method": "GET",
+      "type": "Image"
+    },
+    {
+      "url": "https://kermanshahcart.ir/api/track/view",
+      "status": 204,
+      "mime": "",
+      "method": "POST",
+      "type": "Fetch"
+    },
+    {
+      "url": "https://kermanshahcart.ir/api/track-visit",
+      "status": 200,
+      "mime": "application/json",
+      "method": "POST",
+      "type": "Fetch"
+    },
+    {
+      "url": "https://kermanshahcart.ir/u/api/send",
+      "status": 200,
+      "mime": "application/json",
+      "method": "POST",
+      "type": "Fetch"
+    },
+    {
+      "url": "https://u.clarity.ms/collect",
+      "status": 204,
+      "mime": "text/plain",
+      "method": "POST",
+      "type": "XHR"
+    }
+  ],
+  "badStatus": []
+}
