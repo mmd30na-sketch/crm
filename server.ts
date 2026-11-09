@@ -44,7 +44,7 @@ import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminder
 import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
 import { createAutomationSources, registrationContext } from './automationSources';
 import type { AutomationEvent, EventContext } from './automationConditions';
-import { registerTraineePortal } from './traineePortal';
+import { registerTraineePortal, ensurePortalEntrySchema, mintPortalEntry } from './traineePortal';
 import { registerBranches, ensureBranchSchema, branchMiddleware, startBranchReconcileJob, branchSmsLine } from './branches';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
@@ -2495,7 +2495,18 @@ async function notifyRegistration(student: any, course: any, trackingCode?: stri
     const academy = academyDisplayName();
     // Verify template 743658 (NAME, COURSE, TRACK). Without a tracking code (manual CRM enrollment) TRACK is empty,
     // so the shared helper falls back to fallback_body_fa (the previous free-text welcome).
-    const r = await sharedSms.sendTemplate('registration_welcome', phone, welcomeSmsVars(student, course, String(trackingCode || ''), academy));
+    // CODE / entry_code is the one-time portal link (kermanshahcart.ir/e/#CODE#). The approved template does not
+    // send it until sms.ir has a CODE parameter; extra vars are ignored meanwhile.
+    const vars: Record<string, unknown> = welcomeSmsVars(student, course, String(trackingCode || ''), academy);
+    const studentId = Number(student?.id || student?.student_id);
+    if (Number.isInteger(studentId) && studentId > 0) {
+      try {
+        const entry = await mintPortalEntry(studentId, { readJsonDb: () => readDb(), writeJsonDb: (s) => writeDb(s) });
+        vars.CODE = entry.code;
+        vars.entry_code = entry.code;
+      } catch (err: any) { console.warn('Portal entry link failed:', err?.message || err); }
+    }
+    const r = await sharedSms.sendTemplate('registration_welcome', phone, vars);
     if (r.status === 'disabled') return;
     console.log(`[SMS] registration_welcome ${trackingCode || '-'} ${r.ok ? 'ok' : 'failed: ' + (r.detail || r.status)} [${r.mode || '-'}]`);
   } catch (err: any) { console.warn('Registration SMS failed:', err?.message || err); }
@@ -4935,6 +4946,13 @@ registerInstructorPay(app, {
 const installmentStore = createInstallmentStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
 const debtLinkStore = createDebtLinkStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
 function publicBaseFromRequest(req: express.Request) { return String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`); }
+
+/** The portal UI is served by the CRM host. A code opened on the public site must leave that site. */
+function portalEntryBase(req: express.Request) {
+  const host = String(req.get('host') || '').split(':')[0].toLowerCase();
+  if (host === 'kermanshahcart.ir' || host === 'www.kermanshahcart.ir') return 'https://management.kermanshahcart.ir';
+  return publicBaseFromRequest(req).replace(/\/$/, '');
+}
 registerOnlinePayments(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
@@ -4961,6 +4979,7 @@ registerTraineePortal(app, {
   signToken: (payload, ttlMs) => signToken(payload, ttlMs),
   verifyToken: (token) => verifyToken(token),
   readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
   sms: { sendTemplate: (key, mobile, vars, fallback) => sharedSms.sendTemplate(key, mobile, vars, fallback) },
   log: (msg) => console.warn(`[trainee-portal] ${msg}`),
 });
@@ -5057,6 +5076,14 @@ app.get('/p/:code', (req, res) => {
   if (!/^[0-9A-Za-z]{12}$/.test(code)) return res.redirect(302, '/?trainee=1&payment=notfound');
   const base = publicBaseFromRequest(req).replace(/\/$/, '');
   res.redirect(302, `${base}/?trainee=1&code=${encodeURIComponent(code)}`);
+});
+
+// One-time portal login: /e/<code> opens the trainee portal, which burns the code and stores the session.
+app.get('/e/:code', (req, res) => {
+  const code = sanitizeString(req.params.code, 16);
+  const base = portalEntryBase(req);
+  if (!/^[0-9A-Za-z]{12}$/.test(code)) return res.redirect(302, `${base}/?portal=1`);
+  res.redirect(302, `${base}/?portal=1&entry=${encodeURIComponent(code)}`);
 });
 
 function staffDirectory() {
@@ -5233,6 +5260,7 @@ async function startServer() {
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  await ensurePortalEntrySchema();
   await ensureLessonCalendarSchema();
   startLessonReminderJob(lessonCalendar, (m) => console.warn(`[lessons] ${m}`));
   await ensureAutomationSchema();

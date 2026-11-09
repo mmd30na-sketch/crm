@@ -157,6 +157,17 @@ async function cachedGet<T>(token: string, path: string): Promise<{ data: T; off
   return { data, offline: false };
 }
 
+async function redeemEntry(code: string): Promise<{ token: string; student_id: string; name: string }> {
+  const response = await fetch(`${API_BASE}/entry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  const body: any = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || 'لینک ورود نامعتبر است.');
+  return body;
+}
+
 async function requestOtp(mobile: string): Promise<OtpRequestResponse> {
   const response = await fetch(`${API_BASE}/otp/request`, {
     method: 'POST',
@@ -245,6 +256,7 @@ export {
   getSession,
   saveSession,
   clearSession,
+  redeemEntry,
   requestOtp,
   verifyOtp,
   legacyLogin,

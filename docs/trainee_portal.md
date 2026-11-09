@@ -6,11 +6,18 @@ URL: `https://<crm-host>/?portal=1` — mobile-first, RTL, installable (Android/
 | file | role |
 |---|---|
 | `public/trainee-manifest.webmanifest`, `public/trainee-icon-*.png` | web app manifest (fa, rtl, standalone, start `/?portal=1`) + icons made from `logo.png` |
-| `public/trainee-sw.js` | service worker: offline shell (network-first navigations, `/?portal=1` cached), stale-while-revalidate for `/assets/*` and images; **never** touches `/api/`, `/uploads/`, `/p/` |
+| `public/trainee-sw.js` | service worker: offline shell (network-first navigations, `/?portal=1` cached), stale-while-revalidate for `/assets/*` and images; **never** touches `/api/`, `/uploads/`, `/p/`, `/e/` |
 | `src/components/TraineePortal.tsx`, `src/api/traineePortal.ts` | UI + client; manifest/SW are attached only when the portal renders, so the staff app is unchanged |
 | `traineePortal.ts` | `/api/trainee-portal/*` (public routes, own token check; bypass the staff session like `/trainee-payments`) |
 
 ## Login
+0. One-time link: `GET /e/<code>` redirects to `/?portal=1&entry=<code>`. The portal `POST /api/trainee-portal/entry`
+   burns the code (single use, 7 days) and stores the returned 30-day trainee token in `localStorage`
+   (`carla_trainee_portal`). A second open says the link was already used; the saved session keeps the portal open.
+   Welcome SMS mints the code as `CODE` / `entry_code`. The approved sms.ir template does not include it until its
+   text has `kermanshahcart.ir/e/#CODE#` and that parameter is approved. The public vhost proxies only
+   `/e/<12-char code>` to the CRM (`location = /e/log` stays the error logger). That host is not the portal UI, so the
+   CRM redirects it to `https://management.kermanshahcart.ir/?portal=1&entry=<code>`.
 1. Mobile + 5-digit OTP: `POST /api/trainee-portal/otp/request {mobile}` then `/otp/verify {mobile, code}` → one signed
    trainee token per student on that mobile (30 days). The token is the same `{kind:'trainee', student_id}` token the
    existing `/api/trainee-payments/*` routes accept.

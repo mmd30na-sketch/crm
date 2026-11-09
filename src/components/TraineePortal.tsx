@@ -1,7 +1,7 @@
 /**
  * Trainee portal (پرتال کارآموز): installable PWA served at /?portal=1 (manifest + service worker are attached only
- * here, so the staff app is not affected). Login: mobile OTP (/api/trainee-portal/otp/*) or the existing
- * student id + national-code login. Pages: my lessons, debt & installments, online payment (existing Zarinpal flow),
+ * here, so the staff app is not affected). Login: one-time /e/<code> link, mobile OTP (/api/trainee-portal/otp/*),
+ * or the existing student id + national-code login. The resulting session is stored on this device. Pages: my lessons, debt & installments, online payment (existing Zarinpal flow),
  * enrollment status. Last data is cached for offline viewing; paying needs a connection.
  */
 import { useState, useEffect, useCallback } from 'react';
@@ -21,6 +21,7 @@ import {
   getSession,
   saveSession,
   clearSession,
+  redeemEntry,
   requestOtp,
   verifyOtp,
   legacyLogin,
@@ -145,10 +146,38 @@ const TraineePortal = () => {
   }, [otpSent]);
 
   useEffect(() => {
-    const session = getSession();
-    if (session) {
-      setSession(session);
-      loadData(session.token);
+    let cancel = false;
+    const entryCode = new URLSearchParams(window.location.search).get('entry');
+    if (entryCode) {
+      setBusy(true);
+      redeemEntry(entryCode).then((account) => {
+        if (cancel) return;
+        const next: Session = {
+          token: account.token,
+          student_id: String(account.student_id),
+          name: account.name,
+          at: Date.now(),
+        };
+        saveSession(next);
+        setSession(next);
+        window.history.replaceState({}, document.title, '/?portal=1');
+        loadData(account.token);
+      }).catch((err) => {
+        if (cancel) return;
+        window.history.replaceState({}, document.title, '/?portal=1');
+        const existing = getSession();
+        if (existing) {
+          setSession(existing);
+          loadData(existing.token);
+        }
+        setError((err as Error).message);
+      }).finally(() => { if (!cancel) setBusy(false); });
+    } else {
+      const session = getSession();
+      if (session) {
+        setSession(session);
+        loadData(session.token);
+      }
     }
 
     // Setup PWA
@@ -196,6 +225,7 @@ const TraineePortal = () => {
     }
 
     return () => {
+      cancel = true;
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('online', handleOnlineStatus);
       window.removeEventListener('offline', handleOnlineStatus);
@@ -376,6 +406,10 @@ const TraineePortal = () => {
   const renderLoginScreen = () => (
     <div className="max-w-lg mx-auto p-4">
       <h1 className="text-2xl font-bold text-center mb-6">ورود به پرتال کارآموز</h1>
+
+      {busy && !error && (
+        <p className="text-center text-slate-500 mb-4">در حال ورود...</p>
+      )}
 
       {error && (
         <div role="alert" className="bg-rose-100 text-rose-800 p-3 rounded-xl mb-4">

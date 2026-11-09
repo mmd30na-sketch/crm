@@ -1,8 +1,8 @@
 /* Carla CRM trainee portal service worker (پرتال کارآموز).
  * Offline shell for /?portal=1: network-first navigations (portal page cached), stale-while-revalidate for the
- * hashed Vite assets and images. API, uploads and /p/ payment links are never intercepted or cached.
+ * hashed Vite assets and images. API, uploads, /p/ payment links and /e/ entry links are never intercepted or cached.
  * Bump CACHE to invalidate. */
-const CACHE = 'carla-trainee-v1';
+const CACHE = 'carla-trainee-v2';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -41,7 +41,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/') || url.pathname.startsWith('/p/')) {
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/') || url.pathname.startsWith('/p/') || url.pathname.startsWith('/e/')) {
     return;
   }
 
