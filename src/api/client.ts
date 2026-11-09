@@ -1077,10 +1077,19 @@ export async function getBackups(): Promise<{ dir_configured: boolean; files: Ba
 }
 
 
-export type MessageTemplate = { id: string; title: string; body: string; color: string; updated_at?: string };
+export type MessageTemplate = {
+  id: string; title: string; body: string; color: string; updated_at?: string;
+  source?: 'smsir' | 'local'; readonly?: boolean;
+  provider_template_id?: string; provider_status?: number | null; enabled?: boolean; params?: string;
+};
 export async function fetchMessageTemplates(): Promise<MessageTemplate[]> {
   const res = await apiFetch('/message-templates');
   if (!res.ok) throw await serverError(res, 'دریافت الگوها ناموفق بود.');
+  return res.json();
+}
+export async function syncSmsTemplates(): Promise<{ updated: number; inserted: number; remote: number }> {
+  const res = await apiFetch('/sms/templates/sync', { method: 'POST' });
+  if (!res.ok) throw await serverError(res, 'همگام‌سازی با sms.ir ناموفق بود.');
   return res.json();
 }
 export async function saveMessageTemplate(t: { id?: string; title: string; body: string; color: string }): Promise<void> {

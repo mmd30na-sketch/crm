@@ -1841,7 +1841,23 @@ async function deliverMessage(opts: { channel: string; recipient: string; messag
 // Message templates: canonical store is MySQL sms_templates (see shared/sms.ts).
 const TEMPLATE_COLORS = ['sky', 'rose', 'teal', 'amber', 'violet', 'emerald', 'slate'];
 // Templates live in MySQL sms_templates ({name}-style placeholders); the UI keeps its [نام]-style tokens, converted here.
-const tplOut = (t: any) => ({ id: t.key, title: t.title_fa || t.key, body: toBracket(t.body_fa || ''), color: t.color || 'sky', updated_at: t.updated_at });
+const tplOut = (t: any) => {
+  const smsir = t.channel_kind === 'verify' && !!t.provider_template_id;
+  return {
+    id: t.key,
+    title: t.title_fa || t.key,
+    body: smsir ? (t.body_fa || '') : toBracket(t.body_fa || ''),
+    color: t.color || 'sky',
+    updated_at: t.updated_at,
+    source: smsir ? 'smsir' : 'local',
+    readonly: smsir,
+    provider_template_id: t.provider_template_id || '',
+    provider_status: t.provider_status ?? null,
+    enabled: !!t.enabled,
+    params: t.param_names || '',
+  };
+};
+const visibleTemplate = (t: any) => (t.show_in_crm && t.channel_kind === 'bulk') || (t.channel_kind === 'verify' && t.provider_template_id && t.key !== 'otp');
 const templateInput = (b: any) => {
   const title = sanitizeString(b?.title, 80); const body = sanitizeString(b?.body, 1000);
   const color = TEMPLATE_COLORS.includes(b?.color) ? b.color : 'sky';
@@ -1849,8 +1865,18 @@ const templateInput = (b: any) => {
   return { title_fa: title, body_fa: fromBracket(body), color };
 };
 app.get('/api/message-templates', async (req, res) => {
-  try { res.json((await sharedSms.listTemplates(true)).filter((t: any) => t.show_in_crm && t.channel_kind === 'bulk').map(tplOut)); }
+  try { res.json((await sharedSms.listTemplates(true)).filter(visibleTemplate).map(tplOut)); }
   catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/sms/templates/sync', requireAdmin, async (_req, res) => {
+  try {
+    const r = await sharedSms.syncFromSmsir();
+    if (!r.ok) return res.status(503).json({ error: 'درگاه پیامک تنظیم نشده است.' });
+    res.json(r);
+  } catch (e: any) {
+    console.warn('[SMS] template sync failed:', e?.message || e);
+    res.status(502).json({ error: 'همگام‌سازی با sms.ir ناموفق بود.' });
+  }
 });
 app.post('/api/message-templates', async (req, res) => {
   try {
