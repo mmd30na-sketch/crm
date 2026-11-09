@@ -26,6 +26,7 @@ import {
   PieChart,
   Building2,
   ChevronDown,
+  GraduationCap,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -245,11 +246,11 @@ const NAV_ITEMS = [
 ];
 
 const NAV_GROUPS = [
-  { id: 'edu', label: 'آموزش' },
-  { id: 'finance', label: 'مالی' },
-  { id: 'comms', label: 'ارتباط' },
-  { id: 'sales', label: 'فروش' },
-  { id: 'system', label: 'سیستم' },
+  { id: 'edu', label: 'آموزش', icon: GraduationCap },
+  { id: 'finance', label: 'مالی', icon: Wallet },
+  { id: 'comms', label: 'ارتباط', icon: MessageSquare },
+  { id: 'sales', label: 'فروش', icon: Contact },
+  { id: 'system', label: 'سیستم', icon: SettingsIcon },
 ] as const;
 
 /** copilot (همراز) is intentionally absent: it stays above the groups. */
@@ -586,18 +587,31 @@ function AppShell() {
             const items = visibleNav.filter((item) => NAV_GROUP_BY_ID[item.id] === group.id);
             if (!items.length) return null;
             const open = openGroups.includes(group.id);
+            const containsActive = items.some((item) => item.id === activeTab);
+            const GroupIcon = group.icon;
             return (
-              <div key={group.id} className="mt-2">
+              <div key={group.id} className="mt-1">
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={open}
-                  className="ham-taraz-section-title w-full flex items-center justify-between px-3 py-1.5 text-right hover:text-slate-200"
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer text-right transition-colors ${
+                    containsActive ? 'bg-white/10 text-white' : 'text-slate-300 hover:bg-white/6 hover:text-white'
+                  }`}
                 >
-                  <span>{group.label}</span>
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? '' : '-rotate-90'}`} />
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    containsActive ? 'bg-white/15' : 'bg-white/5'
+                  }`}>
+                    <GroupIcon className="h-4 w-4" />
+                  </div>
+                  <span className="flex-1 text-sm font-semibold">{group.label}</span>
+                  <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? '' : 'rotate-90'}`} />
                 </button>
-                {open && <div className="space-y-0.5">{items.map((item) => renderNavItem(item))}</div>}
+                {open && (
+                  <div className="mt-0.5 mr-4 space-y-0.5 border-r border-white/10 pr-1">
+                    {items.map((item) => renderNavItem(item))}
+                  </div>
+                )}
               </div>
             );
           })}
