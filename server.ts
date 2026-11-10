@@ -3506,6 +3506,7 @@ const COPILOT_TOOL_GUIDE: [string, string][] = [
   ['list_sms', 'سوابق پیامک‌های ارسالی و الگوهای پیامک'],
   ['sms_get_credit', 'اعتبار باقی‌مانده و خط پنل پیامک'], ['sms_delivery_status', 'وضعیت تحویل پیامک‌های ارسالی از پنل'],
   ['sms_list_received', 'پیامک‌های دریافتی (پاسخ‌ها)'], ['sms_send', 'پیش‌نویس ارسال پیامک (فقط پس از تأیید ادمین در ویجت ارسال می‌شود)'],
+  ['sms_send_direct', 'ارسال مستقیم پیامک، فقط وقتی کاربر صریحاً ارسال خواسته'],
   ['list_activity_log', 'سوابق تغییرات و تماس‌ها'], ['search_student', 'جست‌وجوی کارآموز'], ['trainee_count', 'تعداد کل کارآموزان'],
   ['get_student_financial_summary', 'خلاصه مالی یک کارآموز'], ['get_daily_cashflow', 'گردش روزانه'],
   ['get_debtors_list', 'بدهکاران'], ['top_debtors', 'بیشترین بدهکاران'], ['get_course_statistics', 'آمار یک دوره'],
@@ -3527,7 +3528,7 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید؛ وضعیت‌ها و کدها (مثل new، pending، approved، paid) را همیشه به فارسی بگویید، نه کد انگلیسی.',
-  '۶) شما مستقیماً هیچ پیامی ارسال نمی‌کنید و چیزی را تغییر نمی‌دهید. ابزارهای sms_send، send_telegram_message و send_rubika_message (اگر در دسترس باشند) فقط پیش‌نویس می‌سازند؛ پیش‌نمایش را به کاربر نشان دهید و بگویید برای ارسال، دکمه «تأیید» را در کادر زیر گفتگو بزند. هرگز نگویید پیام ارسال شد. اگر این ابزارها در دسترس نیستند، متن پیشنهادی بنویسید و بگویید از بخش «پیام‌رسان» ارسال کند.',
+  '۶) تلگرام و روبیکا را مستقیم نفرستید. sms_send، send_telegram_message و send_rubika_message فقط پیش‌نویس می‌سازند و کاربر باید دکمه «تأیید» را در ویجت بزند. پیامک استثناست: اگر کاربر صریحاً خواست پیامک ارسال شود، sms_send_direct را صدا بزنید. این ابزار همان لحظه می‌فرستد و منتظر ویجت نمی‌ماند. فقط وقتی نتیجه ابزار ok بود بگویید ارسال شد. الگوی رمز یکبارمصرف را هرگز نفرستید. اگر ابزار ارسال در دسترس نیست، متن را پیشنهاد دهید و بگویید از بخش «پیام‌رسان» بفرستد.',
   copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
   '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
@@ -3952,6 +3953,11 @@ const COPILOT_SMS_TOOLS = [
     template_key: { type: 'string', description: 'کلید الگوی پیامک (اختیاری؛ به‌جای text)' },
     params: { type: 'object', description: 'مقادیر متغیرهای الگو، مثل { "name": "علی", "course": "..." }؛ نام و موبایل هر کارآموز خودکار پر می‌شود', additionalProperties: { type: 'string' } },
     text: { type: 'string', description: 'متن آزاد پیامک (اگر template_key داده نشده)' } }, required: ['recipients'] } } },
+  { type: 'function', function: { name: 'sms_send_direct', description: 'پیامک را همان لحظه می‌فرستد و منتظر تأیید ویجت نمی‌ماند. فقط وقتی کاربر صریحاً ارسال خواسته (بفرست، ارسال کن). گیرنده: student_id یا موبایل، حداکثر ۲۰. محتوا: یا template_key با params، یا text آزاد. الگوی رمز یکبارمصرف ممنوع. بازگرداندن: { ok, sent, failed }؛ فقط اگر ok بود بگو ارسال شد.', parameters: { type: 'object', properties: {
+    recipients: { type: 'array', items: { type: 'string' }, description: 'فهرست student_id یا شماره موبایل (09xxxxxxxxx)؛ حداکثر ۲۰' },
+    template_key: { type: 'string', description: 'کلید الگوی پیامک (اختیاری؛ به‌جای text)' },
+    params: { type: 'object', description: 'مقادیر متغیرهای الگو؛ نام و موبایل هر کارآموز خودکار پر می‌شود', additionalProperties: { type: 'string' } },
+    text: { type: 'string', description: 'متن آزاد پیامک (اگر template_key داده نشده)' } }, required: ['recipients'] } } },
 ];
 
 let smsirLastCall = 0;
@@ -4038,6 +4044,46 @@ async function auditCopilotSql(username: string, e: { db: string; sql: string; a
   } catch (err: any) { console.warn('copilot sql audit failed:', err?.message || err); }
 }
 
+/** Recipient check shared by the SMS draft and the direct send. OTP templates stay blocked. */
+async function resolveCopilotSms(a: any): Promise<{ error: string } | { items: { mobile: string; label: string; studentId?: number | null; text: string }[]; errors: string[]; key: string; vars: Record<string, string>; tpl: any }> {
+  const raw: string[] = (Array.isArray(a.recipients) ? a.recipients : [a.recipients ?? a.recipient ?? a.mobile ?? a.student_id]).filter((x: any) => x != null && String(x).trim()).map((x: any) => sanitizeString(String(x), 40));
+  if (!raw.length) return { error: 'حداقل یک گیرنده لازم است.' };
+  if (raw.length > 20) return { error: 'حداکثر ۲۰ گیرنده در هر درخواست مجاز است.' };
+  const key = sanitizeString(a.template_key, 60);
+  const freeText = sanitizeString(a.text, 1000);
+  if (!key && !freeText) return { error: 'template_key یا text الزامی است.' };
+  if (key && freeText) return { error: 'فقط یکی از template_key یا text را بدهید.' };
+  let tpl: any = null;
+  if (key) {
+    if (/^otp/i.test(key)) return { error: 'این الگو از طریق دستیار قابل ارسال نیست.' };
+    tpl = await sharedSms.getTemplate(key);
+    if (!tpl) return { error: 'الگوی پیامک با این کلید پیدا نشد.' };
+    if (!tpl.enabled) return { error: 'این الگو غیرفعال است.' };
+  }
+  const vars: Record<string, string> = {};
+  if (a.params && typeof a.params === 'object') for (const [k, v] of Object.entries(a.params)) if (/^\w{1,40}$/.test(k)) vars[k] = sanitizeString(String(v ?? ''), 200);
+  const items: { mobile: string; label: string; studentId?: number | null; text: string }[] = [];
+  const errors: string[] = [];
+  for (const r0 of raw) {
+    const q = toLatinDigits(r0).trim(); const mob = normalizeMobile(q);
+    let st: any = null;
+    if (/^\d{1,9}$/.test(q)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE student_id = ? LIMIT 1', [Number(q)]))[0];
+    else if (/^09\d{9}$/.test(mob)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE phone_number = ? LIMIT 1', [mob]))[0] || { phone_number: mob };
+    else { errors.push(`${r0}: شناسه یا موبایل نامعتبر`); continue; }
+    if (!st) { errors.push(`${r0}: کارآموز پیدا نشد`); continue; }
+    const mobile = normalizeMobile(st.phone_number);
+    if (!/^09\d{9}$/.test(mobile)) { errors.push(`${r0}: شماره موبایل معتبر ندارد`); continue; }
+    if (items.some((x) => x.mobile === mobile)) continue;
+    const nm = `${String(st.first_name || '').trim()} ${String(st.last_name || '').trim()}`.trim();
+    const v = { ...vars }; if (nm && !v.name) v.name = nm; if (!v.mobile) v.mobile = mobile;
+    const text = tpl ? sharedSms.render(tpl.body_fa || tpl.fallback_body_fa || '', v).replace(/\n+$/, '') : freeText;
+    if (tpl && tpl.channel_kind === 'verify') { const { missing } = sharedSms.buildVerifyParams(tpl, v); if (missing.length) { errors.push(`${r0}: متغیر خالی الگو (${missing.join('، ')})`); continue; } }
+    items.push({ mobile, label: nm || 'شماره آزاد', studentId: st.student_id ?? null, text });
+  }
+  if (!items.length) return { error: `هیچ گیرنده معتبری نماند. ${errors.join('؛ ')}` };
+  return { items, errors, key, vars, tpl };
+}
+
 async function runCopilotTool(name: string, args: any, ctx: { username: string; role: string } = { username: '', role: '' }): Promise<any> {
   const a = args && typeof args === 'object' ? args : {};
 
@@ -4096,43 +4142,36 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     return { scope, count: list.length, messages: list };
   }
 
-  if (name === 'sms_send') {
+  if (name === 'sms_send' || name === 'sms_send_direct') {
     if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
-    const raw: string[] = (Array.isArray(a.recipients) ? a.recipients : [a.recipients ?? a.recipient ?? a.mobile ?? a.student_id]).filter((x: any) => x != null && String(x).trim()).map((x: any) => sanitizeString(String(x), 40));
-    if (!raw.length) return { error: 'حداقل یک گیرنده لازم است.' };
-    if (raw.length > 20) return { error: 'حداکثر ۲۰ گیرنده در هر درخواست مجاز است.' };
-    const key = sanitizeString(a.template_key, 60);
-    const freeText = sanitizeString(a.text, 1000);
-    if (!key && !freeText) return { error: 'template_key یا text الزامی است.' };
-    if (key && freeText) return { error: 'فقط یکی از template_key یا text را بدهید.' };
-    let tpl: any = null;
-    if (key) {
-      if (/^otp/i.test(key)) return { error: 'این الگو از طریق دستیار قابل ارسال نیست.' };
-      tpl = await sharedSms.getTemplate(key);
-      if (!tpl) return { error: 'الگوی پیامک با این کلید پیدا نشد.' };
-      if (!tpl.enabled) return { error: 'این الگو غیرفعال است.' };
+    const draft = await resolveCopilotSms(a);
+    if ('error' in draft) return { error: draft.error };
+    const { items, errors, key, vars, tpl } = draft;
+    if (name === 'sms_send_direct') {
+      const sent: string[] = []; const failed: string[] = [];
+      for (const it of items) {
+        let r: { ok: boolean; status: string; detail?: string };
+        try {
+          r = key
+            ? await sharedSms.sendTemplate(key, it.mobile, { ...vars, ...(it.studentId && !vars.name ? { name: it.label } : {}), mobile: it.mobile })
+            : await sharedSms.sendText(it.mobile, it.text);
+        } catch (e: any) { r = { ok: false, status: 'failed', detail: e?.message || 'error' }; }
+        (r.ok ? sent : failed).push(it.mobile);
+        const db = readDb(); const t = Date.now();
+        const outbox = ((db as any).outbox ||= []) as any[];
+        outbox.push({ id: `MSG-${t}-${crypto.randomBytes(2).toString('hex')}`, recipient: it.mobile, channel: 'sms', message: it.text, student_id: it.studentId ?? undefined,
+          sent_at: new Date(t).toISOString(), status: r.ok ? 'sent' : (r.status === 'disabled' ? 'failed' : r.status), note: `copilot direct${key ? ` tpl=${key}` : ''}${r.detail ? ` ${r.detail}` : ''}`.slice(0, 300) });
+        if (outbox.length > MAX_STORED_MESSAGES) outbox.splice(0, outbox.length - MAX_STORED_MESSAGES);
+        writeDb(db);
+      }
+      void chabokan.insertAudit({
+        username: ctx.username, role: 'admin', method: 'POST',
+        path: `/copilot/sms_send_direct?n=${items.length}&ok=${failed.length ? 0 : 1}&text=${items[0].text.slice(0, 80).replace(/\s+/g, ' ')}`.slice(0, 255),
+        entity: 'copilot_sms', entity_id: key || 'text', status: failed.length ? 502 : 200, ip: null,
+      });
+      return { ok: failed.length === 0, sent: sent.length, failed: failed.length, skipped: errors.length ? errors : undefined,
+        note: failed.length === 0 ? 'پیامک ارسال شد.' : `${sent.length} ارسال شد، ${failed.length} ناموفق` };
     }
-    const vars: Record<string, string> = {};
-    if (a.params && typeof a.params === 'object') for (const [k, v] of Object.entries(a.params)) if (/^\w{1,40}$/.test(k)) vars[k] = sanitizeString(String(v ?? ''), 200);
-    const items: { mobile: string; label: string; studentId?: number | null; text: string }[] = [];
-    const errors: string[] = [];
-    for (const r0 of raw) {
-      const q = toLatinDigits(r0).trim(); const mob = normalizeMobile(q);
-      let st: any = null;
-      if (/^\d{1,9}$/.test(q)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE student_id = ? LIMIT 1', [Number(q)]))[0];
-      else if (/^09\d{9}$/.test(mob)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE phone_number = ? LIMIT 1', [mob]))[0] || { phone_number: mob };
-      else { errors.push(`${r0}: شناسه یا موبایل نامعتبر`); continue; }
-      if (!st) { errors.push(`${r0}: کارآموز پیدا نشد`); continue; }
-      const mobile = normalizeMobile(st.phone_number);
-      if (!/^09\d{9}$/.test(mobile)) { errors.push(`${r0}: شماره موبایل معتبر ندارد`); continue; }
-      if (items.some((x) => x.mobile === mobile)) continue;
-      const nm = `${String(st.first_name || '').trim()} ${String(st.last_name || '').trim()}`.trim();
-      const v = { ...vars }; if (nm && !v.name) v.name = nm; if (!v.mobile) v.mobile = mobile;
-      const text = tpl ? sharedSms.render(tpl.body_fa || tpl.fallback_body_fa || '', v).replace(/\n+$/, '') : freeText;
-      if (tpl && tpl.channel_kind === 'verify') { const { missing } = sharedSms.buildVerifyParams(tpl, v); if (missing.length) { errors.push(`${r0}: متغیر خالی الگو (${missing.join('، ')})`); continue; } }
-      items.push({ mobile, label: nm || 'شماره آزاد', studentId: st.student_id ?? null, text });
-    }
-    if (!items.length) return { error: `هیچ گیرنده معتبری نماند. ${errors.join('؛ ')}` };
     const parts = items.reduce((n, x) => n + smsParts(x.text), 0);
     const pendingId = `sms_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const now = Date.now();
