@@ -39,11 +39,22 @@ export interface ZpTerminal { id: string; status: string; domain: string; name: 
 export interface ZpSession { id: string; created_at: string; amount_rial: number; amount_toman: number; status: string; description: string; rrn: string; card: string }
 export interface ZpTransactions { terminals: ZpTerminal[]; terminal_id: string | null; total: number; by_status: Record<string, number>; truncated: boolean; sessions: ZpSession[] }
 
-export interface CopilotStatus {
-  configured: boolean; model: string; max_iterations: number; sql_enabled: boolean;
-  sms_direct: boolean; confirm_required: string[];
+export type HamrazConfirmKey = 'sms_send' | 'telegram' | 'rubika';
+export interface HamrazSettingsView {
+  enabled: boolean; configured: boolean; api_url: string; api_key_set: boolean; model: string;
+  max_iterations: number; sql_enabled: boolean; sms_direct: boolean;
+  confirm: Record<HamrazConfirmKey, boolean>;
+  sources: Record<string, ZpSource>;
 }
-export const getCopilotStatus = () => call<CopilotStatus>('/settings/copilot-status');
+export interface HamrazPatch {
+  enabled?: boolean; api_url?: string; api_key?: string; clear_api_key?: boolean; model?: string;
+  max_iterations?: number | null; sql_enabled?: boolean; sms_direct?: boolean; confirm?: Partial<Record<HamrazConfirmKey, boolean>>;
+}
+export interface HamrazTestResult { ok: boolean; status: number | null; model: string; ms: number; message: string; settings: HamrazSettingsView }
+export const getHamrazSettings = () => call<HamrazSettingsView>('/settings/hamraz');
+export const saveHamrazSettings = (patch: HamrazPatch) =>
+  call<{ success: boolean; settings: HamrazSettingsView }>('/settings/hamraz', { method: 'POST', body: JSON.stringify(patch) });
+export const testHamraz = () => call<HamrazTestResult>('/settings/hamraz/test', { method: 'POST', body: '{}' });
 export const getZarinpalSettings = () => call<ZarinpalSettingsView>('/settings/zarinpal');
 export const saveZarinpalSettings = (patch: ZarinpalSettingsPatch) =>
   call<{ success: boolean; settings: ZarinpalSettingsView }>('/settings/zarinpal', { method: 'POST', body: JSON.stringify(patch) });
