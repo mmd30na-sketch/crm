@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Read-only deployment preflight for Carla CRM (see DEPLOY.md).
+ * Read-only deployment preflight for Ham-Taraz CRM (see DEPLOY.md).
  *
  *   node scripts/preflight-check.mjs          # env names + migration files + build/shared checks
  *   node scripts/preflight-check.mjs --db     # also inspect the MySQL schema (SELECT / information_schema only)

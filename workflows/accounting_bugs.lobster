@@ -1,7 +1,7 @@
 {
   "api": "1",
   "name": "Accounting finance bugfix",
-  "goal": "Fix Carla CRM accounting/finance bugs without changing auth, settings, or registration.",
+  "goal": "Fix Ham-Taraz CRM accounting/finance bugs without changing auth, settings, or registration.",
   "repo": "/home/mmd30na/Hydra/openclaw/native/state/workspaces/hephaestus/projects/crm",
   "constraints": [
     "Do not git commit or push",

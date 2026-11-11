@@ -4,8 +4,9 @@
  * db_store.json under "public_api". Admin-only management routes are registered in publicApi.ts.
  *
  * Every delivery is a POST with a JSON body {id, event, created_at, data} and the headers
- *   X-Carla-Event, X-Carla-Delivery (event id) and
- *   X-Carla-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>
+ *   X-HamTaraz-Event, X-HamTaraz-Delivery (event id) and
+ *   X-HamTaraz-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>
+ *   X-Carla-Event, X-Carla-Delivery, X-Carla-Signature (backward compatibility)
  * 2xx = delivered. Otherwise retried with backoff 1m, 5m, 30m, 2h, 6h (6 attempts in total), then 'failed'.
  * emit() never throws and never blocks the caller (the staff request that triggered the event).
  */
@@ -159,16 +160,21 @@ export function createWebhooks(deps: { readJsonDb: () => any; writeJsonDb: (s: a
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = signPayload(secret, timestamp, payload);
       const res = await fetch(url, {
         method: 'POST',
         redirect: 'manual', // a redirect is not followed (could point at an internal host)
         signal: ctrl.signal,
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'CarlaCRM-Webhooks/1.0',
+          'User-Agent': 'HamTarazCRM-Webhooks/1.0',
+          'X-HamTaraz-Event': event,
+          'X-HamTaraz-Delivery': eventId,
+          'X-HamTaraz-Signature': signature,
           'X-Carla-Event': event,
           'X-Carla-Delivery': eventId,
-          'X-Carla-Signature': signPayload(secret, Math.floor(Date.now() / 1000), payload),
+          'X-Carla-Signature': signature,
         },
         body: payload,
       });
@@ -375,7 +381,7 @@ export function createWebhooks(deps: { readJsonDb: () => any; writeJsonDb: (s: a
       const sub = await getSub(id);
       if (!sub) throw httpError(404, 'وب‌هوک پیدا نشد.');
       const eventId = crypto.randomUUID();
-      const payload = JSON.stringify({ id: eventId, event: 'ping', created_at: new Date().toISOString(), data: { message: 'Carla CRM webhook test' } });
+      const payload = JSON.stringify({ id: eventId, event: 'ping', created_at: new Date().toISOString(), data: { message: 'Ham-Taraz CRM webhook test' } });
       return post(sub.url, sub.secret, 'ping', eventId, payload);
     },
 

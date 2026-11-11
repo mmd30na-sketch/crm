@@ -1,8 +1,8 @@
-/* Carla CRM trainee portal service worker (پرتال کارآموز).
+/* Ham-Taraz CRM trainee portal service worker (پرتال کارآموز).
  * Offline shell for /?portal=1: network-first navigations (portal page cached), stale-while-revalidate for the
  * hashed Vite assets and images. API, uploads, /p/ payment links and /e/ entry links are never intercepted or cached.
  * Bump CACHE to invalidate. */
-const CACHE = 'carla-trainee-v2';
+const CACHE = 'hamtaraz-trainee-v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -25,7 +25,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key.startsWith('carla-trainee-') && key !== CACHE) {
+          if ((key.startsWith('carla-trainee-') || key.startsWith('hamtaraz-trainee-')) && key !== CACHE) {
             return caches.delete(key);
           }
         })
