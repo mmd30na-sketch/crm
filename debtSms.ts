@@ -92,7 +92,9 @@ export function debtSmsConfig(settings: any, normalizeMobile: (v: unknown) => st
   const templateId = Number(has(s.template_id) ? s.template_id : 472328) || 472328;
   const envTestMobile = normalizeMobile(process.env.CRM_DEBT_SMS_TEST_MOBILE ?? '');
   const testMobile = envTestMobile || normalizeMobile(has(s.test_mobile) ? s.test_mobile : '');
-  const paymentBase = String(process.env.CRM_PAYMENT_LINK_BASE || DEFAULT_PAYMENT_BASE);
+  // Settings → درگاه پرداخت (gateways.zarinpal.payment_link_base) wins; env CRM_PAYMENT_LINK_BASE is the fallback.
+  const savedBase = String(settings?.gateways?.zarinpal?.payment_link_base || '').trim();
+  const paymentBase = String(savedBase || process.env.CRM_PAYMENT_LINK_BASE || DEFAULT_PAYMENT_BASE);
   return { enabled, envEnabled, templateId, testMobile, testMobileEnv: !!envTestMobile, configured: !!smsConfigured, paymentBase };
 }
 

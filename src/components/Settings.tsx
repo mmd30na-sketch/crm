@@ -39,6 +39,7 @@ import { Course, StaffRole, StaffUser, ThemeConfig } from '../types';
 import * as api from '../api/client';
 import AuditBackupPanel from './AuditBackupPanel';
 import FieldPolicyPanel from './FieldPolicyPanel';
+import ZarinpalGatewayPanel from './ZarinpalGatewayPanel';
 import { useTheme } from '../theme/ThemeProvider';
 
 interface SettingsProps {
@@ -47,7 +48,7 @@ interface SettingsProps {
 }
 
 export default function Settings({ courses, onRefresh }: SettingsProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'database' | 'theme' | 'api' | 'fields'>('academy');
+  const [activeSubTab, setActiveSubTab] = useState<'academy' | 'courses' | 'payment' | 'users' | 'gateways' | 'zarinpal' | 'database' | 'theme' | 'api' | 'fields'>('academy');
 
   /* ── 0. Theme («تم»): applied app-wide through the ThemeProvider, saved on the server ── */
   const { theme, setTheme } = useTheme();
@@ -390,6 +391,7 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
     { id: 'theme', label: 'تم و ظاهر', icon: Palette, color: 'sky' },
     { id: 'courses', label: 'لیست دوره‌ها', icon: BookOpen, count: courses.length, color: 'violet' },
     { id: 'gateways', label: 'وب‌سرویس و درگاه‌ها', icon: Cpu, color: 'teal' },
+    { id: 'zarinpal', label: 'درگاه پرداخت', icon: CreditCard, color: 'emerald' },
     { id: 'database', label: 'دیتابیس، بکاپ و تغییرات', icon: Database, color: 'amber' },
     { id: 'payment', label: 'روش‌های پرداخت', icon: CreditCard, color: 'emerald' },
     { id: 'users', label: 'کاربران و دسترسی‌ها', icon: Users, color: 'rose' },
@@ -893,6 +895,9 @@ export default function Settings({ courses, onRefresh }: SettingsProps) {
               </div>
             </form>
           )}
+
+          {/* ══ SUBTAB: PAYMENT GATEWAY (ZARINPAL) ══ */}
+          {activeSubTab === 'zarinpal' && <ZarinpalGatewayPanel />}
 
           {/* ══════════════════════════════════════════════
               SUBTAB 4: CLOUD DATABASE & MANUAL SYNC
