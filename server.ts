@@ -41,6 +41,7 @@ import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePaym
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
 import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
 import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './zarinpalSettings';
+import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, type EffectiveHamraz } from './hamrazSettings';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
 import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
 import { createAutomationSources, registrationContext } from './automationSources';
@@ -3485,10 +3486,9 @@ app.post('/api/settings/gateways', (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // AI COPILOT — Financial Accounting Agent (tool-calling)
 // ─────────────────────────────────────────────────────────────
-const COPILOT_API_URL = String(process.env.COPILOT_API_URL || '').trim().replace(/\/+$/, '');
-const COPILOT_API_KEY = String(process.env.COPILOT_API_KEY || '').trim();
-const COPILOT_MODEL = String(process.env.COPILOT_MODEL || 'gpt-4o-mini').trim();
-const COPILOT_MAX_ITERATIONS = 6;
+// Copilot (هم‌راز) config is read per request from Settings → تنظیمات هم‌راز (gateways.hamraz), env as fallback
+// (COPILOT_API_URL, COPILOT_API_KEY, COPILOT_MODEL, COPILOT_SQL_ENABLED). See hamrazSettings.ts.
+const hamraz = (): EffectiveHamraz => resolveHamraz(savedGateways());
 
 /** Academy display name from the CRM settings only (no hardcoded default); '' when not set. */
 function academyDisplayName(): string {
@@ -3521,6 +3521,21 @@ function copilotToolGuide(tools: any[]): string {
   return `۷) راهنمای ابزارها: ${parts.join('؛ ')}.`;
 }
 
+const COPILOT_SEND_RULE_DEFAULT = '۶) تلگرام و روبیکا را مستقیم نفرستید. sms_send، send_telegram_message و send_rubika_message فقط پیش‌نویس می‌سازند و کاربر باید دکمه «تأیید» را در ویجت بزند. پیامک استثناست: اگر کاربر صریحاً خواست پیامک ارسال شود، sms_send_direct را صدا بزنید. این ابزار همان لحظه می‌فرستد و منتظر ویجت نمی‌ماند. فقط وقتی نتیجه ابزار ok بود بگویید ارسال شد. الگوی رمز یکبارمصرف را هرگز نفرستید. اگر ابزار ارسال در دسترس نیست، متن را پیشنهاد دهید و بگویید از بخش «پیام‌رسان» بفرستد.';
+/** Rule ۶ follows Settings → تنظیمات هم‌راز; with the defaults it is the original text, word for word. */
+function copilotSendRule(h: EffectiveHamraz = hamraz()): string {
+  if (h.smsDirect && h.confirm.sms_send && h.confirm.telegram && h.confirm.rubika) return COPILOT_SEND_RULE_DEFAULT;
+  const label: Record<string, string> = { sms_send: 'sms_send (پیامک)', telegram: 'send_telegram_message (تلگرام)', rubika: 'send_rubika_message (روبیکا)' };
+  const drafts = (['sms_send', 'telegram', 'rubika'] as const).filter((k) => h.confirm[k]).map((k) => label[k]);
+  const directs = (['sms_send', 'telegram', 'rubika'] as const).filter((k) => !h.confirm[k]).map((k) => label[k]);
+  return [
+    '۶) ارسال پیام:',
+    drafts.length ? `${drafts.join('، ')} فقط پیش‌نویس می‌سازند و کاربر باید دکمه «تأیید» را در ویجت بزند.` : '',
+    directs.length ? `${directs.join('، ')} طبق تنظیمات مدیر بدون تأیید همان لحظه ارسال می‌کنند؛ فقط وقتی کاربر صریحاً ارسال خواسته از آن‌ها استفاده کنید.` : '',
+    h.smsDirect ? 'اگر کاربر صریحاً خواست پیامک ارسال شود، sms_send_direct را صدا بزنید؛ همان لحظه می‌فرستد.' : 'ارسال مستقیم پیامک (sms_send_direct) غیرفعال است.',
+    'فقط وقتی نتیجه ابزار ok بود بگویید ارسال شد. الگوی رمز یکبارمصرف را هرگز نفرستید. اگر ابزار ارسال در دسترس نیست، متن را پیشنهاد دهید و بگویید از بخش «پیام‌رسان» بفرستد.',
+  ].filter(Boolean).join(' ');
+}
 const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   `شما «دستیار هوشمند»${academyDisplayName() ? ` ${academyDisplayName()}` : ' آموزشگاه'} هستید؛ دستیار عمومی CRM آموزشگاه، فارسی‌زبان، دقیق و حرفه‌ای، برای امور مالی، هنرجویان و فراگیران، سرنخ‌ها، کلاس‌ها و دوره‌ها، کارهای کارکنان، پیام‌رسان، ثبت‌نام‌های سایت و آمار بازدید سایت. مخاطبین این مرکز عموماً رانندگان و مدیران حمل‌ونقل هستند و دوره‌ها آموزش کارت هوشمند است، نه آموزش رانندگی.`,
   'قوانین کار:',
@@ -3529,7 +3544,7 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید؛ وضعیت‌ها و کدها (مثل new، pending، approved، paid) را همیشه به فارسی بگویید، نه کد انگلیسی.',
-  '۶) تلگرام و روبیکا را مستقیم نفرستید. sms_send، send_telegram_message و send_rubika_message فقط پیش‌نویس می‌سازند و کاربر باید دکمه «تأیید» را در ویجت بزند. پیامک استثناست: اگر کاربر صریحاً خواست پیامک ارسال شود، sms_send_direct را صدا بزنید. این ابزار همان لحظه می‌فرستد و منتظر ویجت نمی‌ماند. فقط وقتی نتیجه ابزار ok بود بگویید ارسال شد. الگوی رمز یکبارمصرف را هرگز نفرستید. اگر ابزار ارسال در دسترس نیست، متن را پیشنهاد دهید و بگویید از بخش «پیام‌رسان» بفرستد.',
+  copilotSendRule(),
   copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
   '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
@@ -3814,7 +3829,7 @@ function toNumber(value: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-const COPILOT_SQL_ENABLED = String(process.env.COPILOT_SQL_ENABLED || '').trim() === '1';
+const copilotSqlEnabled = () => hamraz().sqlEnabled;
 
 const COPILOT_SQL_TOOL = {
   type: 'function',
@@ -4030,11 +4045,13 @@ const COPILOT_ADMIN_READ_TOOLS = [
 async function copilotToolsFor(role: string) {
   if (role !== 'admin') return COPILOT_TOOLS;
   let sqlTools: any[] = [];
-  if (COPILOT_SQL_ENABLED) {
+  const h = hamraz();
+  if (h.sqlEnabled) {
     const dbhub = dbhubSelected() ? await getDbhubTools() : null;
     sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
   }
-  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...COPILOT_SMS_TOOLS, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
+  const smsTools = h.smsDirect ? COPILOT_SMS_TOOLS : COPILOT_SMS_TOOLS.filter((t: any) => t?.function?.name !== 'sms_send_direct');
+  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...smsTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -4089,12 +4106,12 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   const a = args && typeof args === 'object' ? args : {};
 
   if (name === 'run_sql_query') {
-    if (!COPILOT_SQL_ENABLED || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
+    if (!copilotSqlEnabled() || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
     return runCopilotSql(a.database, a.sql, (e) => auditCopilotSql(ctx.username, e));
   }
 
   if (isDbhubTool(name)) {
-    if (!COPILOT_SQL_ENABLED || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
+    if (!copilotSqlEnabled() || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
     return callDbhubTool(name, a, (e) => auditCopilotSql(ctx.username, e));
   }
 
@@ -4148,7 +4165,10 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     const draft = await resolveCopilotSms(a);
     if ('error' in draft) return { error: draft.error };
     const { items, errors, key, vars, tpl } = draft;
-    if (name === 'sms_send_direct') {
+    const hz = hamraz();
+    if (name === 'sms_send_direct' && !hz.smsDirect) return { error: 'ارسال مستقیم پیامک در تنظیمات هم‌راز غیرفعال است.' };
+    // sms_send with confirmation turned off in Settings → تنظیمات هم‌راز behaves like sms_send_direct.
+    if (name === 'sms_send_direct' || !hz.confirm.sms_send) {
       const sent: string[] = []; const failed: string[] = [];
       for (const it of items) {
         let r: { ok: boolean; status: string; detail?: string };
@@ -4206,6 +4226,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
       createdAt: now,
       expiresAt: now + PENDING_TTL_MS,
     });
+    if (!hamraz().confirm.telegram) return sendPendingNow(pendingId, ctx.username);
     return { pending_id: pendingId, preview: `📱 تلگرام → ${to.label}\n${text}` };
   }
 
@@ -4228,6 +4249,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
       createdAt: now,
       expiresAt: now + PENDING_TTL_MS,
     });
+    if (!hamraz().confirm.rubika) return sendPendingNow(pendingId, ctx.username);
     return { pending_id: pendingId, preview: `💬 روبیکا → ${to.label}\n${text}` };
   }
 
@@ -4676,15 +4698,15 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   return { error: `ابزار ناشناخته: ${name}` };
 }
 
-async function callCopilotCompletion(messages: any[], withTools = true, tools: any[] = COPILOT_TOOLS) {
-  const response = await fetch(`${COPILOT_API_URL}/chat/completions`, {
+async function callCopilotCompletion(messages: any[], withTools = true, tools: any[] = COPILOT_TOOLS, h: EffectiveHamraz = hamraz()) {
+  const response = await fetch(`${h.apiUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${COPILOT_API_KEY}`,
+      Authorization: `Bearer ${h.apiKey}`,
     },
     body: JSON.stringify({
-      model: COPILOT_MODEL,
+      model: h.model,
       messages,
       ...(withTools ? { tools, tool_choice: 'auto' } : {}),
       temperature: 0.2,
@@ -4694,29 +4716,31 @@ async function callCopilotCompletion(messages: any[], withTools = true, tools: a
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`Copilot API error ${response.status}: ${detail.slice(0, 300)}`);
+    throw new Error(`Copilot API error ${response.status}: ${scrubSecret(detail, [h.apiKey]).slice(0, 300)}`);
   }
   return response.json() as Promise<any>;
 }
 
-// Settings → تنظیمات هم‌راز: read-only Copilot status (env-configured; no key, no URL is returned).
-app.get('/api/settings/copilot-status', requireAdmin, (req, res) => {
-  const names = new Set([...COPILOT_TOOLS, ...COPILOT_SMS_TOOLS].map((t: any) => String(t?.function?.name || '')));
-  res.json({
-    configured: !!COPILOT_API_URL,
-    model: COPILOT_MODEL,
-    max_iterations: COPILOT_MAX_ITERATIONS,
-    sql_enabled: COPILOT_SQL_ENABLED,
-    sms_direct: names.has('sms_send_direct'),
-    confirm_required: ['sms_send', 'send_telegram_message', 'send_rubika_message'],
-  });
+// Settings → تنظیمات هم‌راز (hamrazSettings.ts): admin-only, API key write-only, read at request time.
+registerHamrazSettings(app, {
+  readGateways: savedGateways,
+  writeHamraz: (next) => {
+    const db = readDb();
+    db.settings = { ...(db.settings as any), gateways: { ...((db.settings as any)?.gateways || {}), hamraz: next } };
+    writeDb(db);
+  },
+  isAdmin: (req) => currentRole(req) === 'admin',
 });
 
 app.post('/api/copilot/chat', requireAuth, async (req, res) => {
-  if (!COPILOT_API_URL) {
+  const hz = hamraz();
+  if (!hz.enabled) {
+    return res.status(503).json({ error: 'هم‌راز در تنظیمات غیرفعال شده است (تنظیمات > تنظیمات هم‌راز).' });
+  }
+  if (!hz.apiUrl) {
     return res.status(503).json({ error: 'سرویس هوش مصنوعی پیکربندی نشده است (COPILOT_API_URL تنظیم نشده).' });
   }
-  if (!COPILOT_API_KEY) {
+  if (!hz.apiKey) {
     return res.status(503).json({ error: 'کلید سرویس هوش مصنوعی تنظیم نشده است (COPILOT_API_KEY تنظیم نشده).' });
   }
 
@@ -4742,8 +4766,8 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   const pendingConfirmations: Array<{ pending_id: string; preview: string }> = [];
   try {
-    for (let iteration = 0; iteration < COPILOT_MAX_ITERATIONS; iteration++) {
-      const completion = await callCopilotCompletion(messages, true, tools);
+    for (let iteration = 0; iteration < hz.maxIterations; iteration++) {
+      const completion = await callCopilotCompletion(messages, true, tools, hz);
       const message = completion?.choices?.[0]?.message;
       if (!message) {
         return res.status(502).json({ error: 'پاسخ نامعتبر از سرویس هوش مصنوعی دریافت شد.' });
@@ -4786,29 +4810,16 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
     }
     // Tool budget spent: ask once more without tools so the user still gets an answer from the data gathered so far.
     messages.push({ role: 'user', content: 'با همین داده‌های به‌دست‌آمده و بدون فراخوانی ابزار دیگر، پاسخ نهایی را کوتاه بنویسید.' });
-    const final = await callCopilotCompletion(messages, false);
+    const final = await callCopilotCompletion(messages, false, COPILOT_TOOLS, hz);
     const finalText = String(final?.choices?.[0]?.message?.content || '').trim();
     return res.json({ reply: finalText || 'پاسخ کامل آماده نشد؛ لطفاً پرسش را دقیق‌تر بپرسید.', pendingConfirmations });
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'خطا در ارتباط با سرویس هوش مصنوعی.' });
+    return res.status(500).json({ error: scrubSecret(String(err?.message || ''), [hz.apiKey]) || 'خطا در ارتباط با سرویس هوش مصنوعی.' });
   }
 });
 
-/** POST /api/copilot/pending/:id/confirm — admin confirms and sends a pending message. */
-app.post('/api/copilot/pending/:id/confirm', requireAdmin, asyncHandler(async (req, res) => {
-  const pendingId = sanitizeString(req.params.id, 64);
-  const pending = pendingMessages.get(pendingId);
-  if (!pending) return res.status(404).json({ error: 'پیام معلق یافت نشد یا منقضی شده است.' });
-  if (pending.createdBy !== (req as any).user.username) {
-    return res.status(403).json({ error: 'فقط سازنده پیام می‌تواند آن را تأیید کند.' });
-  }
-  const sessionUser = (req as any).user || {};
-  const username = String(sessionUser.username || '');
-  const now = Date.now();
-  if (now > pending.expiresAt) {
-    pendingMessages.delete(pendingId);
-    return res.status(410).json({ error: 'پیام منقضی شده است.' });
-  }
+/** Sends one queued copilot message (SMS / Telegram / Rubika); used by «تأیید» and by no-confirm channels. */
+async function deliverPending(pending: any, pendingId: string): Promise<{ ok: boolean; error?: string }> {
   let result: { ok: boolean; error?: string } = { ok: false, error: 'کانال ناشناخته' };
   if (pending.channel === 'rubika') {
     try {
@@ -4838,6 +4849,42 @@ app.post('/api/copilot/pending/:id/confirm', requireAdmin, asyncHandler(async (r
   } else if (pending.channel === 'telegram') {
     result = await sendTelegramMessage(pending.recipient, pending.text);
   }
+  return result;
+}
+
+/**
+ * Settings → تنظیمات هم‌راز turned confirmation off for this channel: send the just-queued message now, audit it
+ * like a confirmation, and return a plain tool result (no pending_id, so the widget shows no «تأیید» box).
+ */
+async function sendPendingNow(pendingId: string, username: string): Promise<any> {
+  const pending = pendingMessages.get(pendingId);
+  if (!pending) return { error: 'پیام یافت نشد.' };
+  const result = await deliverPending(pending, pendingId);
+  pendingMessages.delete(pendingId);
+  void chabokan.insertAudit({
+    username, role: 'admin', method: 'POST',
+    path: `/copilot/direct/${pendingId}?ch=${pending.channel}&to=${`${pending.label} ${maskChatId(pending.recipient)}`}&ok=${result.ok ? 1 : 0}&text=${pending.text.slice(0, 100).replace(/\s+/g, ' ')}`.slice(0, 255),
+    entity: 'copilot_pending', entity_id: pendingId, status: result.ok ? 200 : 502, ip: null,
+  });
+  return result.ok ? { ok: true, note: 'پیام ارسال شد (بدون نیاز به تأیید، طبق تنظیمات هم‌راز).' } : { ok: false, error: result.error || 'ارسال ناموفق بود.' };
+}
+
+/** POST /api/copilot/pending/:id/confirm — admin confirms and sends a pending message. */
+app.post('/api/copilot/pending/:id/confirm', requireAdmin, asyncHandler(async (req, res) => {
+  const pendingId = sanitizeString(req.params.id, 64);
+  const pending = pendingMessages.get(pendingId);
+  if (!pending) return res.status(404).json({ error: 'پیام معلق یافت نشد یا منقضی شده است.' });
+  if (pending.createdBy !== (req as any).user.username) {
+    return res.status(403).json({ error: 'فقط سازنده پیام می‌تواند آن را تأیید کند.' });
+  }
+  const sessionUser = (req as any).user || {};
+  const username = String(sessionUser.username || '');
+  const now = Date.now();
+  if (now > pending.expiresAt) {
+    pendingMessages.delete(pendingId);
+    return res.status(410).json({ error: 'پیام منقضی شده است.' });
+  }
+  const result = await deliverPending(pending, pendingId);
   pendingMessages.delete(pendingId);
   if (result.ok) {
     void chabokan.insertAudit({

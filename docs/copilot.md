@@ -77,3 +77,24 @@ PATH=/root/.nvm/versions/node/v20.20.2/bin:$PATH pm2 restart carla-crm --update-
 ## env فرآیند CRM
 
 غیر از سه متغیر Copilot، `TELEGRAM_BOT_TOKEN` از `site/app/.env` داخل `.env` همین CRM کپی شده تا `send_notification` تلگرام از خود CRM کار کند. توکن را در لاگ و ریپو نگذار. `.env` روی سرور `0600` است.
+
+## تنظیمات > تنظیمات هم‌راز (Settings, admin only)
+
+All copilot knobs are editable in the CRM (`GET/POST /api/settings/hamraz`, `POST /api/settings/hamraz/test`) and
+stored in `settings.gateways.hamraz` (JSON store, never sent to the browser; no SQL migration). Precedence per
+field: saved > env > default; values are read per request, so saving needs no restart.
+
+| Field | Env fallback | Default |
+|---|---|---|
+| enabled | — | on |
+| API URL | `COPILOT_API_URL` | — |
+| API key (write-only, `api_key_set` only) | `COPILOT_API_KEY` | — |
+| model | `COPILOT_MODEL` | `gpt-4o-mini` |
+| max steps (1..20) | — | 6 |
+| read-only SQL | `COPILOT_SQL_ENABLED=1` | off |
+| `sms_send_direct` allowed | — | on |
+| confirm before send: sms_send / Telegram / Rubika | — | all on |
+
+With a confirmation toggle off, that channel's tool sends immediately (audited as `/copilot/direct/...`), and the
+system prompt rule ۶ is rebuilt to match; with the defaults rule ۶ is the original text. «تست اتصال» sends one
+`ping` chat completion (`max_tokens` 5, no tools); provider errors are scrubbed of the key.
