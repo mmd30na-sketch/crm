@@ -37,17 +37,18 @@ export interface ZpTestResult {
 }
 export interface ZpTerminal { id: string; status: string; domain: string; name: string; matches_merchant: boolean }
 export interface ZpSession { id: string; created_at: string; amount_rial: number; amount_toman: number; status: string; description: string; rrn: string; card: string }
-export interface ZpTransactions { terminals: ZpTerminal[]; terminal_id: string | null; limit: number; offset: number; sessions: ZpSession[] }
+export interface ZpTransactions { terminals: ZpTerminal[]; terminal_id: string | null; total: number; by_status: Record<string, number>; truncated: boolean; sessions: ZpSession[] }
 
+export interface CopilotStatus {
+  configured: boolean; model: string; max_iterations: number; sql_enabled: boolean;
+  sms_direct: boolean; confirm_required: string[];
+}
+export const getCopilotStatus = () => call<CopilotStatus>('/settings/copilot-status');
 export const getZarinpalSettings = () => call<ZarinpalSettingsView>('/settings/zarinpal');
 export const saveZarinpalSettings = (patch: ZarinpalSettingsPatch) =>
   call<{ success: boolean; settings: ZarinpalSettingsView }>('/settings/zarinpal', { method: 'POST', body: JSON.stringify(patch) });
 export const testZarinpal = () => call<ZpTestResult>('/settings/zarinpal/test', { method: 'POST', body: '{}' });
-export const fetchZarinpalTransactions = (q: { terminal_id?: string; limit?: number; offset?: number } = {}) => {
-  const p = new URLSearchParams();
-  if (q.terminal_id) p.set('terminal_id', q.terminal_id);
-  if (q.limit) p.set('limit', String(q.limit));
-  if (q.offset) p.set('offset', String(q.offset));
-  const qs = p.toString();
+export const fetchZarinpalTransactions = (q: { terminal_id?: string } = {}) => {
+  const qs = q.terminal_id ? `terminal_id=${encodeURIComponent(q.terminal_id)}` : '';
   return call<ZpTransactions>(`/settings/zarinpal/transactions${qs ? `?${qs}` : ''}`);
 };

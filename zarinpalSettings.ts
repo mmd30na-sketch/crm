@@ -214,6 +214,30 @@ export async function fetchSessions(token: string, terminalId: string, limit = 5
   return (Array.isArray(d.Session) ? d.Session : []).map(mapSession);
 }
 
+/**
+ * Every session of a terminal, all statuses (no `filter` argument), paged with limit/offset until a short
+ * page, de-duplicated by id and sorted newest first. `maxPages` bounds the work (100 × 50 = 5000 rows).
+ */
+export async function fetchAllSessions(token: string, terminalId: string, fetchImpl?: FetchLike, pageSize = 100, maxPages = 50): Promise<{ sessions: ZpSessionRow[]; truncated: boolean }> {
+  const byId = new Map<string, ZpSessionRow>();
+  let truncated = false;
+  for (let page = 0; page < maxPages; page++) {
+    const rows = await fetchSessions(token, terminalId, pageSize, page * pageSize, fetchImpl);
+    let added = 0;
+    for (const r of rows) if (r.id && !byId.has(r.id)) { byId.set(r.id, r); added++; }
+    if (rows.length < pageSize || added === 0) break; // last page (or the API ignored offset)
+    if (page === maxPages - 1) truncated = true;
+  }
+  const sessions = [...byId.values()].sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
+  return { sessions, truncated };
+}
+
+export function countByStatus(rows: ZpSessionRow[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.status || '?'] = (out[r.status || '?'] || 0) + 1;
+  return out;
+}
+
 export type ZarinpalSettingsDeps = {
   readGateways: () => any;
   writeZarinpal: (next: SavedZarinpal) => void;
@@ -263,7 +287,7 @@ export function registerZarinpalSettings(app: express.Express, deps: ZarinpalSet
     res.json({ merchant, api, settings: publicZarinpal(e) });
   });
 
-  /** Read-only sync: terminals + one page of sessions. Nothing is written. */
+  /** Read-only sync: terminals + every session (all statuses, fully paged). Nothing is written. */
   app.get('/api/settings/zarinpal/transactions', async (req, res) => {
     if (!guard(req, res)) return;
     const e = eff();
@@ -271,10 +295,8 @@ export function registerZarinpalSettings(app: express.Express, deps: ZarinpalSet
       const terminals = await fetchTerminals(e.accessToken, e.merchantId, deps.fetchImpl);
       const wanted = String(req.query.terminal_id || '');
       const terminal = terminals.find((t) => t.id === wanted) || terminals.find((t) => t.matches_merchant) || terminals[0];
-      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
-      const offset = Math.max(0, Number(req.query.offset) || 0);
-      const sessions = terminal ? await fetchSessions(e.accessToken, terminal.id, limit, offset, deps.fetchImpl) : [];
-      res.json({ terminals, terminal_id: terminal?.id || null, limit, offset, sessions });
+      const { sessions, truncated } = terminal ? await fetchAllSessions(e.accessToken, terminal.id, deps.fetchImpl) : { sessions: [], truncated: false };
+      res.json({ terminals, terminal_id: terminal?.id || null, total: sessions.length, by_status: countByStatus(sessions), truncated, sessions });
     } catch (err: any) {
       log(`zarinpal sync failed: ${err?.message}`);
       fail(res, err);

@@ -4699,6 +4699,19 @@ async function callCopilotCompletion(messages: any[], withTools = true, tools: a
   return response.json() as Promise<any>;
 }
 
+// Settings → تنظیمات هم‌راز: read-only Copilot status (env-configured; no key, no URL is returned).
+app.get('/api/settings/copilot-status', requireAdmin, (req, res) => {
+  const names = new Set([...COPILOT_TOOLS, ...COPILOT_SMS_TOOLS].map((t: any) => String(t?.function?.name || '')));
+  res.json({
+    configured: !!COPILOT_API_URL,
+    model: COPILOT_MODEL,
+    max_iterations: COPILOT_MAX_ITERATIONS,
+    sql_enabled: COPILOT_SQL_ENABLED,
+    sms_direct: names.has('sms_send_direct'),
+    confirm_required: ['sms_send', 'send_telegram_message', 'send_rubika_message'],
+  });
+});
+
 app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   if (!COPILOT_API_URL) {
     return res.status(503).json({ error: 'سرویس هوش مصنوعی پیکربندی نشده است (COPILOT_API_URL تنظیم نشده).' });

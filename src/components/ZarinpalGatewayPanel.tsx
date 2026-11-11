@@ -35,6 +35,8 @@ export default function ZarinpalGatewayPanel() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [tx, setTx] = useState<zp.ZpTransactions | null>(null);
+  const [page, setPage] = useState(0);
+  const PAGE = 50;
 
   const apply = (v: zp.ZarinpalSettingsView) => {
     setView(v); setSandbox(v.sandbox); setCurrency(v.currency); setPublicBase(v.public_base_url); setLinkBase(v.payment_link_base);
@@ -65,9 +67,9 @@ export default function ZarinpalGatewayPanel() {
     catch (e: any) { setTest({ merchant: { ok: false, message: e?.message || 'خطا' }, api: { ok: false, message: '' }, settings: view! }); }
     finally { setTesting(false); }
   };
-  const sync = async (terminalId?: string, offset = 0) => {
+  const sync = async (terminalId?: string) => {
     setSyncing(true); setSyncError('');
-    try { setTx(await zp.fetchZarinpalTransactions({ terminal_id: terminalId, limit: 50, offset })); }
+    try { setTx(await zp.fetchZarinpalTransactions({ terminal_id: terminalId })); setPage(0); }
     catch (e: any) { setSyncError(e?.message || 'همگام‌سازی ناموفق بود'); }
     finally { setSyncing(false); }
   };
@@ -152,7 +154,7 @@ export default function ZarinpalGatewayPanel() {
         <div className="flex flex-wrap items-center gap-2">
           <h4 className="text-xs font-bold text-slate-800">تراکنش‌های زرین‌پال</h4>
           <span className="text-[10px] text-slate-400">فقط خواندنی — چیزی در زرین‌پال یا CRM تغییر نمی‌کند.</span>
-          <button type="button" onClick={() => sync(tx?.terminal_id || undefined, 0)} disabled={syncing || !view.access_token_set} className="mr-auto px-4 py-2 text-xs font-bold rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white cursor-pointer flex items-center gap-1.5">
+          <button type="button" onClick={() => sync(tx?.terminal_id || undefined)} disabled={syncing || !view.access_token_set} className="mr-auto px-4 py-2 text-xs font-bold rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white cursor-pointer flex items-center gap-1.5">
             {syncing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}همگام‌سازی تراکنش‌های زرین‌پال
           </button>
         </div>
@@ -161,11 +163,16 @@ export default function ZarinpalGatewayPanel() {
         {tx && (
           <>
             {tx.terminals.length > 1 && (
-              <select value={tx.terminal_id || ''} onChange={e => sync(e.target.value, 0)} className="px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white cursor-pointer">
+              <select value={tx.terminal_id || ''} onChange={e => sync(e.target.value)} className="px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white cursor-pointer">
                 {tx.terminals.map(t => <option key={t.id} value={t.id}>{t.name || t.domain || t.id} ({t.domain}){t.matches_merchant ? ' — مرچنت فعلی' : ''}</option>)}
               </select>
             )}
             {tx.terminals.length === 1 && <p className="text-[11px] text-slate-500">درگاه: <bdi dir="ltr">{tx.terminals[0].domain}</bdi> — {tx.terminals[0].status}{tx.terminals[0].matches_merchant ? ' (همان مرچنت تنظیم‌شده)' : ''}</p>}
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="font-bold text-slate-700">مجموع: {tx.total.toLocaleString('fa-IR')} تراکنش</span>
+              {Object.entries(tx.by_status).map(([k, n]) => <span key={k} className="px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-slate-600">{SESSION_STATUS[k] || k}: {n.toLocaleString('fa-IR')}</span>)}
+              {tx.truncated && <span className="text-amber-700">(فقط بخشی از تراکنش‌ها دریافت شد)</span>}
+            </div>
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-right text-xs">
                 <thead className="bg-slate-50 text-slate-600">
@@ -176,7 +183,7 @@ export default function ZarinpalGatewayPanel() {
                 </thead>
                 <tbody>
                   {tx.sessions.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-slate-400">تراکنشی یافت نشد.</td></tr>}
-                  {tx.sessions.map(s => (
+                  {tx.sessions.slice(page * PAGE, (page + 1) * PAGE).map(s => (
                     <tr key={s.id} className="border-t border-slate-100">
                       <td className="p-2 whitespace-nowrap">{fmtDate(s.created_at)}</td>
                       <td className="p-2 whitespace-nowrap font-bold">{fmtToman(s.amount_toman)}</td>
@@ -189,11 +196,13 @@ export default function ZarinpalGatewayPanel() {
                 </tbody>
               </table>
             </div>
-            <div className="flex items-center gap-2 text-[11px]">
-              <button type="button" disabled={syncing || tx.offset === 0} onClick={() => sync(tx.terminal_id || undefined, Math.max(0, tx.offset - tx.limit))} className="px-3 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 cursor-pointer">قبلی</button>
-              <button type="button" disabled={syncing || tx.sessions.length < tx.limit} onClick={() => sync(tx.terminal_id || undefined, tx.offset + tx.limit)} className="px-3 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 cursor-pointer">بعدی</button>
-              <span className="text-slate-400">ردیف {(tx.offset + 1).toLocaleString('fa-IR')} تا {(tx.offset + tx.sessions.length).toLocaleString('fa-IR')}</span>
-            </div>
+            {tx.total > PAGE && (
+              <div className="flex items-center gap-2 text-[11px]">
+                <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)} className="px-3 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 cursor-pointer">قبلی</button>
+                <button type="button" disabled={(page + 1) * PAGE >= tx.total} onClick={() => setPage(page + 1)} className="px-3 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 cursor-pointer">بعدی</button>
+                <span className="text-slate-400">ردیف {(page * PAGE + 1).toLocaleString('fa-IR')} تا {Math.min(tx.total, (page + 1) * PAGE).toLocaleString('fa-IR')}</span>
+              </div>
+            )}
           </>
         )}
       </div>
