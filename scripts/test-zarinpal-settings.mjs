@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   resolveZarinpal, publicZarinpal, applyZarinpalPatch, maskTail, maskCard, normalizeAccessToken,
-  isMerchantUuid, zarinpalQuery, fetchTerminals, fetchSessions, toZarinpalConfig,
+  isMerchantUuid, zarinpalQuery, fetchTerminals, fetchSessions, fetchAllSessions, countByStatus, toZarinpalConfig,
 } from '../zarinpalSettings.ts';
 import { zarinpalConfigFromEnv } from '../zarinpal.ts';
 
@@ -77,4 +77,26 @@ assert.equal(terms[0].matches_merchant, true);
 const rows = await fetchSessions(TOKEN, '630542', 50, 0, fakeFetch);
 assert.deepEqual(rows[0], { id: '9', created_at: '2026-11-11T10:00:00+03:30', amount_rial: 100000, amount_toman: 10000, status: 'VERIFIED', description: 'd', rrn: '123', card: '****4321' });
 assert.equal(calls.every((c) => /^\s*query\b/.test(JSON.parse(c.init.body).query)), true);
+
+// 5. Full sync: all statuses (no filter arg), every page, de-duplicated, newest first.
+const all = Array.from({ length: 9 }, (_, i) => ({ id: String(100 + i), status: i < 4 ? 'VERIFIED' : 'FAILED', amount: 10000 * (i + 1), description: '', created_at: `2026-11-0${i + 1}T10:00:00+03:30`, session_tries: [] }));
+const pageCalls = [];
+const pagedFetch = async (url, init) => {
+  const b = JSON.parse(init.body);
+  pageCalls.push(b);
+  assert.equal(/filter/i.test(b.query), false, 'sync must not filter by status');
+  const { limit, offset } = b.variables;
+  const rowsPage = all.slice(offset, offset + limit);
+  if (offset === 4) rowsPage.push(all[0]); // duplicate across pages
+  return { ok: true, status: 200, json: async () => ({ data: { Session: rowsPage } }) };
+};
+const full = await fetchAllSessions(TOKEN, '630542', pagedFetch, 4);
+assert.equal(full.sessions.length, 9);
+assert.equal(full.truncated, false);
+assert.equal(pageCalls.length, 3);
+assert.deepEqual(countByStatus(full.sessions), { VERIFIED: 4, FAILED: 5 });
+assert.equal(full.sessions[0].id, '108', 'newest first');
+// an API that ignores offset must not loop forever
+const stuck = await fetchAllSessions(TOKEN, 't', async () => ({ ok: true, status: 200, json: async () => ({ data: { Session: all.slice(0, 4) } }) }), 4);
+assert.equal(stuck.sessions.length, 4);
 console.log('zarinpal-settings: ok');

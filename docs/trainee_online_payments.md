@@ -75,7 +75,7 @@ With nothing saved the behavior is identical to the env-only setup. The browser 
 chars of the merchant id and `access_token_set`. «تست اتصال» checks the merchant UUID format and, when a
 token is set, runs `query { Me { id } }` on `https://next.zarinpal.com/api/v4/graphql/` (a leading `Bearer `
 and whitespace are stripped). «همگام‌سازی تراکنش‌های زرین‌پال» is read-only: `Terminals` + `Session`
-(limit/offset, amounts in Rial shown as Toman, card masked to the last 4); nothing is stored. Only GraphQL
+(all statuses, no `filter`, paged with limit/offset until a short page, de-duplicated by id; amounts in Rial shown as Toman, card masked to the last 4); nothing is stored. The page lives under «تنظیمات > تنظیمات هم‌راز», next to a read-only هم‌راز status card (`GET /api/settings/copilot-status`). Only GraphQL
 `query` operations are sent — the helper rejects `mutation`.
 
 Amounts are stored in Toman and sent as
