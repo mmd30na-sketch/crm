@@ -1,14 +1,17 @@
 // «تنظیمات هم‌راز»: settings group for the CRM's AI copilot (هم‌راز). Sub-sections: payment gateway
 // (Zarinpal) and the editable copilot settings (saved > .env > default, applied without a restart).
 import React, { useEffect, useState } from 'react';
-import { Bot, CreditCard, RefreshCw, CheckCircle, AlertCircle, Save, Wifi } from 'lucide-react';
+import { Bot, CreditCard, UserCircle, Users, RefreshCw, CheckCircle, AlertCircle, Save, Wifi } from 'lucide-react';
 import ZarinpalGatewayPanel from './ZarinpalGatewayPanel';
+import { BusinessOwnerForm, LevelsAndUsersPanel } from './OwnerAndLevelsPanels';
 import * as zp from '../api/zarinpalSettings';
 
-type Sub = 'payment' | 'copilot';
+type Sub = 'payment' | 'copilot' | 'owner' | 'levels';
 const SUBS: { id: Sub; label: string; icon: typeof Bot }[] = [
   { id: 'payment', label: 'درگاه پرداخت', icon: CreditCard },
   { id: 'copilot', label: 'دستیار هم‌راز', icon: Bot },
+  { id: 'owner', label: 'صاحب کسب‌وکار', icon: UserCircle },
+  { id: 'levels', label: 'سطوح و کاربران', icon: Users },
 ];
 const SOURCE_LABEL: Record<string, string> = { saved: 'ذخیره‌شده', env: '.env سرور', default: 'پیش‌فرض' };
 const inputCls = 'w-full px-3 py-2 text-xs border border-slate-200 rounded-lg font-mono bg-white focus:outline-none focus:ring-2 focus:ring-sky-200 focus:border-sky-400';
@@ -152,7 +155,7 @@ export default function HamrazSettingsPanel() {
           </button>
         ))}
       </div>
-      {sub === 'payment' ? <ZarinpalGatewayPanel /> : <CopilotSettingsForm />}
+      {sub === 'payment' ? <ZarinpalGatewayPanel /> : sub === 'copilot' ? <CopilotSettingsForm /> : sub === 'owner' ? <BusinessOwnerForm /> : <LevelsAndUsersPanel />}
     </div>
   );
 }
