@@ -32,6 +32,7 @@ function CopilotSettingsForm() {
   const [steps, setSteps] = useState(6);
   const [sql, setSql] = useState(false);
   const [smsDirect, setSmsDirect] = useState(true);
+  const [payTools, setPayTools] = useState(true);
   const [confirm, setConfirm] = useState<Record<zp.HamrazConfirmKey, boolean>>({ sms_send: true, telegram: true, rubika: true });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -39,7 +40,7 @@ function CopilotSettingsForm() {
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
   const apply = (x: zp.HamrazSettingsView) => {
     setV(x); setEnabled(x.enabled); setApiUrl(x.api_url); setModel(x.model); setSteps(x.max_iterations);
-    setSql(x.sql_enabled); setSmsDirect(x.sms_direct); setConfirm({ ...x.confirm });
+    setSql(x.sql_enabled); setSmsDirect(x.sms_direct); setPayTools(x.payment_tools); setConfirm({ ...x.confirm });
   };
   useEffect(() => { zp.getHamrazSettings().then(apply).catch((e) => setErr(e?.message || 'خطا در دریافت تنظیمات')); }, []);
 
@@ -56,6 +57,7 @@ function CopilotSettingsForm() {
       if (keep('max_iterations', steps !== v.max_iterations)) p.max_iterations = steps;
       if (keep('sql_enabled', sql !== v.sql_enabled)) p.sql_enabled = sql;
       if (keep('sms_direct', smsDirect !== v.sms_direct)) p.sms_direct = smsDirect;
+      if (keep('payment_tools', payTools !== v.payment_tools)) p.payment_tools = payTools;
       const c: Partial<Record<zp.HamrazConfirmKey, boolean>> = {};
       (['sms_send', 'telegram', 'rubika'] as const).forEach((k) => { if (keep(k, confirm[k] !== v.confirm[k])) c[k] = confirm[k]; });
       if (Object.keys(c).length) p.confirm = c;
@@ -113,10 +115,12 @@ function CopilotSettingsForm() {
           <div className="text-xs font-bold text-slate-800 border-b border-slate-200/60 pb-2 mb-1">ابزارها و ارسال پیام</div>
           <Toggle label="پرس‌وجوی فقط‌خواندنی SQL (فقط مدیر)" checked={sql} onChange={setSql} src={v.sources.sql_enabled} />
           <Toggle label="ارسال مستقیم پیامک به درخواست مدیر (sms_send_direct)" checked={smsDirect} onChange={setSmsDirect} src={v.sources.sms_direct} hint="وقتی مدیر صریحاً «بفرست» بگوید، پیامک همان لحظه ارسال می‌شود." />
+          <Toggle label="ابزارهای پرداخت زرین‌پال (گزارش تراکنش، استعلام، تسویه، لینک پرداخت)" checked={payTools} onChange={setPayTools} src={v.sources.payment_tools} hint="ریورس و استرداد همیشه نیاز به «تأیید» مدیر دارند و این قابل خاموش کردن نیست." />
           <div className="text-[11px] font-bold text-slate-600 pt-2">نیاز به «تأیید» قبل از ارسال:</div>
           <Toggle label="پیش‌نویس پیامک (sms_send)" checked={confirm.sms_send} onChange={(b) => setConfirm({ ...confirm, sms_send: b })} src={v.sources.sms_send} />
           <Toggle label="تلگرام" checked={confirm.telegram} onChange={(b) => setConfirm({ ...confirm, telegram: b })} src={v.sources.telegram} />
           <Toggle label="روبیکا" checked={confirm.rubika} onChange={(b) => setConfirm({ ...confirm, rubika: b })} src={v.sources.rubika} />
+          <label className="flex items-start gap-2 text-[11px] font-semibold text-slate-400 py-1"><input type="checkbox" checked disabled className="mt-0.5" /><span>ریورس و استرداد زرین‌پال (همیشه)</span></label>
           {(!confirm.sms_send || !confirm.telegram || !confirm.rubika) && <div className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-2">کانال‌هایی که تأییدشان خاموش است، بدون تأیید همان لحظه ارسال می‌شوند.</div>}
         </div>
       </div>
