@@ -3506,7 +3506,7 @@ const COPILOT_TOOL_GUIDE: [string, string][] = [
   ['list_sms', 'سوابق پیامک‌های ارسالی و الگوهای پیامک'],
   ['sms_get_credit', 'اعتبار باقی‌مانده و خط پنل پیامک'], ['sms_delivery_status', 'وضعیت تحویل پیامک‌های ارسالی از پنل'],
   ['sms_list_received', 'پیامک‌های دریافتی (پاسخ‌ها)'], ['sms_send', 'پیش‌نویس ارسال پیامک (فقط پس از تأیید ادمین در ویجت ارسال می‌شود)'],
-  ['sms_send_direct', 'پیش‌نویس ارسال پیامک (بعد از تأیید ادمین در ویجت)'],
+  ['sms_send_direct', 'ارسال مستقیم پیامک، فقط وقتی کاربر صریحاً ارسال خواسته'],
   ['list_activity_log', 'سوابق تغییرات و تماس‌ها'], ['search_student', 'جست‌وجوی کارآموز'], ['trainee_count', 'تعداد کل کارآموزان'],
   ['get_student_financial_summary', 'خلاصه مالی یک کارآموز'], ['get_daily_cashflow', 'گردش روزانه'],
   ['get_debtors_list', 'بدهکاران'], ['top_debtors', 'بیشترین بدهکاران'], ['get_course_statistics', 'آمار یک دوره'],
@@ -3528,7 +3528,7 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید؛ وضعیت‌ها و کدها (مثل new، pending، approved، paid) را همیشه به فارسی بگویید، نه کد انگلیسی.',
-  '۶) تلگرام و روبیکا و پیامک را مستقیم نفرستید. sms_send، sms_send_direct، send_telegram_message و send_rubika_message فقط پیش‌نویس می‌سازند و کاربر باید دکمه «تأیید» را در ویجت بزند، پس از دیدن متن دقیق و گیرنده‌ها. هیچ پیامکی ارسال نمی‌شود تا تأیید انسانی انجام شود. فقط بعد از تأیید بگویید ارسال شد. الگوی رمز یکبارمصرف را هرگز نفرستید. اگر ابزار ارسال در دسترس نیست، متن را پیشنهاد دهید و بگویید از بخش «پیام‌رسان» بفرستد.',
+  '۶) تلگرام و روبیکا را مستقیم نفرستید. sms_send، send_telegram_message و send_rubika_message فقط پیش‌نویس می‌سازند و کاربر باید دکمه «تأیید» را در ویجت بزند. پیامک استثناست: اگر کاربر صریحاً خواست پیامک ارسال شود، sms_send_direct را صدا بزنید. این ابزار همان لحظه می‌فرستد و منتظر ویجت نمی‌ماند. فقط وقتی نتیجه ابزار ok بود بگویید ارسال شد. الگوی رمز یکبارمصرف را هرگز نفرستید. اگر ابزار ارسال در دسترس نیست، متن را پیشنهاد دهید و بگویید از بخش «پیام‌رسان» بفرستد.',
   copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
   '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
@@ -3953,7 +3953,7 @@ const COPILOT_SMS_TOOLS = [
     template_key: { type: 'string', description: 'کلید الگوی پیامک (اختیاری؛ به‌جای text)' },
     params: { type: 'object', description: 'مقادیر متغیرهای الگو، مثل { "name": "علی", "course": "..." }؛ نام و موبایل هر کارآموز خودکار پر می‌شود', additionalProperties: { type: 'string' } },
     text: { type: 'string', description: 'متن آزاد پیامک (اگر template_key داده نشده)' } }, required: ['recipients'] } } },
-  { type: 'function', function: { name: 'sms_send_direct', description: 'یک پیامک پیش‌نویس می‌سازد و برای تأیید ادمین در صف می‌گذارد؛ هیچ‌چیزی ارسال نمی‌شود تا ادمین در ویجت «تأیید» را بزند (پس از دیدن متن دقیق و گیرنده‌ها). گیرنده: student_id یا موبایل، حداکثر ۲۰. محتوا: یا template_key با params، یا text آزاد. الگوی رمز یکبارمصرف ممنوع. بازگرداندن: { pending_id, preview }. این ابزار همان مسیر sms_send است و ارسال فوری ندارد.', parameters: { type: 'object', properties: {
+  { type: 'function', function: { name: 'sms_send_direct', description: 'پیامک را همان لحظه می‌فرستد و منتظر تأیید ویجت نمی‌ماند. فقط وقتی کاربر صریحاً ارسال خواسته (بفرست، ارسال کن). گیرنده: student_id یا موبایل، حداکثر ۲۰. محتوا: یا template_key با params، یا text آزاد. الگوی رمز یکبارمصرف ممنوع. بازگرداندن: { ok, sent, failed }؛ فقط اگر ok بود بگو ارسال شد.', parameters: { type: 'object', properties: {
     recipients: { type: 'array', items: { type: 'string' }, description: 'فهرست student_id یا شماره موبایل (09xxxxxxxxx)؛ حداکثر ۲۰' },
     template_key: { type: 'string', description: 'کلید الگوی پیامک (اختیاری؛ به‌جای text)' },
     params: { type: 'object', description: 'مقادیر متغیرهای الگو؛ نام و موبایل هر کارآموز خودکار پر می‌شود', additionalProperties: { type: 'string' } },
@@ -4147,6 +4147,31 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     const draft = await resolveCopilotSms(a);
     if ('error' in draft) return { error: draft.error };
     const { items, errors, key, vars, tpl } = draft;
+    if (name === 'sms_send_direct') {
+      const sent: string[] = []; const failed: string[] = [];
+      for (const it of items) {
+        let r: { ok: boolean; status: string; detail?: string };
+        try {
+          r = key
+            ? await sharedSms.sendTemplate(key, it.mobile, { ...vars, ...(it.studentId && !vars.name ? { name: it.label } : {}), mobile: it.mobile })
+            : await sharedSms.sendText(it.mobile, it.text);
+        } catch (e: any) { r = { ok: false, status: 'failed', detail: e?.message || 'error' }; }
+        (r.ok ? sent : failed).push(it.mobile);
+        const db = readDb(); const t = Date.now();
+        const outbox = ((db as any).outbox ||= []) as any[];
+        outbox.push({ id: `MSG-${t}-${crypto.randomBytes(2).toString('hex')}`, recipient: it.mobile, channel: 'sms', message: it.text, student_id: it.studentId ?? undefined,
+          sent_at: new Date(t).toISOString(), status: r.ok ? 'sent' : (r.status === 'disabled' ? 'failed' : r.status), note: `copilot direct${key ? ` tpl=${key}` : ''}${r.detail ? ` ${r.detail}` : ''}`.slice(0, 300) });
+        if (outbox.length > MAX_STORED_MESSAGES) outbox.splice(0, outbox.length - MAX_STORED_MESSAGES);
+        writeDb(db);
+      }
+      void chabokan.insertAudit({
+        username: ctx.username, role: 'admin', method: 'POST',
+        path: `/copilot/sms_send_direct?n=${items.length}&ok=${failed.length ? 0 : 1}&text=${items[0].text.slice(0, 80).replace(/\s+/g, ' ')}`.slice(0, 255),
+        entity: 'copilot_sms', entity_id: key || 'text', status: failed.length ? 502 : 200, ip: null,
+      });
+      return { ok: failed.length === 0, sent: sent.length, failed: failed.length, skipped: errors.length ? errors : undefined,
+        note: failed.length === 0 ? 'پیامک ارسال شد.' : `${sent.length} ارسال شد، ${failed.length} ناموفق` };
+    }
     const parts = items.reduce((n, x) => n + smsParts(x.text), 0);
     const pendingId = `sms_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const now = Date.now();
