@@ -437,7 +437,10 @@ function AppShell() {
   }, []);
 
   const role: StaffRole = currentUser?.role === 'cashier' || currentUser?.role === 'instructor' ? currentUser.role : 'admin';
-  const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role) && (item.id !== 'branches' || branchesEnabled));
+  // User level permission matrix (/api/auth/me); the server enforces it, this only hides tabs that would 403.
+  const perms: Record<string, boolean> | undefined = (currentUser as any)?.permissions;
+  const NAV_PERM: Record<string, string> = { students: 'students', terms: 'students', register: 'students', accounting: 'payments', invoices: 'payments', 'finance-reports': 'payments', 'online-payments': 'payments', pay: 'lessons', lessons: 'lessons', copilot: 'hamraz', 'debt-sms': 'sms', messenger: 'sms', email: 'sms', campaigns: 'sms', leads: 'leads', 'lead-pipeline': 'leads', automation: 'settings', branches: 'settings' };
+  const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role) && (item.id !== 'branches' || branchesEnabled) && (!perms || !NAV_PERM[item.id] || perms[NAV_PERM[item.id]] !== false));
 
   const handleActiveTabChange = (newTab: string) => {
     if (!visibleNav.some(item => item.id === newTab)) return;

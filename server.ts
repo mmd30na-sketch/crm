@@ -41,6 +41,8 @@ import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePaym
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
 import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore, debtSmsConfig } from './debtSms';
 import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './zarinpalSettings';
+import { PERMISSIONS, FULL_ADMIN_ID, ensureAccessLevels, levelForSession, listLevels, permissionsForRequest, missingPermissions, permissionForCopilotTool, validateLevelInput, type AccessLevel } from './accessLevels';
+import { validateOwner, ownerLinks } from './ownerContact';
 import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, type EffectiveHamraz } from './hamrazSettings';
 import { createZarinpalClient, executePaymentAction, isPaymentTool, runPaymentTool, skillsPrompt as paymentSkillsPrompt, toolDefinitions as paymentToolDefinitions, type PaymentAction, type PaymentToolDeps } from './agent/payment_tools';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
@@ -317,6 +319,8 @@ interface StaffUserRecord {
   password_hash: string;
   full_name: string;
   role: 'admin' | 'cashier' | 'instructor';
+  /** accessLevels.ts level id (migrated by ensureAccessLevels). */
+  level_id?: string;
   is_active: boolean;
   created_at: string;
 }
@@ -723,7 +727,7 @@ function sessionFromRequest(req: express.Request): any | null {
     try {
       const staff = readDb().staff_users.find((s) => s.id === session.user_id);
       if (!staff || !staff.is_active || session.pwv !== passwordTag(staff.password_hash)) return null;
-      return { ...session, username: staff.username, role: staff.role };
+      return { ...session, username: staff.username, role: staff.role, level_id: staff.level_id };
     } catch {
       return null;
     }
@@ -880,7 +884,10 @@ app.get('/api/auth/sso', (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
-  res.json({ user: (req as any).user || null, db: chabokan.isMysqlEnabled() ? 'chabokan-mysql' : 'json' });
+  const u = (req as any).user || null;
+  let level: AccessLevel | null = null;
+  try { level = levelForSession(readDb(), u); } catch { /* keep the old response shape */ }
+  res.json({ user: u ? { ...u, level_id: level?.id, level_name: level?.name, permissions: level?.permissions } : null, db: chabokan.isMysqlEnabled() ? 'chabokan-mysql' : 'json' });
 });
 
 app.post('/api/auth/logout', (_req, res) => res.json({ success: true }));
@@ -977,8 +984,25 @@ app.use('/api', (req, res, next) => {
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
+  // User levels (accessLevels.ts): the level's permission matrix can only narrow what the base role allows.
+  const need = permissionsForRequest(req.method, req.path);
+  if (need.length) {
+    let level: AccessLevel;
+    try { level = levelForSession(readDb(), (req as any).user); } catch { return res.status(503).json({ error: 'Unavailable' }); }
+    const missing = missingPermissions(level, need);
+    if (missing.length) return res.status(403).json({ error: `سطح «${level.name}» به این بخش دسترسی ندارد.`, missing });
+    (req as any).accessLevel = level;
+  }
   next();
 });
+
+/** Permission check for routes/tools that are not path-mapped (copilot tools, pending confirmations). */
+function hasPermission(req: express.Request | { user: any }, key: string): boolean {
+  try { return !!(levelForSession(readDb(), (req as any).user) as any).permissions[key]; } catch { return false; }
+}
+
+// Idempotent migration: seed the system levels and give every local staff user a level (admins → «مدیر کل»).
+if (fs.existsSync(DB_PATH)) try { const db = readDb(); if (ensureAccessLevels(db)) { writeDb(db); console.log('[access-levels] migrated'); } } catch (e: any) { console.warn('[access-levels] migration skipped:', e?.message || e); }
 
 // Multi-branch scoping (CRM_MULTI_BRANCH=1 + MySQL + 2 active branches); a no-op otherwise. See branches.ts.
 app.use('/api', branchMiddleware);
@@ -1067,6 +1091,7 @@ function publicStaffUser(u: StaffUserRecord) {
     username: u.username,
     full_name: u.full_name,
     role: u.role,
+    level_id: u.level_id || null,
     is_active: !!u.is_active,
     source: 'local' as const,
     locked: false,
@@ -1080,6 +1105,7 @@ function envAdminPublic() {
     username: envAdminUsername(),
     full_name: 'مدیر سیستم',
     role: 'admin' as const,
+    level_id: FULL_ADMIN_ID,
     is_active: true,
     source: 'env' as const,
     locked: true,
@@ -1100,8 +1126,14 @@ app.post('/api/staff', requireAdmin, async (req, res) => {
     const username = sanitizeString(req.body?.username, 80).toLowerCase();
     const full_name = sanitizeString(req.body?.full_name, 80);
     const password = String(req.body?.password || '');
-    const role = String(req.body?.role || 'cashier') as StaffRole;
+    let role = String(req.body?.role || 'cashier') as StaffRole;
     const is_active = req.body?.is_active !== false;
+    let level_id: string | undefined;
+    if (req.body?.level_id) {
+      const lv = listLevels(readDb()).find((l) => l.id === String(req.body.level_id));
+      if (!lv) return res.status(400).json({ error: 'سطح کاربری نامعتبر است' });
+      level_id = lv.id; role = lv.base_role;
+    }
     if (!username || !full_name) return res.status(400).json({ error: 'نام و نام کاربری الزامی است' });
     if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
       return res.status(400).json({ error: 'نام کاربری باید ۳ تا ۳۲ کاراکتر لاتین باشد' });
@@ -1121,6 +1153,7 @@ app.post('/api/staff', requireAdmin, async (req, res) => {
       password_hash: await bcrypt.hash(password, 10),
       full_name,
       role,
+      level_id: level_id || (role === 'admin' ? FULL_ADMIN_ID : role),
       is_active,
       created_at: new Date().toISOString(),
     };
@@ -1157,18 +1190,85 @@ app.put('/api/staff/:id', requireAdmin, async (req, res) => {
       if (!STAFF_ROLES.includes(body.role)) return res.status(400).json({ error: 'نقش نامعتبر است' });
       role = body.role;
     }
+    let level_id = current.level_id;
+    if (body.level_id !== undefined) {
+      const lv = listLevels(db).find((l) => l.id === String(body.level_id));
+      if (!lv) return res.status(400).json({ error: 'سطح کاربری نامعتبر است' });
+      level_id = lv.id; role = lv.base_role;
+    } else if (body.role !== undefined && body.role !== current.role) {
+      level_id = role === 'admin' ? FULL_ADMIN_ID : role;
+    }
     const is_active = body.is_active !== undefined ? !!body.is_active : current.is_active;
     let password_hash = current.password_hash;
     if (body.password) {
       if (String(body.password).length < 6) return res.status(400).json({ error: 'رمز حداقل ۶ کاراکتر باشد' });
       password_hash = await bcrypt.hash(String(body.password), 10);
     }
-    db.staff_users[index] = { ...current, full_name, role, is_active, password_hash };
+    db.staff_users[index] = { ...current, full_name, role, level_id, is_active, password_hash };
     writeDb(db);
     res.json({ status: 'success', user: publicStaffUser(db.staff_users[index]) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── User levels («سطوح کاربری»): admin + `users` permission (path-mapped in accessLevels.ts) ─────────────
+app.get('/api/access-levels', requireAdmin, (_req, res) => {
+  const db = readDb();
+  const counts: Record<string, number> = {};
+  for (const u of db.staff_users) counts[u.level_id || ''] = (counts[u.level_id || ''] || 0) + 1;
+  counts[FULL_ADMIN_ID] = (counts[FULL_ADMIN_ID] || 0) + 1; // env admin
+  res.json({ permissions: PERMISSIONS, levels: listLevels(db).map((l) => ({ ...l, users: counts[l.id] || 0 })) });
+});
+app.post('/api/access-levels', requireAdmin, (req, res) => {
+  try {
+    const db = readDb(); ensureAccessLevels(db);
+    const lv = validateLevelInput(req.body);
+    if (listLevels(db).some((l) => l.id === lv.id)) return res.status(409).json({ error: 'این شناسه سطح تکراری است.' });
+    (db as any).access_levels.push(lv); writeDb(db);
+    res.json({ ok: true, level: lv });
+  } catch (e: any) { res.status(e?.status || 500).json({ error: e?.message || 'خطا' }); }
+});
+app.put('/api/access-levels/:id', requireAdmin, (req, res) => {
+  try {
+    const id = String(req.params.id);
+    if (id === FULL_ADMIN_ID) return res.status(400).json({ error: 'سطح «مدیر کل» قابل ویرایش نیست (جلوگیری از قفل شدن مدیر).' });
+    const db = readDb(); ensureAccessLevels(db);
+    const existing = listLevels(db).find((l) => l.id === id);
+    if (!existing) return res.status(404).json({ error: 'سطح پیدا نشد.' });
+    const lv = validateLevelInput(req.body, existing);
+    const arr = (db as any).access_levels as AccessLevel[];
+    const i = arr.findIndex((l) => l.id === id);
+    if (i >= 0) arr[i] = lv; else arr.push(lv);
+    for (const u of db.staff_users) if (u.level_id === id) u.role = lv.base_role; // keep the base role in sync
+    writeDb(db);
+    res.json({ ok: true, level: lv });
+  } catch (e: any) { res.status(e?.status || 500).json({ error: e?.message || 'خطا' }); }
+});
+app.delete('/api/access-levels/:id', requireAdmin, (req, res) => {
+  const id = String(req.params.id);
+  const db = readDb();
+  const lv = listLevels(db).find((l) => l.id === id);
+  if (!lv) return res.status(404).json({ error: 'سطح پیدا نشد.' });
+  if (lv.system) return res.status(400).json({ error: 'سطوح پیش‌فرض سیستم حذف نمی‌شوند.' });
+  const n = db.staff_users.filter((u) => u.level_id === id).length;
+  if (n) return res.status(409).json({ error: `${n} کاربر این سطح را دارند؛ ابتدا سطح آن‌ها را تغییر دهید.` });
+  (db as any).access_levels = ((db as any).access_levels || []).filter((l: any) => l.id !== id);
+  writeDb(db);
+  res.json({ ok: true });
+});
+
+// ── «صاحب کسب‌وکار» (ownerContact.ts): admin-only, stored under settings.gateways (never in publicSettings) ──
+function businessOwner(): any { const o = savedGateways().business_owner || {}; return { ...o, links: ownerLinks(o) }; }
+app.get('/api/settings/business-owner', requireAdmin, (_req, res) => res.json({ owner: businessOwner() }));
+app.post('/api/settings/business-owner', requireAdmin, (req, res) => {
+  try {
+    const owner = validateOwner(req.body || {});
+    const db = readDb();
+    db.settings = { ...(db.settings as any), gateways: { ...((db.settings as any)?.gateways || {}), business_owner: owner } };
+    writeDb(db);
+    res.json({ ok: true, owner: { ...owner, links: ownerLinks(owner) } });
+  } catch (e: any) { res.status(e?.status || 500).json({ error: e?.message || 'خطا' }); }
 });
 
 // The theme logo is shown on the public login screen (no session there), so /uploads/theme is
@@ -4066,7 +4166,22 @@ const COPILOT_ADMIN_READ_TOOLS = [
   },
 ];
 
-async function copilotToolsFor(role: string) {
+async function copilotToolsFor(role: string, perms?: Record<string, boolean>) {
+  const all = await copilotToolsForRole(role);
+  if (!perms) return all;
+  return all.filter((t: any) => { const k = permissionForCopilotTool(String(t?.function?.name || '')); return !k || perms[k]; });
+}
+
+const COPILOT_OWNER_TOOL = {
+  type: 'function',
+  function: {
+    name: 'get_business_owner_contact',
+    description: 'اطلاعات تماس «صاحب کسب‌وکار» (تلفن، تلگرام، روبیکا، بله) از تنظیمات هم‌راز. برای «به صاحب کسب‌وکار خبر بده» ابتدا این را بخوانید، سپس با ابزارهای ارسال معمول (همان قوانین تأیید) پیام را آماده کنید؛ اگر شناسه چت ربات در دسترس نبود، لینک را به کاربر بدهید.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  },
+};
+
+async function copilotToolsForRole(role: string) {
   if (role !== 'admin') return COPILOT_TOOLS;
   let sqlTools: any[] = [];
   const h = hamraz();
@@ -4076,7 +4191,7 @@ async function copilotToolsFor(role: string) {
   }
   const smsTools = h.smsDirect ? COPILOT_SMS_TOOLS : COPILOT_SMS_TOOLS.filter((t: any) => t?.function?.name !== 'sms_send_direct');
   const payTools = h.paymentTools ? paymentToolDefinitions() : [];
-  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...smsTools, ...payTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
+  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, COPILOT_OWNER_TOOL, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...smsTools, ...payTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -4127,8 +4242,17 @@ async function resolveCopilotSms(a: any): Promise<{ error: string } | { items: {
   return { items, errors, key, vars, tpl };
 }
 
-async function runCopilotTool(name: string, args: any, ctx: { username: string; role: string } = { username: '', role: '' }): Promise<any> {
+async function runCopilotTool(name: string, args: any, ctx: { username: string; role: string; perms?: Record<string, boolean> } = { username: '', role: '' }): Promise<any> {
   const a = args && typeof args === 'object' ? args : {};
+  const permKey = permissionForCopilotTool(name);
+  if (permKey && ctx.perms && !ctx.perms[permKey]) return { error: 'سطح کاربری شما به این ابزار دسترسی ندارد.' };
+
+  if (name === 'get_business_owner_contact') {
+    if (ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
+    const o = businessOwner();
+    if (!o.phone && !o.telegram && !o.rubika && !o.bale) return { error: 'اطلاعات صاحب کسب‌وکار در تنظیمات هم‌راز ثبت نشده است.' };
+    return { owner: o };
+  }
 
   // Ham-Raz payment tools (agent/payment_tools): admin only, behind the «ابزارهای پرداخت» toggle.
   if (isPaymentTool(name)) {
@@ -4786,8 +4910,10 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   }
 
   const sessionUser = (req as any).user || {};
-  const ctx = { username: String(sessionUser.username || ''), role: String(sessionUser.role || '') };
-  const tools = await copilotToolsFor(ctx.role);
+  let perms: Record<string, boolean> | undefined;
+  try { perms = levelForSession(readDb(), sessionUser).permissions as any; } catch { perms = undefined; }
+  const ctx = { username: String(sessionUser.username || ''), role: String(sessionUser.role || ''), perms };
+  const tools = await copilotToolsFor(ctx.role, perms);
   const sqlNames = tools.map((t: any) => t.function?.name).filter((n: string) => n === 'run_sql_query' || n === 'execute_sql_crm');
   const sqlRule = sqlNames.length
     ? `\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
@@ -4911,6 +5037,8 @@ app.post('/api/copilot/pending/:id/confirm', requireAdmin, asyncHandler(async (r
   if (pending.createdBy !== (req as any).user.username) {
     return res.status(403).json({ error: 'فقط سازنده پیام می‌تواند آن را تأیید کند.' });
   }
+  const needPerm = pending.channel === 'payment' ? (pending.payment?.kind === 'refund' || pending.payment?.kind === 'reverse' ? 'refunds' : 'payment_tools') : 'sms';
+  if (!hasPermission(req, needPerm)) return res.status(403).json({ error: 'سطح کاربری شما اجازهٔ تأیید این عملیات را ندارد.' });
   const sessionUser = (req as any).user || {};
   const username = String(sessionUser.username || '');
   const now = Date.now();

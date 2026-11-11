@@ -98,3 +98,9 @@ field: saved > env > default; values are read per request, so saving needs no re
 With a confirmation toggle off, that channel's tool sends immediately (audited as `/copilot/direct/...`), and the
 system prompt rule ۶ is rebuilt to match; with the defaults rule ۶ is the original text. «تست اتصال» sends one
 `ping` chat completion (`max_tokens` 5, no tools); provider errors are scrubbed of the key.
+
+## صاحب کسب‌وکار و سطوح کاربری (تنظیمات › تنظیمات هم‌راز)
+
+- **صاحب کسب‌وکار** (`ownerContact.ts`, `GET/POST /api/settings/business-owner`, admin): تلفن، تلگرام، روبیکا و بله با اعتبارسنجی؛ لینک‌ها `tel:`، `https://t.me/<id>`، `https://rubika.ir/<id>`، `https://ble.ir/<id>`. در `settings.gateways.business_owner` ذخیره می‌شود (در publicSettings نیست). ابزار هم‌راز `get_business_owner_contact` (فقط مدیر) آن را می‌خواند؛ ارسال همچنان با ابزارهای ارسال و قوانین تأیید.
+- **سطوح کاربری** (`accessLevels.ts`, `/api/access-levels`): هر سطح یک نقش پایه (admin/cashier/instructor) و ماتریس دسترسی دارد؛ نقش پایه سقف است و ماتریس فقط محدود می‌کند. middleware سرور بعد از `canAccessApi` اعمال می‌شود؛ ابزارهای هم‌راز و تأیید پیام‌های معلق (پیامک، استرداد/ریورس) هم بررسی می‌شوند. مهاجرت idempotent: سطوح سیستمی «مدیر کل/صندوقدار/مربی» ساخته و به کاربران فعلی داده می‌شود؛ مدیر env همیشه «مدیر کل» است و این سطح قابل ویرایش/حذف نیست.
+- تست‌ها: `npm run test:access-levels`؛ E2E روی سرور آزمایشی: `scripts/e2e-access-levels.mjs`.
