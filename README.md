@@ -1,4 +1,4 @@
-# کارلا (Carla CRM)
+# همتراز (Ham-Taraz CRM)
 
 این پروژه سیستم مدیریت ارتباط با مشتری (CRM) اختصاصی برای مؤسسه **کرمانشاه کارت** (مرکز آموزش رانندگان و دوره‌های حمل و نقل در کرمانشاه) است.
 
@@ -49,7 +49,7 @@
 ## استقرار (Deployment)
 - **محل اجرا:** سرور مؤسسه در مسیر `/project/kermanshahcart/crm`
 - **پورت:** 5200
-- **مدیریت فرآیند:** استفاده از PM2 با نام `carla-crm`
+- **مدیریت فرآیند:** استفاده از PM2 با نام تاریخی `carla-crm` (شناسهٔ زندهٔ سرور؛ در این تغییر نام محصول عوض نشده است)
 - **روش استقرار:** به صورت **دستی** (Manual). بیلد مستقیم روی سرور انجام شده و سپس PM2 ریستارت می‌شود.
 - **نکته مهم:** مخزن GitHub صرفاً یک آینه برای **نسخه پشتیبان** است. هرگز روی سرور `git pull` یا `reset` انجام ندهید.
 
@@ -58,7 +58,7 @@
 
 ---
 
-# Carla CRM
+# Ham-Taraz CRM
 
 This repository contains the dedicated CRM system for **Kermanshah Cart** (a driver-training and transport-course institute in Kermanshah).
 
@@ -108,7 +108,7 @@ This repository contains the dedicated CRM system for **Kermanshah Cart** (a dri
 
 ## Deployment
 - **Environment:** Runs on the institute's local server at `/project/kermanshahcart/crm`.
-- **Process Manager:** Managed by PM2 under the name `carla-crm`.
+- **Process Manager:** Managed by PM2 under the historical name `carla-crm` (live-server identifier; not renamed in this product rebrand).
 - **Port:** 5200.
 - **Method:** **MANUAL deployment only**. Build directly on the server and restart the PM2 process.
 - **Important:** GitHub is used ONLY as a **backup mirror**. Do not perform `git pull` or `git reset` on the production server.

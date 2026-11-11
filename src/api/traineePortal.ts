@@ -87,26 +87,75 @@ type PayOnlineResponse = {
 
 const API_BASE = '/api/trainee-portal';
 const PAYMENTS_BASE = '/api/trainee-payments';
-const SESSION_KEY = 'carla_trainee_portal';
-const CACHE_PREFIX = 'carla_tp_cache:';
-const RETURN_KEY = 'carla_tp_return';
+
+// New canonical keys
+const SESSION_KEY = 'hamtaraz_trainee_portal';
+const CACHE_PREFIX = 'hamtaraz_tp_cache:';
+const RETURN_KEY = 'hamtaraz_tp_return';
+
+// Legacy keys (for migration)
+const LEGACY_SESSION_KEY = 'carla_trainee_portal';
+const LEGACY_CACHE_PREFIX = 'carla_tp_cache:';
+const LEGACY_RETURN_KEY = 'carla_tp_return';
+
 let lastFromCache = false;
 /** True when the most recent GET was served from the offline cache. */
 export const servedFromCache = () => lastFromCache;
 /** Persian/Arabic digits -> Latin. */
 export const toLatin = (v: string) => String(v || '').replace(/[۰-۹]/g, (c) => String(c.charCodeAt(0) - 0x06f0)).replace(/[٠-٩]/g, (c) => String(c.charCodeAt(0) - 0x0660));
 /** Marks that the next ?trainee=1&payment= return from the gateway belongs to the portal (see App.tsx). */
-export const markPortalPaymentReturn = () => { try { localStorage.setItem(RETURN_KEY, String(Date.now())); } catch { /* ignore */ } };
+export const markPortalPaymentReturn = () => {
+  try {
+    localStorage.setItem(RETURN_KEY, String(Date.now()));
+    // Clean up legacy key if present
+    try {
+      localStorage.removeItem(LEGACY_RETURN_KEY);
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* ignore */
+  }
+};
 export const consumePortalPaymentReturn = (): boolean => {
   try {
-    const at = Number(localStorage.getItem(RETURN_KEY) || 0);
-    localStorage.removeItem(RETURN_KEY);
+    let at = Number(localStorage.getItem(RETURN_KEY) || 0);
+    if (!at) {
+      at = Number(localStorage.getItem(LEGACY_RETURN_KEY) || 0);
+    }
+    // Clear both keys
+    try {
+      localStorage.removeItem(RETURN_KEY);
+    } catch {
+      /* ignore */
+    }
+    try {
+      localStorage.removeItem(LEGACY_RETURN_KEY);
+    } catch {
+      /* ignore */
+    }
     return at > 0 && Date.now() - at < 2 * 3600 * 1000;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 };
 
 function getSession(): Session | null {
-  const data = localStorage.getItem(SESSION_KEY);
+  let data = localStorage.getItem(SESSION_KEY);
+  if (!data) {
+    // Try legacy key
+    const legacyData = localStorage.getItem(LEGACY_SESSION_KEY);
+    if (legacyData) {
+      // Migrate to new key
+      try {
+        localStorage.setItem(SESSION_KEY, legacyData);
+        localStorage.removeItem(LEGACY_SESSION_KEY);
+      } catch {
+        /* ignore migration errors */
+      }
+      data = legacyData;
+    }
+  }
   if (!data) return null;
   try {
     return JSON.parse(data);
@@ -116,21 +165,48 @@ function getSession(): Session | null {
 }
 
 function saveSession(session: Session): void {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {
+    /* ignore */
+  }
+  // Remove any legacy entry
+  try {
+    localStorage.removeItem(LEGACY_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 function clearSession(): void {
-  localStorage.removeItem(SESSION_KEY);
+  // Remove both session keys
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+  try {
+    localStorage.removeItem(LEGACY_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
   // Cached personal data must not outlive the session on a shared phone.
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const k = localStorage.key(i);
-    if (k && k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k);
+    if (k && (k.startsWith(CACHE_PREFIX) || k.startsWith(LEGACY_CACHE_PREFIX))) {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 
 async function cachedGet<T>(token: string, path: string): Promise<{ data: T; offline: boolean }> {
   const cacheKey = CACHE_PREFIX + path;
-  const cachedData = localStorage.getItem(cacheKey);
+  const legacyCacheKey = LEGACY_CACHE_PREFIX + path;
+  const cachedData = localStorage.getItem(cacheKey) ?? localStorage.getItem(legacyCacheKey);
   let response: Response;
   try {
     response = await fetch(path, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
@@ -152,7 +228,17 @@ async function cachedGet<T>(token: string, path: string): Promise<{ data: T; off
     throw new Error((body as any).error || 'خطا در دریافت اطلاعات');
   }
   const data = await response.json();
-  try { localStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* quota */ }
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify(data));
+    // Clean up legacy cache entry if it exists
+    try {
+      localStorage.removeItem(legacyCacheKey);
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* quota */
+  }
   lastFromCache = false;
   return { data, offline: false };
 }

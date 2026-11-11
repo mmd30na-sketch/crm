@@ -13,7 +13,7 @@ URL: `https://<crm-host>/?portal=1` — mobile-first, RTL, installable (Android/
 ## Login
 0. One-time link: `GET /e/<code>` redirects to `/?portal=1&entry=<code>`. The portal `POST /api/trainee-portal/entry`
    burns the code (single use, 7 days) and stores the returned 30-day trainee token in `localStorage`
-   (`carla_trainee_portal`). A second open says the link was already used; the saved session keeps the portal open.
+   (`hamtaraz_trainee_portal`; legacy `carla_trainee_portal` is read and migrated). A second open says the link was already used; the saved session keeps the portal open.
    Welcome SMS mints the code as `CODE` / `entry_code`. The approved sms.ir template does not include it until its
    text has `kermanshahcart.ir/e/#CODE#` and that parameter is approved. The public vhost proxies only
    `/e/<12-char code>` to the CRM (`location = /e/log` stays the error logger). That host is not the portal UI, so the

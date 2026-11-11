@@ -17,12 +17,25 @@ export interface BranchReportRow {
 export interface BranchReport { from: string | null; to: string | null; rows: BranchReportRow[]; totals: Omit<BranchReportRow, 'branch_id' | 'name' | 'is_active'> }
 export interface BranchSettings { branch_id: number; name: string; academy_name: string | null; address: string | null; phone: string | null; sms_sender_line: string | null; manager_name: string | null }
 
-export const BRANCH_KEY = 'carla_crm_branch';
+export const BRANCH_KEY = 'hamtaraz_crm_branch';
+const LEGACY_BRANCH_KEY = 'carla_crm_branch';
 export function getActiveBranch(): string | null {
-  try { return sessionStorage.getItem(BRANCH_KEY); } catch { return null; }
+  try {
+    const branch = sessionStorage.getItem(BRANCH_KEY);
+    if (branch) return branch;
+    const legacyBranch = sessionStorage.getItem(LEGACY_BRANCH_KEY);
+    if (legacyBranch) {
+      sessionStorage.setItem(BRANCH_KEY, legacyBranch);
+      sessionStorage.removeItem(LEGACY_BRANCH_KEY);
+    }
+    return legacyBranch;
+  } catch { return null; }
 }
 export function setActiveBranch(v: string | null) {
-  try { if (v) sessionStorage.setItem(BRANCH_KEY, v); else sessionStorage.removeItem(BRANCH_KEY); } catch { /* private mode */ }
+  try {
+    if (v) sessionStorage.setItem(BRANCH_KEY, v); else sessionStorage.removeItem(BRANCH_KEY);
+    sessionStorage.removeItem(LEGACY_BRANCH_KEY);
+  } catch { /* private mode */ }
 }
 
 /**

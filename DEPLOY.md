@@ -6,6 +6,10 @@
 Features covered: **theme settings (پوسته)**, **instructor pay (حق‌التدریس)**, **Zarinpal online payments + trainee portal**,
 **installments / full-balance payment links `/p/<code>` + remaining-debt SMS**, **AI smart-crop of ID / 3x4 photos**.
 
+Product name is **همتراز / Ham-Taraz**. The live Iran-server identifiers below (`carla-crm` PM2 process,
+MySQL database `nodejs430_carla`, backup filenames that still start with `carla-`) are historical and must
+stay as-is until a coordinated server change; this document does not rename them.
+
 Server layout (read-only inspection, 2026-10-28): app in `/project/kermanshahcart/crm`, pm2 process `carla-crm`
 (`PORT=3001`), MySQL in the `mysql-local` docker container (DB `nodejs430_carla`), Node from
 `/root/.nvm/versions/node/v20.20.2`, deploy helper `/root/deploy-crm.sh`, shared SMS helper
