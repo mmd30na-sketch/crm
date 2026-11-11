@@ -43,6 +43,7 @@ import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore, debtSmsConfi
 import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './zarinpalSettings';
 import { PERMISSIONS, FULL_ADMIN_ID, ensureAccessLevels, levelForSession, listLevels, permissionsForRequest, missingPermissions, permissionForCopilotTool, validateLevelInput, type AccessLevel } from './accessLevels';
 import { validateOwner, ownerLinks } from './ownerContact';
+import { buildSpeaker, speakerPrompt, appendTurn, turnsFor, clearTurns, type Speaker } from './copilotSpeaker';
 import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, type EffectiveHamraz } from './hamrazSettings';
 import { createZarinpalClient, executePaymentAction, isPaymentTool, runPaymentTool, skillsPrompt as paymentSkillsPrompt, toolDefinitions as paymentToolDefinitions, type PaymentAction, type PaymentToolDeps } from './agent/payment_tools';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
@@ -4911,7 +4912,15 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
 
   const sessionUser = (req as any).user || {};
   let perms: Record<string, boolean> | undefined;
-  try { perms = levelForSession(readDb(), sessionUser).permissions as any; } catch { perms = undefined; }
+  let speaker: Speaker | null = null;
+  try {
+    // Speaker identity from the verified session only (copilotSpeaker.ts); the request body is never trusted for it.
+    const sdb = readDb();
+    const level = levelForSession(sdb, sessionUser);
+    perms = level.permissions as any;
+    const staff = sessionUser.source === 'local' ? sdb.staff_users.find((x) => x.id === sessionUser.user_id) || null : null;
+    speaker = buildSpeaker(sessionUser, staff, level, savedGateways().business_owner || {});
+  } catch { perms = undefined; }
   const ctx = { username: String(sessionUser.username || ''), role: String(sessionUser.role || ''), perms };
   const tools = await copilotToolsFor(ctx.role, perms);
   const sqlNames = tools.map((t: any) => t.function?.name).filter((n: string) => n === 'run_sql_query' || n === 'execute_sql_crm');
@@ -4919,7 +4928,15 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
     ? `\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
     : '';
   const payRule = tools.some((t: any) => isPaymentTool(String(t?.function?.name || ''))) ? paymentSkillsPrompt() : '';
-  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt(tools) + sqlRule + '\n' + copilotDateRule() + payRule }, ...history];
+  const speakerRule = speaker ? '\n' + speakerPrompt(speaker) : '';
+  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt(tools) + sqlRule + '\n' + copilotDateRule() + speakerRule + payRule }, ...history];
+  const lastQuestion = String(history[history.length - 1]?.content || '');
+  const usedTools: string[] = [];
+  const logTurn = (a: string, ok: boolean) => {
+    try { const db = readDb(); appendTurn(db as any, ctx.username, { at: new Date().toISOString(), q: lastQuestion, a, tools: usedTools, ok }); writeDb(db); }
+    catch (e: any) { console.warn('[copilot] history write failed:', e?.message || e); }
+  };
+  let emptyRetries = 0;
 
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   const pendingConfirmations: Array<{ pending_id: string; preview: string }> = [];
@@ -4934,7 +4951,18 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
 
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       if (!toolCalls.length) {
-        return res.json({ reply: String(message.content || '').trim(), pendingConfirmations });
+        const reply = String(message.content || '').trim();
+        if (!reply) {
+          // Seen live: the model router fell back to a model that returned empty content. Retry once, then say so.
+          console.warn(`[copilot] empty reply (model=${String(completion?.model || hz.model || '').slice(0, 60)}, try=${emptyRetries + 1})`);
+          messages.pop();
+          if (emptyRetries++ < 1) continue;
+          const msg = 'سرویس هوش مصنوعی پاسخ خالی برگرداند (احتمالاً سهمیهٔ مدل تمام شده)؛ چند دقیقه بعد دوباره بپرسید یا مدل را در «تنظیمات هم‌راز» عوض کنید.';
+          logTurn(msg, false);
+          return res.status(502).json({ error: msg, pendingConfirmations });
+        }
+        logTurn(reply, true);
+        return res.json({ reply, pendingConfirmations });
       }
 
       for (const toolCall of toolCalls) {
@@ -4945,6 +4973,7 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
         } catch {
           args = {};
         }
+        if (fn.name && !usedTools.includes(String(fn.name))) usedTools.push(String(fn.name));
         const cacheKey = `${fn.name}:${JSON.stringify(args)}`;
         let result: any = toolCache.get(cacheKey);
         if (result === undefined || fn.name === 'send_notification') {
@@ -4970,10 +4999,27 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
     messages.push({ role: 'user', content: 'با همین داده‌های به‌دست‌آمده و بدون فراخوانی ابزار دیگر، پاسخ نهایی را کوتاه بنویسید.' });
     const final = await callCopilotCompletion(messages, false, COPILOT_TOOLS, hz);
     const finalText = String(final?.choices?.[0]?.message?.content || '').trim();
-    return res.json({ reply: finalText || 'پاسخ کامل آماده نشد؛ لطفاً پرسش را دقیق‌تر بپرسید.', pendingConfirmations });
+    const finalReply = finalText || 'پاسخ کامل آماده نشد؛ لطفاً پرسش را دقیق‌تر بپرسید.';
+    logTurn(finalReply, !!finalText);
+    return res.json({ reply: finalReply, pendingConfirmations });
   } catch (err: any) {
+    logTurn('خطا در ارتباط با سرویس هوش مصنوعی', false);
     return res.status(500).json({ error: scrubSecret(String(err?.message || ''), [hz.apiKey]) || 'خطا در ارتباط با سرویس هوش مصنوعی.' });
   }
+});
+
+/** The caller's OWN Ham-Raz history (per username from the session) and who the copilot thinks they are. */
+app.get('/api/copilot/history', requireAuth, (req, res) => {
+  const u = (req as any).user || {};
+  const db = readDb();
+  const level = levelForSession(db, u);
+  const staff = u.source === 'local' ? db.staff_users.find((x) => x.id === u.user_id) || null : null;
+  const limit = Math.max(1, Math.min(100, parseInt(String(req.query.limit || '30'), 10) || 30));
+  res.json({ speaker: buildSpeaker(u, staff, level, savedGateways().business_owner || {}), turns: turnsFor(db, String(u.username || ''), limit) });
+});
+app.post('/api/copilot/history/clear', requireAuth, (req, res) => {
+  const db = readDb(); clearTurns(db, String((req as any).user?.username || '')); writeDb(db);
+  res.json({ ok: true });
 });
 
 /** Sends one queued copilot message (SMS / Telegram / Rubika); used by «تأیید» and by no-confirm channels. */

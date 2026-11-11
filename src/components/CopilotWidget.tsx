@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Bot, Send, Loader2, PanelRightOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -94,10 +94,13 @@ export function CopilotProvider({
   children,
   onOpenTab,
   isAdmin = false,
+  userKey = '',
 }: {
   children: React.ReactNode;
   onOpenTab: () => void;
   isAdmin?: boolean;
+  /** Logged-in username: the provider is remounted per user and loads only that user's own history. */
+  userKey?: string;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -106,6 +109,23 @@ export function CopilotProvider({
   const [pendingConfirmations, setPendingConfirmations] = useState<PendingConfirmation[]>([]);
   const messagesRef = useRef<Message[]>([]);
   const loadingRef = useRef(false);
+
+  // Restore this user's own recent Ham-Raz turns (the server scopes /copilot/history to the session user).
+  useEffect(() => {
+    if (!userKey) return;
+    let alive = true;
+    const token = getAuthToken();
+    fetch(copilotEndpoint().replace(/\/chat$/, '/history?limit=10'), { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d || !Array.isArray(d.turns) || messagesRef.current.length) return;
+        const restored: Message[] = [];
+        for (const t of d.turns) { if (t?.q && t?.ok && t?.a) restored.push({ role: 'user', content: String(t.q) }, { role: 'assistant', content: String(t.a) }); }
+        messagesRef.current = restored; setMessages(restored);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [userKey]);
 
   /** Confirm or cancel one pending send; only that item is removed. Errors stay on the item in Persian. */
   const actOnPending = async (id: string, action: 'confirm' | 'cancel') => {

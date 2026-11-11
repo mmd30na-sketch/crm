@@ -515,7 +515,7 @@ function AppShell() {
   }
 
   return (
-    <CopilotProvider onOpenTab={() => handleActiveTabChange('copilot')} isAdmin={role === 'admin'}>
+    <CopilotProvider key={currentUser?.username || 'anon'} userKey={currentUser?.username || ''} onOpenTab={() => handleActiveTabChange('copilot')} isAdmin={role === 'admin'}>
     <div
       className="flex h-screen supports-[height:100dvh]:h-[100dvh] w-screen max-w-full overflow-hidden text-slate-900"
       style={{ background: 'var(--app-bg)' }}
