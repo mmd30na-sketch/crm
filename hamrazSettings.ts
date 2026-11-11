@@ -11,6 +11,7 @@
  *   max_iterations     (no env)                 6   (clamped 1..20)
  *   sql_enabled        COPILOT_SQL_ENABLED=1    off
  *   sms_direct         (no env)                 on  (sms_send_direct offered and allowed)
+ *   payment_tools      (no env)                 on  (agent/payment_tools; refund/reverse always need «تأیید»)
  *   confirm.sms_send / confirm.telegram / confirm.rubika   (no env)   all on (draft + «تأیید» in the widget)
  * Values are read at request time, so a save takes effect without a restart.
  */
@@ -28,6 +29,7 @@ export type SavedHamraz = {
   max_iterations?: number;
   sql_enabled?: boolean;
   sms_direct?: boolean;
+  payment_tools?: boolean;
   confirm?: Partial<Record<ConfirmKey, boolean>>;
 };
 
@@ -39,8 +41,9 @@ export type EffectiveHamraz = {
   maxIterations: number;
   sqlEnabled: boolean;
   smsDirect: boolean;
+  paymentTools: boolean;
   confirm: Record<ConfirmKey, boolean>;
-  sources: Record<'enabled' | 'api_url' | 'api_key' | 'model' | 'max_iterations' | 'sql_enabled' | 'sms_direct' | ConfirmKey, Source>;
+  sources: Record<'enabled' | 'api_url' | 'api_key' | 'model' | 'max_iterations' | 'sql_enabled' | 'sms_direct' | 'payment_tools' | ConfirmKey, Source>;
 };
 
 export const DEFAULT_MODEL = 'gpt-4o-mini';
@@ -65,13 +68,14 @@ export function resolveHamraz(gateways: any, env: NodeJS.ProcessEnv = process.en
   const [enabled, eSrc] = bool(s.enabled, undefined, true);
   const [sqlEnabled, qSrc] = bool(s.sql_enabled, envSql, false);
   const [smsDirect, dSrc] = bool(s.sms_direct, undefined, true);
+  const [paymentTools, pSrc] = bool(s.payment_tools, undefined, true);
   const c = s.confirm && typeof s.confirm === 'object' ? s.confirm : {};
   const confirm = {} as Record<ConfirmKey, boolean>;
   const cSrc = {} as Record<ConfirmKey, Source>;
   for (const k of CONFIRM_KEYS) [confirm[k], cSrc[k]] = bool((c as any)[k], undefined, true);
   return {
-    enabled, apiUrl: cleanBase(apiUrl), apiKey, model, maxIterations: steps[0], sqlEnabled, smsDirect, confirm,
-    sources: { enabled: eSrc, api_url: uSrc, api_key: kSrc, model: mSrc, max_iterations: steps[1], sql_enabled: qSrc, sms_direct: dSrc, ...cSrc },
+    enabled, apiUrl: cleanBase(apiUrl), apiKey, model, maxIterations: steps[0], sqlEnabled, smsDirect, paymentTools, confirm,
+    sources: { enabled: eSrc, api_url: uSrc, api_key: kSrc, model: mSrc, max_iterations: steps[1], sql_enabled: qSrc, sms_direct: dSrc, payment_tools: pSrc, ...cSrc },
   };
 }
 
@@ -86,6 +90,7 @@ export function publicHamraz(e: EffectiveHamraz) {
     max_iterations: e.maxIterations,
     sql_enabled: e.sqlEnabled,
     sms_direct: e.smsDirect,
+    payment_tools: e.paymentTools,
     confirm: { ...e.confirm },
     sources: { ...e.sources },
   };
@@ -106,7 +111,7 @@ const bad = (msg: string) => Object.assign(new Error(msg), { status: 400 });
 /** Applies a POST body. Empty api_key keeps the saved key; clear_api_key removes it; null resets a field to env/default. */
 export function applyHamrazPatch(current: SavedHamraz | undefined, b: any): SavedHamraz {
   const next: SavedHamraz = { ...(current || {}), confirm: { ...((current && current.confirm) || {}) } };
-  for (const k of ['enabled', 'sql_enabled', 'sms_direct'] as const) {
+  for (const k of ['enabled', 'sql_enabled', 'sms_direct', 'payment_tools'] as const) {
     if (b?.[k] === null) delete next[k];
     else if (b?.[k] !== undefined) next[k] = !!b[k];
   }

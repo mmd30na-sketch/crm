@@ -10,7 +10,7 @@ const env = { COPILOT_API_URL: 'http://127.0.0.1:20130/v1/', COPILOT_API_KEY: KE
 const d = resolveHamraz({}, env);
 assert.equal(d.enabled, true); assert.equal(d.apiUrl, 'http://127.0.0.1:20130/v1'); assert.equal(d.apiKey, KEY);
 assert.equal(d.model, 'env/model'); assert.equal(d.maxIterations, 6); assert.equal(d.sqlEnabled, true);
-assert.equal(d.smsDirect, true); assert.deepEqual(d.confirm, { sms_send: true, telegram: true, rubika: true });
+assert.equal(d.smsDirect, true); assert.equal(d.paymentTools, true); assert.deepEqual(d.confirm, { sms_send: true, telegram: true, rubika: true });
 assert.equal(d.sources.api_key, 'env'); assert.equal(d.sources.sms_send, 'default');
 const bare = resolveHamraz({}, {});
 assert.equal(bare.model, 'gpt-4o-mini'); assert.equal(bare.sqlEnabled, false); assert.equal(bare.apiUrl, '');

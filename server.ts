@@ -39,9 +39,10 @@ import {
 import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPay';
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
-import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
+import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore, debtSmsConfig } from './debtSms';
 import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './zarinpalSettings';
 import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, type EffectiveHamraz } from './hamrazSettings';
+import { createZarinpalClient, executePaymentAction, isPaymentTool, runPaymentTool, skillsPrompt as paymentSkillsPrompt, toolDefinitions as paymentToolDefinitions, type PaymentAction, type PaymentToolDeps } from './agent/payment_tools';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
 import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
 import { createAutomationSources, registrationContext } from './automationSources';
@@ -617,7 +618,9 @@ setInterval(() => {
 interface PendingMessage {
   id: string;
   createdBy: string;
-  channel: 'telegram' | 'rubika' | 'sms';
+  channel: 'telegram' | 'rubika' | 'sms' | 'payment';
+  /** channel=payment: a Zarinpal reverse/refund that runs only after «تأیید» (agent/payment_tools). */
+  payment?: PaymentAction;
   recipient: string;
   /** channel=sms: one item per recipient (max 20); sent only on human confirm. */
   sms?: { items: { mobile: string; label: string; studentId?: number | null; text: string }[]; templateKey?: string | null; vars?: Record<string, string> };
@@ -3489,6 +3492,27 @@ app.post('/api/settings/gateways', (req, res) => {
 // Copilot (هم‌راز) config is read per request from Settings → تنظیمات هم‌راز (gateways.hamraz), env as fallback
 // (COPILOT_API_URL, COPILOT_API_KEY, COPILOT_MODEL, COPILOT_SQL_ENABLED). See hamrazSettings.ts.
 const hamraz = (): EffectiveHamraz => resolveHamraz(savedGateways());
+// Zarinpal client for Ham-Raz payment tools: reads Settings → درگاه پرداخت (saved > env) on every call.
+const paymentClient = createZarinpalClient(() => resolveZarinpal(savedGateways()));
+function paymentToolDeps(): PaymentToolDeps {
+  return {
+    client: paymentClient,
+    links: {
+      createLink: (studentId, amount, expiresAt) => debtLinkStore.createLink(studentId, amount, expiresAt),
+      studentInfo: (studentId) => debtLinkStore.studentInfo(studentId),
+      studentDebt: (studentId) => debtLinkStore.studentDebt(studentId),
+    },
+    paymentLinkBase: () => { try { return debtSmsConfig((readDb() as any).settings || {}, normalizeMobile).paymentBase; } catch { return debtSmsConfig({}, normalizeMobile).paymentBase; } },
+    // Refund/reverse always go through «تأیید» (independent of the confirm toggles).
+    queueConfirmation: (ctx, action, label, summary) => {
+      const pendingId = `pay_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const now = Date.now();
+      pendingMessages.set(pendingId, { id: pendingId, createdBy: ctx.username, channel: 'payment', recipient: action.kind === 'reverse' ? action.authority : action.session_id,
+        label, text: summary, createdAt: now, expiresAt: now + PENDING_TTL_MS, payment: action });
+      return { pending_id: pendingId, preview: summary };
+    },
+  };
+}
 
 /** Academy display name from the CRM settings only (no hardcoded default); '' when not set. */
 function academyDisplayName(): string {
@@ -4051,7 +4075,8 @@ async function copilotToolsFor(role: string) {
     sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
   }
   const smsTools = h.smsDirect ? COPILOT_SMS_TOOLS : COPILOT_SMS_TOOLS.filter((t: any) => t?.function?.name !== 'sms_send_direct');
-  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...smsTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
+  const payTools = h.paymentTools ? paymentToolDefinitions() : [];
+  return [...COPILOT_TOOLS, ...COPILOT_ADMIN_READ_TOOLS, ...sqlTools, COPILOT_SEND_TELEGRAM_TOOL, COPILOT_SEND_RUBIKA_TOOL, ...smsTools, ...payTools, ...(umamiEnabled() ? [COPILOT_UMAMI_TOOL] : [])];
 }
 
 async function auditCopilotSql(username: string, e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) {
@@ -4104,6 +4129,12 @@ async function resolveCopilotSms(a: any): Promise<{ error: string } | { items: {
 
 async function runCopilotTool(name: string, args: any, ctx: { username: string; role: string } = { username: '', role: '' }): Promise<any> {
   const a = args && typeof args === 'object' ? args : {};
+
+  // Ham-Raz payment tools (agent/payment_tools): admin only, behind the «ابزارهای پرداخت» toggle.
+  if (isPaymentTool(name)) {
+    if (!hamraz().paymentTools) return { error: 'ابزارهای پرداخت در تنظیمات هم‌راز غیرفعال است.' };
+    return runPaymentTool(name, a, ctx, paymentToolDeps());
+  }
 
   if (name === 'run_sql_query') {
     if (!copilotSqlEnabled() || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
@@ -4761,7 +4792,8 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const sqlRule = sqlNames.length
     ? `\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
     : '';
-  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt(tools) + sqlRule + '\n' + copilotDateRule() }, ...history];
+  const payRule = tools.some((t: any) => isPaymentTool(String(t?.function?.name || ''))) ? paymentSkillsPrompt() : '';
+  const messages: any[] = [{ role: 'system', content: copilotSystemPrompt(tools) + sqlRule + '\n' + copilotDateRule() + payRule }, ...history];
 
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   const pendingConfirmations: Array<{ pending_id: string; preview: string }> = [];
@@ -4848,6 +4880,8 @@ async function deliverPending(pending: any, pendingId: string): Promise<{ ok: bo
     result = failed.length === 0 ? { ok: true } : { ok: sent.length > 0, error: `${sent.length} ارسال شد، ${failed.length} ناموفق` };
   } else if (pending.channel === 'telegram') {
     result = await sendTelegramMessage(pending.recipient, pending.text);
+  } else if (pending.channel === 'payment' && pending.payment) {
+    result = await executePaymentAction(paymentClient, pending.payment);
   }
   return result;
 }
