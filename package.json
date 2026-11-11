@@ -13,10 +13,18 @@
     "scanner": "node scripts/scanner-bridge.mjs",
     "test:ocr": "node --import tsx scripts/test-ocr-validate.mjs",
     "test:logic": "node --import tsx scripts/test-crm-logic.mjs",
+    "test:lead-pipeline": "node --import tsx scripts/test-lead-pipeline.mjs",
+    "test:email": "node --import tsx scripts/test-email.mjs",
     "test:print": "node --import tsx scripts/test-print-docs.mjs",
+    "test:lessons": "node --import tsx scripts/test-lessons.mjs",
     "test:copilot-date": "node --import tsx scripts/test-copilot-date.mjs",
     "test:copilot-labels": "node --import tsx scripts/test-copilot-labels.mjs",
-    "test:copilot-eval": "esbuild scripts/copilot-eval/run-eval.ts --bundle --platform=node --format=cjs --packages=external --outfile=scripts/copilot-eval/.run-eval.cjs --log-level=error && node scripts/copilot-eval/.run-eval.cjs"
+    "test:copilot-eval": "esbuild scripts/copilot-eval/run-eval.ts --bundle --platform=node --format=cjs --packages=external --outfile=scripts/copilot-eval/.run-eval.cjs --log-level=error && node scripts/copilot-eval/.run-eval.cjs",
+    "preflight": "node scripts/preflight-check.mjs",
+    "test:automation": "node --import tsx scripts/test-automation.mjs",
+    "test:public-api": "node --import tsx scripts/test-public-api.mjs",
+    "test:invoices": "node --import tsx scripts/test-invoices-finance.mjs",
+    "test:field-policy": "node --import tsx scripts/test-field-policy.mjs"
   },
   "dependencies": {
     "@fontsource/vazirmatn": "^5.3.0",
@@ -38,6 +46,7 @@
     "multer": "^2.2.0",
     "mysql2": "^3.24.4",
     "node-sql-parser": "^5.4.0",
+    "nodemailer": "^10.2.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-easy-crop": "^5.5.7",

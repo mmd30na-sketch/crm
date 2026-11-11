@@ -11,6 +11,8 @@ import {
   RefreshCw,
   LogOut,
   Contact,
+  KanbanSquare,
+  AtSign,
   ClipboardList,
   Megaphone,
   CalendarRange,
@@ -18,6 +20,13 @@ import {
   History,
   BellRing,
   Wallet,
+  CalendarClock,
+  Workflow,
+  FileText,
+  PieChart,
+  Building2,
+  ChevronDown,
+  GraduationCap,
 } from 'lucide-react';
 import { Student, Course, Enrollment, Payment, Expense, StaffRole } from './types';
 import * as api from './api/client';
@@ -33,14 +42,25 @@ import MessengerHub from './components/MessengerHub';
 import LoginScreen from './components/LoginScreen';
 import { CopilotProvider, CopilotBar, CopilotPage } from './components/CopilotWidget';
 import LeadsPanel from './components/LeadsPanel';
+import LeadPipelinePanel from './components/LeadPipelinePanel';
+import EmailPanel from './components/EmailPanel';
 import TasksPanel from './components/TasksPanel';
 import BulkMessaging from './components/BulkMessaging';
 import CourseTermsPanel from './components/CourseTermsPanel';
 import SiteRequestsHistory from './components/SiteRequestsHistory';
 import InstructorPayPanel from './components/InstructorPayPanel';
+import LessonCalendarPanel from './components/LessonCalendarPanel';
+import InvoicesPanel from './components/InvoicesPanel';
+import FinanceReportsPanel from './components/FinanceReportsPanel';
 import OnlinePaymentsReview from './components/OnlinePaymentsReview';
 import DebtSmsPanel from './components/DebtSmsPanel';
+import AutomationRulesPanel from './components/AutomationRulesPanel';
 import TraineePaymentsPanel from './components/TraineePaymentsPanel';
+import TraineePortal from './components/TraineePortal';
+import { consumePortalPaymentReturn } from './api/traineePortal';
+import BranchSwitcher from './components/BranchSwitcher';
+import BranchesPanel from './components/BranchesPanel';
+import { fetchBranchConfig } from './api/branches';
 import { taskSummary } from './api/phase4';
 import { ThemeProvider, useTheme } from './theme/ThemeProvider';
 
@@ -48,7 +68,6 @@ const NAV_ITEMS = [
   {
     id: 'supervisor',
     label: 'داشبورد نظارت',
-    sublabel: 'کنترل و نمای کلی',
     icon: LayoutDashboard,
     color: 'brand',
     roles: ['admin'] as StaffRole[],
@@ -56,7 +75,6 @@ const NAV_ITEMS = [
   {
     id: 'students',
     label: 'هنرجویان',
-    sublabel: 'مدیریت هنرجویان',
     icon: Users,
     color: 'teal',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
@@ -64,7 +82,6 @@ const NAV_ITEMS = [
   {
     id: 'terms',
     label: 'مدیریت دوره‌ها',
-    sublabel: 'شماره دوره، ظرفیت و وضعیت',
     icon: CalendarRange,
     color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -72,7 +89,6 @@ const NAV_ITEMS = [
   {
     id: 'register',
     label: 'ثبت‌نام هوشمند',
-    sublabel: 'OCR کارت ملی',
     icon: UserPlus,
     color: 'purple',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -80,23 +96,41 @@ const NAV_ITEMS = [
   {
     id: 'accounting',
     label: 'حسابداری مالی',
-    sublabel: 'درآمد و مخارج',
     icon: BarChart3,
     color: 'amber',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
+    id: 'invoices',
+    label: 'فاکتورها',
+    icon: FileText,
+    color: 'amber',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'finance-reports',
+    label: 'گزارش مالی',
+    icon: PieChart,
+    color: 'amber',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
     id: 'copilot',
-    label: 'دستیار هوشمند',
-    sublabel: 'همان گفتگوی داشبورد',
+    label: 'همراز',
     icon: Bot,
     color: 'brand',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
+    id: 'lessons',
+    label: 'تقویم جلسات عملی',
+    icon: CalendarClock,
+    color: 'teal',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
     id: 'pay',
     label: 'حق‌التدریس',
-    sublabel: 'مربیان و تسویه ماهانه',
     icon: Wallet,
     color: 'amber',
     roles: ['admin'] as StaffRole[],
@@ -104,7 +138,6 @@ const NAV_ITEMS = [
   {
     id: 'online-payments',
     label: 'پرداخت‌های آنلاین',
-    sublabel: 'تأیید اقساط و رسید',
     icon: Wallet,
     color: 'emerald',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -112,7 +145,6 @@ const NAV_ITEMS = [
   {
     id: 'debt-sms',
     label: 'ارسال به بدهکاران',
-    sublabel: 'پیامک بدهی و لینک پرداخت',
     icon: BellRing,
     color: 'rose',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -120,7 +152,6 @@ const NAV_ITEMS = [
   {
     id: 'messenger',
     label: 'پیام‌رسان',
-    sublabel: 'مرکز ارتباطی',
     icon: MessageSquare,
     color: 'rose',
     // The server allows /api/messenger for admin and cashier only.
@@ -129,15 +160,27 @@ const NAV_ITEMS = [
   {
     id: 'leads',
     label: 'سرنخ‌ها',
-    sublabel: 'تماس‌گیرندگان و پیگیری',
     icon: Contact,
     color: 'teal',
     roles: ['admin', 'cashier'] as StaffRole[],
   },
   {
+    id: 'lead-pipeline',
+    label: 'پایپ‌لاین فروش',
+    icon: KanbanSquare,
+    color: 'purple',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
+    id: 'email',
+    label: 'ایمیل',
+    icon: AtSign,
+    color: 'rose',
+    roles: ['admin', 'cashier'] as StaffRole[],
+  },
+  {
     id: 'site-requests',
     label: 'تاریخچه درخواست‌های سایت',
-    sublabel: 'همه ثبت‌نام‌های آنلاین',
     icon: History,
     color: 'purple',
     roles: ['admin', 'cashier'] as StaffRole[],
@@ -145,28 +188,73 @@ const NAV_ITEMS = [
   {
     id: 'tasks',
     label: 'کارها',
-    sublabel: 'ارجاع و مهلت',
     icon: ClipboardList,
     color: 'brand',
     roles: ['admin', 'cashier', 'instructor'] as StaffRole[],
   },
   {
+    id: 'automation',
+    label: 'اتوماسیون',
+    icon: Workflow,
+    color: 'purple',
+    roles: ['admin'] as StaffRole[],
+  },
+  {
     id: 'campaigns',
     label: 'پیام انبوه',
-    sublabel: 'کمپین روبیکا',
     icon: Megaphone,
     color: 'rose',
     roles: ['admin'] as StaffRole[],
   },
   {
+    // Shown only when CRM_MULTI_BRANCH=1 on the server (see branchesEnabled below).
+    id: 'branches',
+    label: 'شعبه‌ها',
+    icon: Building2,
+    color: 'slate',
+    roles: ['admin'] as StaffRole[],
+  },
+  {
     id: 'settings',
     label: 'تنظیمات آموزشگاه',
-    sublabel: 'پیکربندی سیستم',
     icon: SettingsIcon,
     color: 'slate',
     roles: ['admin'] as StaffRole[],
   },
 ];
+
+const NAV_GROUPS = [
+  { id: 'edu', label: 'آموزش', icon: GraduationCap },
+  { id: 'finance', label: 'مالی', icon: Wallet },
+  { id: 'comms', label: 'ارتباط', icon: MessageSquare },
+  { id: 'sales', label: 'فروش', icon: Contact },
+  { id: 'system', label: 'سیستم', icon: SettingsIcon },
+] as const;
+
+/** copilot (همراز) is intentionally absent: it stays above the groups. */
+const NAV_GROUP_BY_ID: Record<string, (typeof NAV_GROUPS)[number]['id']> = {
+  supervisor: 'edu',
+  students: 'edu',
+  terms: 'edu',
+  register: 'edu',
+  lessons: 'edu',
+  tasks: 'edu',
+  accounting: 'finance',
+  invoices: 'finance',
+  'finance-reports': 'finance',
+  pay: 'finance',
+  'online-payments': 'finance',
+  'debt-sms': 'finance',
+  messenger: 'comms',
+  email: 'comms',
+  campaigns: 'comms',
+  leads: 'sales',
+  'lead-pipeline': 'sales',
+  'site-requests': 'sales',
+  automation: 'system',
+  branches: 'system',
+  settings: 'system',
+};
 
 const ROLE_LABEL: Record<StaffRole, string> = {
   admin: 'مدیر سیستم',
@@ -200,6 +288,14 @@ const ACTIVE_BADGE_MAP: Record<string, string> = {
  */
 export default function App() {
   const params = new URLSearchParams(window.location.search);
+  // Trainee portal PWA (/?portal=1). A Zarinpal return (?trainee=1&payment=...) started from the portal goes back to it.
+  if (params.get('portal') === '1' || (params.get('trainee') === '1' && params.get('payment') && consumePortalPaymentReturn())) {
+    return (
+      <ThemeProvider>
+        <TraineePortal />
+      </ThemeProvider>
+    );
+  }
   if (params.get('trainee') === '1') {
     return (
       <ThemeProvider>
@@ -220,6 +316,7 @@ function AppShell() {
   const [authChecking, setAuthChecking] = useState<boolean>(!!api.getAuthToken());
   const [currentUser, setCurrentUser] = useState<{ username: string; role?: StaffRole; full_name?: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string>('supervisor');
+  const [openGroups, setOpenGroups] = useState<string[]>(['edu']);
   const [taskCounts, setTaskCounts] = useState<{ open: number; overdue: number }>({ open: 0, overdue: 0 });
   const refreshTaskCounts = () => { taskSummary().then(setTaskCounts).catch(() => undefined); };
   useEffect(() => {
@@ -273,8 +370,8 @@ function AppShell() {
 
   useEffect(() => {
     const onLost = () => setAuthed(false);
-    window.addEventListener('carla-auth-lost', onLost);
-    return () => window.removeEventListener('carla-auth-lost', onLost);
+    window.addEventListener('ham-taraz-auth-lost', onLost);
+    return () => window.removeEventListener('ham-taraz-auth-lost', onLost);
   }, []);
 
   useEffect(() => {
@@ -314,6 +411,15 @@ function AppShell() {
     return () => { cancelled = true; };
   }, []);
 
+  // Multi-branch (CRM_MULTI_BRANCH): the admin's «شعبه‌ها» page only exists when the server has it on.
+  const [branchesEnabled, setBranchesEnabled] = useState(false);
+  useEffect(() => {
+    if (!authed) { setBranchesEnabled(false); return; }
+    let alive = true;
+    fetchBranchConfig().then((c) => { if (alive) setBranchesEnabled(!!c.enabled); });
+    return () => { alive = false; };
+  }, [authed]);
+
   useEffect(() => {
     if (!authed) return;
     api.startFileTokenRefresh();
@@ -331,7 +437,7 @@ function AppShell() {
   }, []);
 
   const role: StaffRole = currentUser?.role === 'cashier' || currentUser?.role === 'instructor' ? currentUser.role : 'admin';
-  const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role));
+  const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(role) && (item.id !== 'branches' || branchesEnabled));
 
   const handleActiveTabChange = (newTab: string) => {
     if (!visibleNav.some(item => item.id === newTab)) return;
@@ -347,6 +453,54 @@ function AppShell() {
   }, [role, activeTab]);
 
   const activeNavItem = visibleNav.find(n => n.id === activeTab) || NAV_ITEMS.find(n => n.id === activeTab);
+
+  useEffect(() => {
+    const group = NAV_GROUP_BY_ID[activeTab];
+    setOpenGroups(group ? [group] : []);
+  }, [activeTab]);
+
+  const toggleGroup = (id: string) => {
+    setOpenGroups((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const renderNavItem = (item: (typeof NAV_ITEMS)[number]) => {
+    const isActive = activeTab === item.id;
+    const Icon = item.icon;
+    return (
+      <button
+        key={item.id}
+        id={`tab-${item.id}`}
+        onClick={() => handleActiveTabChange(item.id)}
+        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 text-right group ${
+          isActive
+            ? 'text-white shadow-lg'
+            : 'text-slate-400 hover:text-white hover:bg-white/6'
+        }`}
+        style={isActive ? {
+          background: 'linear-gradient(to left, var(--brand-primary-dark), var(--brand-primary))',
+          boxShadow: '0 10px 15px -3px rgba(var(--brand-primary-rgb), 0.45)',
+        } : undefined}
+      >
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all ${
+          isActive ? 'bg-white/20' : 'bg-white/5 group-hover:bg-white/10'
+        }`}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className={`flex-1 text-right min-w-0 text-sm font-semibold leading-tight truncate ${isActive ? 'text-white' : ''}`}>
+          {item.label}
+        </div>
+        {item.id === 'tasks' && taskCounts.open > 0 && (
+          <span title={taskCounts.overdue ? `${taskCounts.overdue} کار عقب‌افتاده` : 'کارهای باز'}
+            className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${taskCounts.overdue ? 'bg-rose-500 text-white animate-pulse' : 'bg-white/15 text-white'}`}>
+            {(taskCounts.overdue || taskCounts.open).toLocaleString('fa-IR')}
+          </span>
+        )}
+        {isActive && (
+          <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)] shrink-0" />
+        )}
+      </button>
+    );
+  };
 
   const jalaliDate = new Date().toLocaleDateString('fa-IR', { timeZone: 'Asia/Tehran' });
 
@@ -373,7 +527,7 @@ function AppShell() {
         <div className="fixed inset-0 z-30 bg-black/40 lg:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden="true" />
       )}
       <aside
-        className={`carla-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 lg:static lg:z-auto ${
+        className={`ham-taraz-sidebar flex flex-col shrink-0 transition-all duration-300 ease-in-out fixed inset-y-0 right-0 z-40 lg:static lg:z-auto ${
           isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none overflow-hidden invisible'
         }`}
         id="app-sidebar"
@@ -381,7 +535,7 @@ function AppShell() {
         {/* Brand Header */}
         <div className="p-5 pb-4">
           <div className="flex items-center gap-3 mb-1">
-            <div className="carla-brand-logo overflow-hidden">
+            <div className="ham-taraz-brand-logo overflow-hidden">
               {theme?.logo_url ? (
                 <img src={theme.logo_url} alt="لوگوی آموزشگاه" className="w-full h-full object-cover" />
               ) : (
@@ -398,52 +552,38 @@ function AppShell() {
         <div className="mx-4 h-px bg-white/5" />
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          <p className="carla-section-title px-3 mb-2">منوی اصلی</p>
-
-          {visibleNav.map((item) => {
-            const isActive = activeTab === item.id;
-            const Icon = item.icon;
+        <nav className="flex-1 px-3 py-3 overflow-y-auto">
+          {visibleNav.filter((item) => !NAV_GROUP_BY_ID[item.id]).map((item) => renderNavItem(item))}
+          {NAV_GROUPS.map((group) => {
+            const items = visibleNav.filter((item) => NAV_GROUP_BY_ID[item.id] === group.id);
+            if (!items.length) return null;
+            const open = openGroups.includes(group.id);
+            const containsActive = items.some((item) => item.id === activeTab);
+            const GroupIcon = group.icon;
             return (
-              <button
-                key={item.id}
-                id={`tab-${item.id}`}
-                onClick={() => handleActiveTabChange(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-200 text-right group ${
-                  isActive
-                    ? 'text-white shadow-lg'
-                    : 'text-slate-400 hover:text-white hover:bg-white/6'
-                }`}
-                style={isActive ? {
-                  background: 'linear-gradient(to left, var(--brand-primary-dark), var(--brand-primary))',
-                  boxShadow: '0 10px 15px -3px rgba(var(--brand-primary-rgb), 0.45)',
-                } : undefined}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all ${
-                  isActive ? 'bg-white/20' : `bg-white/5 group-hover:bg-white/10`
-                }`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-                <div className="flex-1 text-right min-w-0">
-                  <div className={`text-sm font-semibold leading-tight truncate ${isActive ? 'text-white' : ''}`}>
-                    {item.label}
-                  </div>
-                  <div className={`text-[10px] leading-tight truncate transition-all ${
-                    isActive ? 'text-white/70' : 'text-slate-400 group-hover:text-slate-300'
+              <div key={group.id} className="mt-1">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.id)}
+                  aria-expanded={open}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer text-right transition-colors ${
+                    containsActive ? 'bg-white/10 text-white' : 'text-slate-300 hover:bg-white/6 hover:text-white'
+                  }`}
+                >
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                    containsActive ? 'bg-white/15' : 'bg-white/5'
                   }`}>
-                    {item.sublabel}
+                    <GroupIcon className="h-4 w-4" />
                   </div>
-                </div>
-                {item.id === 'tasks' && taskCounts.open > 0 && (
-                  <span title={taskCounts.overdue ? `${taskCounts.overdue} کار عقب‌افتاده` : 'کارهای باز'}
-                    className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${taskCounts.overdue ? 'bg-rose-500 text-white animate-pulse' : 'bg-white/15 text-white'}`}>
-                    {(taskCounts.overdue || taskCounts.open).toLocaleString('fa-IR')}
-                  </span>
+                  <span className="flex-1 text-sm font-semibold">{group.label}</span>
+                  <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? '' : 'rotate-90'}`} />
+                </button>
+                {open && (
+                  <div className="mt-0.5 mr-4 space-y-0.5 border-r border-white/10 pr-1">
+                    {items.map((item) => renderNavItem(item))}
+                  </div>
                 )}
-                {isActive && (
-                  <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_rgba(255,255,255,0.9)] shrink-0" />
-                )}
-              </button>
+              </div>
             );
           })}
         </nav>
@@ -474,7 +614,7 @@ function AppShell() {
 
         {/* ── HEADER ── */}
         <header
-          className="carla-header h-16 px-3 sm:px-6 gap-2 flex items-center justify-between shrink-0"
+          className="ham-taraz-header h-16 px-3 sm:px-6 gap-2 flex items-center justify-between shrink-0"
           id="main-header"
         >
           {/* Left: Sidebar Toggle + Breadcrumb */}
@@ -502,6 +642,9 @@ function AppShell() {
 
           {/* Right: Controls */}
           <div className="flex items-center gap-2">
+            {/* Branch picker: hidden unless multi-branch is on and 2+ branches exist */}
+            <BranchSwitcher />
+
             {/* Refresh */}
             <button
               onClick={refreshAllData}
@@ -549,7 +692,7 @@ function AppShell() {
               <PrintPreview enrollmentId={Number(new URLSearchParams(window.location.search).get('enrollment')) || undefined} />
           ) : loading ? (
             <div className="flex flex-col items-center justify-center py-40 space-y-4 fade-in">
-              <div className="carla-spinner" />
+              <div className="ham-taraz-spinner" />
               <p className="text-sm text-slate-400 font-medium">در حال بارگذاری داده‌ها...</p>
             </div>
           ) : (
@@ -615,6 +758,15 @@ function AppShell() {
               {activeTab === 'terms' && (role === 'admin' || role === 'cashier') && (
                 <CourseTermsPanel courses={courses} isAdmin={role === 'admin'} />
               )}
+              {activeTab === 'lessons' && (role === 'admin' || role === 'cashier') && (
+                <LessonCalendarPanel students={students} isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'invoices' && (role === 'admin' || role === 'cashier') && (
+                <InvoicesPanel isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'finance-reports' && (role === 'admin' || role === 'cashier') && (
+                <FinanceReportsPanel isAdmin={role === 'admin'} />
+              )}
               {activeTab === 'pay' && role === 'admin' && (
                 <InstructorPayPanel />
               )}
@@ -627,14 +779,26 @@ function AppShell() {
               {activeTab === 'leads' && (role === 'admin' || role === 'cashier') && (
                 <LeadsPanel courses={courses} onConverted={() => { refreshAllData(); handleActiveTabChange('students'); }} />
               )}
+              {activeTab === 'lead-pipeline' && (role === 'admin' || role === 'cashier') && (
+                <LeadPipelinePanel isAdmin={role === 'admin'} />
+              )}
+              {activeTab === 'email' && (role === 'admin' || role === 'cashier') && (
+                <EmailPanel isAdmin={role === 'admin'} courses={courses.map((c) => ({ id: c.id, title: c.title }))} />
+              )}
               {activeTab === 'site-requests' && (role === 'admin' || role === 'cashier') && (
                 <SiteRequestsHistory courses={courses} />
               )}
               {activeTab === 'tasks' && currentUser && (
                 <TasksPanel username={currentUser.username} isAdmin={role === 'admin'} onCountsChange={refreshTaskCounts} />
               )}
+              {activeTab === 'automation' && role === 'admin' && (
+                <AutomationRulesPanel />
+              )}
               {activeTab === 'campaigns' && role === 'admin' && (
                 <BulkMessaging courses={courses} />
+              )}
+              {activeTab === 'branches' && role === 'admin' && branchesEnabled && (
+                <BranchesPanel />
               )}
               {activeTab === 'settings' && role === 'admin' && (
                 <Settings

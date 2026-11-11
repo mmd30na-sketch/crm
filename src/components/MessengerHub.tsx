@@ -120,12 +120,27 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
   studentsRef.current = students;
   const [activeTab, setActiveTab] = useState<'chat' | 'sms' | 'templates'>('chat');
   // Templates live on the server (editable); the built-in list is only shown until the first load answers.
-  const [QUICK_TEMPLATES, setTemplates] = useState<{ id: string; title: string; body: string; color: string }[]>(DEFAULT_TEMPLATES);
+  const [QUICK_TEMPLATES, setTemplates] = useState<api.MessageTemplate[]>(DEFAULT_TEMPLATES);
   const [tplDraft, setTplDraft] = useState<{ id?: string; title: string; body: string; color: string } | null>(null);
   const [tplBusy, setTplBusy] = useState(false);
   const [tplError, setTplError] = useState('');
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncNote, setSyncNote] = useState('');
   const loadTemplates = () => api.fetchMessageTemplates().then(r => { if (Array.isArray(r)) setTemplates(r); }).catch(() => {});
+  const syncSmsir = async (quiet = false) => {
+    setTplError(''); setSyncNote(''); setSyncBusy(true);
+    try {
+      const r = await api.syncSmsTemplates();
+      setSyncNote(`از sms.ir خوانده شد: ${Number(r.remote || 0).toLocaleString('fa-IR')} قالب`);
+      await loadTemplates();
+    } catch (e: any) {
+      const msg = e?.message || 'همگام‌سازی با sms.ir نشد';
+      if (msg === 'Forbidden') { if (!quiet) setTplError('خواندن قالب‌ها از sms.ir فقط برای مدیر است.'); }
+      else setTplError(msg);
+    } finally { setSyncBusy(false); }
+  };
   useEffect(() => { loadTemplates(); }, []);
+  useEffect(() => { if (activeTab === 'templates') { syncSmsir(true); } }, [activeTab]);
   const saveTpl = async () => {
     if (!tplDraft) return;
     setTplBusy(true); setTplError('');
@@ -992,14 +1007,21 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
       ══════════════════════════════════════════════ */}
       {activeTab === 'templates' && (
         <div className="p-6 space-y-4 fade-in" id="templates-sub-panel">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">مدیریت الگوهای آماده ارسال</h3>
-              <p className="text-xs text-slate-400">جای‌گذاری‌ها: [نام] [خانوادگی] [دوره] [بدهی] [تاریخ] [ساعت]</p>
+              <h3 className="text-sm font-bold text-slate-900">الگوهای پیامک</h3>
+              <p className="text-xs text-slate-400">قالب‌های sms.ir فقط خواندنی‌اند. الگوی آزاد با [نام] [دوره] [بدهی] [تاریخ] [ساعت] ساخته می‌شود.</p>
             </div>
-            <button type="button" onClick={() => { setTplError(''); setTplDraft({ title: '', body: '', color: 'sky' }); }}
-              className="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shrink-0">+ الگوی جدید</button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => { syncSmsir(); }} disabled={syncBusy}
+                className="px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg flex items-center gap-1.5 disabled:opacity-50">
+                <RefreshCw className={`w-3.5 h-3.5 ${syncBusy ? 'animate-spin' : ''}`} />{syncBusy ? 'در حال خواندن…' : 'خواندن از sms.ir'}
+              </button>
+              <button type="button" onClick={() => { setTplError(''); setTplDraft({ title: '', body: '', color: 'sky' }); }}
+                className="px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 shrink-0">+ الگوی آزاد</button>
+            </div>
           </div>
+          {syncNote && <p className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{syncNote}</p>}
           {tplError && <p className="text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{tplError}</p>}
           {tplDraft && (
             <div className="bg-sky-50/50 border border-sky-200 rounded-xl p-4 space-y-3">
@@ -1021,34 +1043,49 @@ export default function MessengerHub({ students, courses = [], enrollments = [],
           {QUICK_TEMPLATES.length === 0 && !tplDraft && <p className="text-xs text-slate-400 text-center py-6">هنوز الگویی ثبت نشده است.</p>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {QUICK_TEMPLATES.map(tmpl => (
+            {QUICK_TEMPLATES.map(tmpl => {
+              const smsir = tmpl.source === 'smsir' || tmpl.readonly;
+              const badge = !smsir ? '' : tmpl.provider_status === 3 ? 'رد شده در sms.ir' : tmpl.provider_status === 1 ? 'در انتظار تأیید' : tmpl.enabled === false ? 'خاموش' : 'تأییدشده در sms.ir';
+              return (
               <div key={tmpl.id} className="bg-white border border-slate-200 rounded-xl p-4 space-y-2.5 shadow-xs hover:border-sky-300 transition">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5 text-sky-500" />{tmpl.title}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 min-w-0">
+                    <Tag className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                    <span className="truncate">{tmpl.title}</span>
                   </span>
-                  <span className="flex items-center gap-1 shrink-0">
-                    <button type="button" onClick={() => { setTplError(''); setTplDraft({ id: tmpl.id, title: tmpl.title, body: tmpl.body, color: tmpl.color }); }} className="px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md">ویرایش</button>
-                    <button type="button" onClick={() => deleteTpl(tmpl.id, tmpl.title)} className="px-2 py-1 text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-md">حذف</button>
-                  </span>
+                  {smsir ? (
+                    <span className={`shrink-0 px-2 py-1 text-[10px] font-bold rounded-md ${tmpl.provider_status === 3 ? 'text-rose-700 bg-rose-50' : tmpl.enabled === false ? 'text-amber-700 bg-amber-50' : 'text-emerald-700 bg-emerald-50'}`}>{badge}</span>
+                  ) : (
+                    <span className="flex items-center gap-1 shrink-0">
+                      <button type="button" onClick={() => { setTplError(''); setTplDraft({ id: tmpl.id, title: tmpl.title, body: tmpl.body, color: tmpl.color }); }} className="px-2 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md">ویرایش</button>
+                      <button type="button" onClick={() => deleteTpl(tmpl.id, tmpl.title)} className="px-2 py-1 text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-md">حذف</button>
+                    </span>
+                  )}
                 </div>
-                <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100">
-                  {tmpl.body}
+                <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100 whitespace-pre-wrap">
+                  {tmpl.body || 'متنی از sms.ir نرسیده است.'}
                 </p>
-                <div className="flex justify-end pt-1">
-                  <button
-                    onClick={() => {
-                      setSelectedTemplateId(tmpl.id);
-                      setSmsBody(tmpl.body);
-                      setActiveTab('sms');
-                    }}
-                    className="px-3 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-bold rounded-lg transition cursor-pointer"
-                  >
-                    استفاده در ارسال پیامک
-                  </button>
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  {smsir ? (
+                    <span className="text-[10px] font-mono text-slate-400" dir="ltr">{tmpl.provider_template_id}{tmpl.params ? ` · ${tmpl.params}` : ''}</span>
+                  ) : (
+                    <span />
+                  )}
+                  {!smsir && (
+                    <button
+                      onClick={() => {
+                        setSelectedTemplateId(tmpl.id);
+                        setSmsBody(tmpl.body);
+                        setActiveTab('sms');
+                      }}
+                      className="px-3 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-bold rounded-lg transition cursor-pointer"
+                    >
+                      استفاده در ارسال پیامک
+                    </button>
+                  )}
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         </div>
       )}

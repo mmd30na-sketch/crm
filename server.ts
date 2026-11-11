@@ -12,14 +12,19 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import * as chabokan from './mysql-socks';
-import { createSms, toBracket, fromBracket, resolveApiKey } from './shared/sms';
+import { createSms, toBracket, fromBracket, resolveApiKey, resolveSenderLine, smsirRead, SMSIR_DELIVERY_FA } from './shared/sms';
 import { runCopilotSql, COPILOT_SQL_SCHEMA } from './copilot-sql';
 import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
 import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
 import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
+import { registerLeadPipeline, ensureLeadPipelineSchema } from './leadPipeline';
+import { registerEmail, ensureEmailSchema } from './emailService';
 import { registerCourseTerms, ensureCourseTermsSchema } from './courseTerms';
+import { registerPublicApi, ensureApiKeysSchema, apiStudent, apiEnrollment, apiPayment } from './publicApi';
+import { createWebhooks, ensureWebhooksSchema } from './webhooks';
+import { buildOpenApiSpec, docsHtml as publicApiDocsHtml } from './openapiSpec';
 import {
   ensureThemeSettingsSchema,
   readThemeConfig,
@@ -35,9 +40,19 @@ import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPa
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
 import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
+import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
+import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
+import { createAutomationSources, registrationContext } from './automationSources';
+import type { AutomationEvent, EventContext } from './automationConditions';
+import { registerTraineePortal, ensurePortalEntrySchema, mintPortalEntry } from './traineePortal';
+import { registerBranches, ensureBranchSchema, branchMiddleware, startBranchReconcileJob, branchSmsLine } from './branches';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
+import { registerInvoices, ensureInvoicesSchema } from './invoices';
+import { registerFinanceReports, ensureFinanceSchema } from './financeReports';
+import { registerAccounting } from './accounting';
+import { registerFieldPolicy, ensureFieldPolicySchema, accessFor, FIELD_GROUPS, DEFAULT_POLICY } from './fieldPolicy';
 import { owedByEnrollment, allocatePayment as splitPayment, payableAmount } from './src/utils/finance';
 
 dotenv.config({ path: '.env.local' });
@@ -467,6 +482,16 @@ function writeDb(data: typeof initialDb) {
   }
   fs.renameSync(tmp, DB_PATH);
 }
+
+/** Outbound webhooks (webhooks.ts). emit() is fire-and-forget: it never delays or fails the staff request. */
+const webhooks = createWebhooks({
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  log: (msg) => console.warn(`[webhooks] ${msg}`),
+});
+const webhookStudent = (s: any) => (s ? apiStudent(s) : null);
+const webhookEnrollment = (e: any) => (e ? apiEnrollment(e) : null);
+const webhookPayment = (p: any) => apiPayment(p);
 
 // Seed if not exists
 if (!fs.existsSync(DB_PATH)) {
@@ -904,48 +929,119 @@ function canAccessApi(role: StaffRole, method: string, rawPath: string): boolean
   if (path.startsWith('/message-templates')) return role === 'cashier'; // staff can manage reply templates
   if (path.startsWith('/tasks')) return true; // handlers scope non-admins to their own tasks
   if (path.startsWith('/leads') || path.startsWith('/activities')) return role === 'cashier';
+  if (path.startsWith('/lead-pipeline')) return role === 'cashier'; // stage config writes: admin only (enforced in handler)
+  if (path.startsWith('/email')) return role === 'cashier'; // campaigns + template edits: admin only (enforced in handlers)
   if (path.startsWith('/campaigns')) return false; // admin only
   if (path.startsWith('/instructor-pay')) return false; // admin only (حق‌التدریس)
+  if (path.startsWith('/lessons')) return role === 'cashier'; // lesson calendar; reminder run is admin-only in the handler
+  if (path.startsWith('/automation')) return false; // admin only (اتوماسیون قاعده‌محور)
+  if (path.startsWith('/invoices') || path.startsWith('/finance-reports')) return role === 'cashier'; // admin-only writes checked in the handlers
+  if (path.startsWith('/refunds') || path.startsWith('/accounting')) return false; // admin only
   if (path.startsWith('/course-terms')) return role === 'cashier' && !write; // writes: admin only
   if (path.startsWith('/copilot')) return role === 'cashier';
   if (path.startsWith('/courses') || path.startsWith('/health')) return !write;
+  // Multi-branch: every role reads its own switcher config / branch settings; managing branches is admin only.
+  if (path === '/branches/config' || path === '/branches/active-settings') return !write;
+  if (path.startsWith('/branches')) return false;
   if (!write) return role === 'cashier';
   return false;
 }
 
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth')) return next();
+  // Public API v1 carries its own API-key auth, rate limit and scopes (publicApi.ts), never a staff session.
+  if (isPublicApiPath(req.path)) return next();
   // Trainee payment routes carry their own signed trainee token (never a staff session).
   if (req.path.startsWith('/trainee-payments')) return next();
+  // Trainee portal (PWA) routes: public OTP login + views guarded by the same signed trainee token.
+  if (req.path.startsWith('/trainee-portal')) return next();
   if (req.path === '/health') return next();
   // The theme (and with it the login logo) is read by the public login screen, so it needs no session.
   if (req.path === '/settings/theme' && req.method === 'GET') return next();
   if (req.path === '/messenger/webhook') return next();
   if (req.path === '/messenger/account-ingest') return next();
+  // Signed (HMAC) campaign unsubscribe link opened from an email client; no session.
+  if (req.path === '/email/unsubscribe') return next();
   if (req.method === 'OPTIONS') return next();
   return requireAuth(req, res, next);
 });
 
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.method === 'OPTIONS') return next();
+  if (isPublicApiPath(req.path)) return next();
+  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/email/unsubscribe' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
   next();
 });
 
-/** The instructor's students tab needs names, phone, photo and classes; nothing personal or financial. */
+// Multi-branch scoping (CRM_MULTI_BRANCH=1 + MySQL + 2 active branches); a no-op otherwise. See branches.ts.
+app.use('/api', branchMiddleware);
+
+// Field-level access policy (fieldPolicy.ts): masks/strips sensitive keys in every /api JSON response for the
+// caller's role, drops non-editable keys from write bodies and audits sensitive-field access. Admin: unchanged.
+const fieldPolicy = registerFieldPolicy(app, {
+  session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  log: (msg) => console.warn(`[field-policy] ${msg}`),
+  skip: (req) => req.method === 'OPTIONS' || req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health'
+    || req.path.startsWith('/settings/theme') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest'
+    || req.path.startsWith('/settings/field-policy') || req.path.startsWith('/settings/field-access-log') || req.path === '/email/unsubscribe' || req.path.startsWith('/v1/'),
+});
+
+// Uploads are multipart (not filtered by the JSON write guard): require "edit" on the document/photo groups.
+const requireFieldEdit = (groups: string[]) => (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const role = currentRole(req);
+  if (!role || role === 'admin') return next();
+  const policy = fieldPolicy.get().policy;
+  const blocked = groups.filter((g) => accessFor(role, g, policy) !== 'edit');
+  if (!blocked.length) return next();
+  const s = sessionFromRequest(req);
+  fieldPolicy.audit({ username: s?.username || null, role, method: req.method, path: req.originalUrl.split('?')[0], fields: blocked, records: 1, action: 'blocked_edit' });
+  return res.status(403).json({ error: 'دسترسی ویرایش این مدارک برای نقش شما بسته است.' });
+};
+app.post('/api/students/:id/photos', requireFieldEdit(['id_documents', 'personal_photo']));
+app.post('/api/enrollments/:id/receipt', requireFieldEdit(['id_documents']));
+// Website-registration document files (national card scan / personal photo) need view access on that group.
+app.get('/api/registrations/:code/file/:kind', (req, res, next) => {
+  const role = currentRole(req);
+  if (!role || role === 'admin') return next();
+  const group = req.params.kind === 'personal_photo' ? 'personal_photo' : 'id_documents';
+  const a = accessFor(role, group, fieldPolicy.get().policy);
+  const s = sessionFromRequest(req);
+  if (a !== 'edit' && a !== 'view') return res.status(403).json({ error: 'Forbidden' });
+  fieldPolicy.audit({ username: s?.username || null, role, method: 'GET', path: '/api/registrations/:code/file', fields: [group], records: 1, action: 'file' });
+  next();
+});
+
+/**
+ * The instructor's students tab needs names, phone, photo and classes; nothing personal or financial.
+ * The field policy may widen this list (to keys of field groups not "hidden" for the instructor); the
+ * response filter then applies view/masked.
+ */
+const INSTRUCTOR_BASE_KEYS = {
+  students: ['id', 'first_name', 'last_name', 'phone_number', 'personal_photo_url', 'status', 'created_at'],
+  enrollments: ['id', 'student_id', 'course_id', 'course_number', 'signup_date_jalali'],
+};
 function redactForInstructor(req: express.Request, kind: 'students' | 'enrollments', rows: any[]): any[] {
   if (currentRole(req) !== 'instructor') return rows;
-  if (kind === 'students') {
-    return rows.map((s) => ({
-      id: s.id, first_name: s.first_name, last_name: s.last_name, phone_number: s.phone_number,
-      personal_photo_url: s.personal_photo_url, status: s.status, created_at: s.created_at,
-    }));
+  const policy = fieldPolicy.get().policy;
+  const keys = new Set(INSTRUCTOR_BASE_KEYS[kind]);
+  // Only groups the admin opened beyond the defaults add keys, so the default output is exactly as before.
+  for (const g of FIELD_GROUPS) {
+    if (DEFAULT_POLICY.instructor[g.id] === 'hidden' && accessFor('instructor', g.id, policy) !== 'hidden') for (const k of g.keys) keys.add(k);
   }
-  return rows.map((e) => ({
-    id: e.id, student_id: e.student_id, course_id: e.course_id, course_number: e.course_number, signup_date_jalali: e.signup_date_jalali,
-  }));
+  return rows.map((r) => {
+    const out: any = {};
+    for (const k of keys) if (r && r[k] !== undefined) out[k] = r[k];
+    return out;
+  });
+}
+
+/** /api/v1 and /api/v1/... (case-insensitive like Express routing); not /api/v10 or /api/v1x. */
+function isPublicApiPath(p: string): boolean {
+  return /^\/v1(\/|$)/i.test(p);
 }
 
 function envAdminUsername() {
@@ -1095,11 +1191,21 @@ async function instructorPhotoPaths(): Promise<Set<string>> {
 
 // Student documents (national card, photos) are personal data: staff login required. The instructor
 // only sees personal photos (positively identified as a student's personal_photo), never ID scans.
+// The field policy decides per role: "id_documents" (ID scans, registration PDFs) and "personal_photo".
+// Defaults: cashier both, instructor personal photos only (as before).
 app.use('/StudentFiles', fileRateLimit, requireStaff, asyncHandler(async (req, res, next) => {
-  if (currentRole(req) !== 'instructor') return next();
+  const role = currentRole(req);
+  const s = sessionFromRequest(req);
+  const auditFile = (group: string) => fieldPolicy.audit({ username: s?.username || null, role: role || null, method: req.method, path: '/StudentFiles', fields: [group], records: 1, action: 'file' });
   let requested = '';
   try { requested = decodeURIComponent(req.originalUrl.split('?')[0]); } catch { return res.status(400).json({ error: 'Bad path' }); }
-  if (!(await instructorPhotoPaths()).has(requested)) return res.status(403).json({ error: 'Forbidden' });
+  const isPhoto = (await instructorPhotoPaths()).has(requested);
+  const group = isPhoto ? 'personal_photo' : 'id_documents';
+  if (role !== 'admin') {
+    const a = accessFor(String(role || ''), group, fieldPolicy.get().policy);
+    if (a !== 'edit' && a !== 'view') return res.status(403).json({ error: 'Forbidden' });
+  }
+  auditFile(group);
   next();
 }), express.static(studentFilesBase));
 
@@ -1665,7 +1771,7 @@ function getGateways(): Gateways {
   return {
     sms_provider: smsCfg.provider || 'smsir',
     sms_api_key: process.env.SMS_API_KEY || '',
-    sms_sender_line: smsCfg.lineNumber || process.env.SMS_SENDER_LINE || '',
+    sms_sender_line: resolveSenderLine(smsCfg.lineNumber),
     sms_auto_register: smsCfg.autoRegister === true, // default OFF
     sms_auto_exam: smsCfg.autoExam === true, // default OFF
     rubika_bot_token: g.rubika_bot_token || RUBIKA_BOT_TOKEN,
@@ -1678,7 +1784,8 @@ const normalizeMobile = (v: unknown) => toLatinDigits(String(v ?? '')).replace(/
 
 /** Sends one SMS through the shared helper (sms.ir bulk, line from app_settings). */
 async function sendSmsMessage(mobile: string, text: string): Promise<{ ok: boolean; status: 'sent' | 'not_configured' | 'failed'; detail?: string }> {
-  const r = await sharedSms.sendText(mobile, text);
+  // Multi-branch: a branch's own sender line when the request works in that branch; else the global line.
+  const r = await sharedSms.sendText(mobile, text, { lineNumber: await branchSmsLine() });
   return { ok: r.ok, status: (r.status === 'disabled' ? 'failed' : r.status) as any, detail: r.detail };
 }
 
@@ -1734,7 +1841,23 @@ async function deliverMessage(opts: { channel: string; recipient: string; messag
 // Message templates: canonical store is MySQL sms_templates (see shared/sms.ts).
 const TEMPLATE_COLORS = ['sky', 'rose', 'teal', 'amber', 'violet', 'emerald', 'slate'];
 // Templates live in MySQL sms_templates ({name}-style placeholders); the UI keeps its [نام]-style tokens, converted here.
-const tplOut = (t: any) => ({ id: t.key, title: t.title_fa || t.key, body: toBracket(t.body_fa || ''), color: t.color || 'sky', updated_at: t.updated_at });
+const tplOut = (t: any) => {
+  const smsir = t.channel_kind === 'verify' && !!t.provider_template_id;
+  return {
+    id: t.key,
+    title: t.title_fa || t.key,
+    body: smsir ? (t.body_fa || '') : toBracket(t.body_fa || ''),
+    color: t.color || 'sky',
+    updated_at: t.updated_at,
+    source: smsir ? 'smsir' : 'local',
+    readonly: smsir,
+    provider_template_id: t.provider_template_id || '',
+    provider_status: t.provider_status ?? null,
+    enabled: !!t.enabled,
+    params: t.param_names || '',
+  };
+};
+const visibleTemplate = (t: any) => (t.show_in_crm && t.channel_kind === 'bulk') || (t.channel_kind === 'verify' && t.provider_template_id && t.key !== 'otp');
 const templateInput = (b: any) => {
   const title = sanitizeString(b?.title, 80); const body = sanitizeString(b?.body, 1000);
   const color = TEMPLATE_COLORS.includes(b?.color) ? b.color : 'sky';
@@ -1742,8 +1865,18 @@ const templateInput = (b: any) => {
   return { title_fa: title, body_fa: fromBracket(body), color };
 };
 app.get('/api/message-templates', async (req, res) => {
-  try { res.json((await sharedSms.listTemplates(true)).filter((t: any) => t.show_in_crm && t.channel_kind === 'bulk').map(tplOut)); }
+  try { res.json((await sharedSms.listTemplates(true)).filter(visibleTemplate).map(tplOut)); }
   catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/sms/templates/sync', requireAdmin, async (_req, res) => {
+  try {
+    const r = await sharedSms.syncFromSmsir();
+    if (!r.ok) return res.status(503).json({ error: 'درگاه پیامک تنظیم نشده است.' });
+    res.json(r);
+  } catch (e: any) {
+    console.warn('[SMS] template sync failed:', e?.message || e);
+    res.status(502).json({ error: 'همگام‌سازی با sms.ir ناموفق بود.' });
+  }
 });
 app.post('/api/message-templates', async (req, res) => {
   try {
@@ -2045,19 +2178,24 @@ app.get('/api/students', async (req, res) => {
 
 const sameCode = (s: any, code: string | undefined) => !!code && normalizeNationalCode(s?.national_code) === code;
 
-app.post('/api/students', asyncHandler(async (req, res) => {
-  const { data, error, warnings } = parseStudentInput(req.body, false);
-  if (error) return res.status(400).json({ error });
+/**
+ * Creates a student (or returns the existing one with the same national code). Shared by POST /api/students
+ * and the public API (POST /api/v1/students); answers as { status, body } so both send the same JSON.
+ */
+async function createStudentCore(input: any): Promise<{ status: number; body: any }> {
+  const { data, error, warnings } = parseStudentInput(input, false);
+  if (error) return { status: 400, body: { error } };
 
   if (chabokan.isMysqlEnabled()) {
     // Same national code = same person (e.g. a second course): the existing record is reused. The lookup
     // and the insert run in one locked transaction, so two concurrent submits cannot both insert.
-    const { student, alreadyExists } = await chabokan.insertStudent({ ...req.body, ...data });
-    return res.json({ status: 'success', ...(alreadyExists ? { already_exists: true } : {}), student, warnings });
+    const { student, alreadyExists } = await chabokan.insertStudent({ ...input, ...data });
+    if (!alreadyExists) webhooks.emit('student.created', { student: webhookStudent(student) });
+    return { status: 200, body: { status: 'success', ...(alreadyExists ? { already_exists: true } : {}), student, warnings } };
   }
   const db = readDb();
   const existing = db.students.find(s => sameCode(s, data.national_code));
-  if (existing) return res.json({ status: 'success', already_exists: true, student: existing, warnings });
+  if (existing) return { status: 200, body: { status: 'success', already_exists: true, student: existing, warnings } };
   const newStudent: Student = {
     id: db.students.length > 0 ? Math.max(...db.students.map(s => s.id)) + 1 : 1,
     first_name: data.first_name!,
@@ -2072,7 +2210,13 @@ app.post('/api/students', asyncHandler(async (req, res) => {
   };
   db.students.push(newStudent);
   writeDb(db);
-  res.json({ status: 'success', student: newStudent, warnings });
+  webhooks.emit('student.created', { student: webhookStudent(newStudent) });
+  return { status: 200, body: { status: 'success', student: newStudent, warnings } };
+}
+
+app.post('/api/students', asyncHandler(async (req, res) => {
+  const r = await createStudentCore(req.body);
+  res.status(r.status).json(r.body);
 }));
 
 
@@ -2351,53 +2495,70 @@ async function notifyRegistration(student: any, course: any, trackingCode?: stri
     const academy = academyDisplayName();
     // Verify template 743658 (NAME, COURSE, TRACK). Without a tracking code (manual CRM enrollment) TRACK is empty,
     // so the shared helper falls back to fallback_body_fa (the previous free-text welcome).
-    const r = await sharedSms.sendTemplate('registration_welcome', phone, welcomeSmsVars(student, course, String(trackingCode || ''), academy));
+    // CODE / entry_code is the one-time portal link (kermanshahcart.ir/e/#CODE#). The approved template does not
+    // send it until sms.ir has a CODE parameter; extra vars are ignored meanwhile.
+    const vars: Record<string, unknown> = welcomeSmsVars(student, course, String(trackingCode || ''), academy);
+    const studentId = Number(student?.id || student?.student_id);
+    if (Number.isInteger(studentId) && studentId > 0) {
+      try {
+        const entry = await mintPortalEntry(studentId, { readJsonDb: () => readDb(), writeJsonDb: (s) => writeDb(s) });
+        vars.CODE = entry.code;
+        vars.entry_code = entry.code;
+      } catch (err: any) { console.warn('Portal entry link failed:', err?.message || err); }
+    }
+    const r = await sharedSms.sendTemplate('registration_welcome', phone, vars);
     if (r.status === 'disabled') return;
     console.log(`[SMS] registration_welcome ${trackingCode || '-'} ${r.ok ? 'ok' : 'failed: ' + (r.detail || r.status)} [${r.mode || '-'}]`);
   } catch (err: any) { console.warn('Registration SMS failed:', err?.message || err); }
 }
 
 // 6. POST enrollment
-app.post('/api/enrollments', async (req, res) => {
-  try {
-    const b = req.body || {};
+/**
+ * Creates one enrollment (validation, duplicate check, class number). Shared by POST /api/enrollments and the
+ * public API (POST /api/v1/enrollments); emits the enrollment.created webhook.
+ */
+async function createEnrollmentCore(input: any): Promise<{ status: number; body: any }> {
+  {
+    const b = input || {};
     const studentId = parseInt(b.student_id, 10);
     const courseId = parseInt(b.course_id, 10);
-    if (!studentId || !courseId) return res.status(400).json({ error: 'student_id و course_id الزامی است.' });
+    if (!studentId || !courseId) return { status: 400, body: { error: 'student_id و course_id الزامی است.' } };
 
     const [students, courses, enrollments] = await Promise.all([loadStudents(), loadCourses(), loadEnrollments()]);
-    if (!students.some(s => Number(s.id) === studentId)) return res.status(404).json({ error: 'هنرجو یافت نشد.' });
+    if (!students.some(s => Number(s.id) === studentId)) return { status: 404, body: { error: 'هنرجو یافت نشد.' } };
     const course = courses.find(c => Number(c.id) === courseId);
-    if (!course) return res.status(404).json({ error: 'دوره آموزشی یافت نشد.' });
-    if (!courseIsActive(course)) return res.status(409).json({ error: 'این دوره غیرفعال است و ثبت‌نام جدید ندارد.' });
+    if (!course) return { status: 404, body: { error: 'دوره آموزشی یافت نشد.' } };
+    if (!courseIsActive(course)) return { status: 409, body: { error: 'این دوره غیرفعال است و ثبت‌نام جدید ندارد.' } };
 
     const hasPrice = b.final_price !== undefined && b.final_price !== null && b.final_price !== '';
     const finalPrice = hasPrice ? Number(b.final_price) : coursePrice(course);
-    if (!Number.isFinite(finalPrice) || finalPrice < 0) return res.status(400).json({ error: 'شهریه نامعتبر است.' });
+    if (!Number.isFinite(finalPrice) || finalPrice < 0) return { status: 400, body: { error: 'شهریه نامعتبر است.' } };
 
     const numbers = enrollments.map(e => Number(e.course_number)).filter(n => Number.isFinite(n) && n > 0);
     let courseNumber: number | null;
     if (b.course_number !== undefined && b.course_number !== null && b.course_number !== '') {
       courseNumber = parseInt(b.course_number, 10);
-      if (!Number.isInteger(courseNumber) || courseNumber <= 0) return res.status(400).json({ error: 'شماره دوره نامعتبر است.' });
+      if (!Number.isInteger(courseNumber) || courseNumber <= 0) return { status: 400, body: { error: 'شماره دوره نامعتبر است.' } };
     } else {
       courseNumber = numbers.length > 0 ? Math.max(...numbers) : null;
     }
     // A missing class number (null) must still match another enrollment without one.
     const sameClass = (e: any) => (e.course_number === null || e.course_number === undefined || e.course_number === '' ? null : Number(e.course_number)) === courseNumber;
     if (enrollments.some(e => Number(e.student_id) === studentId && Number(e.course_id) === courseId && sameClass(e))) {
-      return res.status(409).json({ error: 'این هنرجو قبلاً در همین دوره و کلاس ثبت‌نام شده است.' });
+      return { status: 409, body: { error: 'این هنرجو قبلاً در همین دوره و کلاس ثبت‌نام شده است.' } };
     }
 
     const signup = requestDate(b.signup_date_jalali, 'تاریخ ثبت‌نام');
-    if (signup.error) return res.status(400).json({ error: signup.error });
+    if (signup.error) return { status: 400, body: { error: signup.error } };
     const signupDate = signup.value;
     if (chabokan.isMysqlEnabled()) {
       const created = await chabokan.insertEnrollment({
         ...b, student_id: studentId, course_id: courseId, course_number: courseNumber, final_price: finalPrice, signup_date_jalali: signupDate,
       });
       void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
-      return res.json(created);
+      emitAutomation('enrollment_created', studentId, { enrollment_id: Number((created as any)?.id ?? (created as any)?.enrollment_id) || undefined, course_id: courseId, course_title: course?.title || '', amount: finalPrice });
+      webhooks.emit('enrollment.created', { enrollment: webhookEnrollment(created), source: 'staff' });
+      return { status: 200, body: created };
     }
     const db = readDb();
     const newEnrollment = {
@@ -2411,7 +2572,16 @@ app.post('/api/enrollments', async (req, res) => {
     db.enrollments.push(newEnrollment);
     writeDb(db);
     void notifyRegistration(students.find(s => Number(s.id) === studentId), course);
-    res.json(newEnrollment);
+    emitAutomation('enrollment_created', studentId, { enrollment_id: newEnrollment.id, course_id: courseId, course_title: course?.title || '', amount: finalPrice });
+    webhooks.emit('enrollment.created', { enrollment: webhookEnrollment(newEnrollment), source: 'staff' });
+    return { status: 200, body: newEnrollment };
+  }
+}
+
+app.post('/api/enrollments', async (req, res) => {
+  try {
+    const r = await createEnrollmentCore(req.body);
+    res.status(r.status).json(r.body);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2422,6 +2592,18 @@ app.get('/api/enrollments', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// Rule-based automation (automation.ts). Created at the bottom of this file; until then (and whenever
+// CRM_AUTOMATION_ENABLED is not '1') emitting is a no-op. Never throws and never delays the response.
+let automation: AutomationEngine | null = null;
+let automationSources: ReturnType<typeof createAutomationSources> | null = null;
+function emitAutomation(event: AutomationEvent, studentId: number | null, extra: EventContext = {}) {
+  try {
+    if (!automation || !automation.isEnabled()) return;
+    const src = automationSources;
+    automation.emit(event, async () => (studentId && src ? await src.withStudent(studentId, extra) : extra));
+  } catch (err: any) { console.warn(`[automation] emit ${event} failed:`, err?.message || err); }
+}
+
 // 7. POST payments (always for one enrollment; at most what is still owed on it and by the student)
 /**
  * Records a payment (split over the student's enrollments, oldest first) with the overpay check.
@@ -2431,10 +2613,25 @@ app.get('/api/enrollments', async (req, res) => {
 async function createPaymentCore(input: {
   studentId: number; linkedEnrollmentId: number; amount: number;
   payDate: string; payMethod: string; paymentKind: string; description: string;
+}, source: 'staff' | 'api' | 'online' = 'staff'): Promise<any[]> {
+  const rows = await recordPaymentRows(input);
+  webhooks.emit('payment.succeeded', {
+    student_id: input.studentId, enrollment_id: input.linkedEnrollmentId || null, amount: input.amount,
+    pay_date_jalali: input.payDate, pay_method: input.payMethod, payment_kind: input.paymentKind, source,
+    payments: rows.map(webhookPayment),
+  });
+  return rows;
+}
+
+async function recordPaymentRows(input: {
+  studentId: number; linkedEnrollmentId: number; amount: number;
+  payDate: string; payMethod: string; paymentKind: string; description: string;
 }): Promise<any[]> {
   if (chabokan.isMysqlEnabled()) {
     // Check + every part + the cached amount_paid in one transaction with the enrollment rows locked.
-    return chabokan.insertPaymentAtomic(input);
+    const rows = await chabokan.insertPaymentAtomic(input);
+    emitAutomation('payment_succeeded', input.studentId, { payment_id: Number(rows?.[0]?.id) || undefined, enrollment_id: input.linkedEnrollmentId || undefined, amount: input.amount, pay_method: input.payMethod });
+    return rows;
   }
   const db = readDb();
   if (!db.students.some(s => s.id === input.studentId)) throw Object.assign(new Error('هنرجو یافت نشد.'), { status: 404 });
@@ -2462,32 +2659,39 @@ async function createPaymentCore(input: {
   }));
   db.payments.push(...created);
   writeDb(db);
+  emitAutomation('payment_succeeded', input.studentId, { payment_id: Number(created[0]?.id) || undefined, enrollment_id: input.linkedEnrollmentId || undefined, amount: input.amount, pay_method: input.payMethod });
   return created;
 }
 
-app.post('/api/payments', asyncHandler(async (req, res) => {
-  const paymentData = req.body || {};
+/** Validates a staff/API payment request and records it. Shared by POST /api/payments and POST /api/v1/payments. */
+async function createPaymentFromRequest(input: any, source: 'staff' | 'api'): Promise<{ status: number; body: any }> {
+  const paymentData = input || {};
   const studentId = parseInt(paymentData.student_id ?? paymentData.studentId, 10);
-  if (!studentId) return res.status(400).json({ error: 'هنرجوی پرداخت مشخص نیست.' });
+  if (!studentId) return { status: 400, body: { error: 'هنرجوی پرداخت مشخص نیست.' } };
   const rawAmount = paymentData.amount;
   const amount = typeof rawAmount === 'number' || typeof rawAmount === 'string' ? Math.round(Number(rawAmount)) : NaN;
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'مبلغ پرداخت باید بیشتر از صفر باشد.' });
+  if (!Number.isFinite(amount) || amount <= 0) return { status: 400, body: { error: 'مبلغ پرداخت باید بیشتر از صفر باشد.' } };
   // Every payment belongs to one enrollment (course registration); unlinked payments are not accepted.
   const linkedEnrollmentId = /^\d+$/.test(String(paymentData.enrollment_id ?? '')) ? parseInt(paymentData.enrollment_id, 10) : 0;
-  if (!linkedEnrollmentId) return res.status(400).json({ error: 'دوره (ثبت‌نام) مربوط به این پرداخت را انتخاب کنید.' });
+  if (!linkedEnrollmentId) return { status: 400, body: { error: 'دوره (ثبت‌نام) مربوط به این پرداخت را انتخاب کنید.' } };
   const payDate = requestDate(paymentData.pay_date_jalali, 'تاریخ پرداخت');
-  if (payDate.error) return res.status(400).json({ error: payDate.error });
+  if (payDate.error) return { status: 400, body: { error: payDate.error } };
   const payMethod = sanitizeString(paymentData.pay_method ?? paymentData.paymentMethod, 40) || 'pos';
   const paymentKind = sanitizeString(paymentData.payment_kind, 40) || 'downpayment';
   const description = sanitizeString(paymentData.description ?? paymentData.notes, 400);
 
   try {
-    const rows = await createPaymentCore({ studentId, linkedEnrollmentId, amount, payDate: payDate.value, payMethod, paymentKind, description });
-    return res.json({ ...rows[0], allocations: rows.length });
+    const rows = await createPaymentCore({ studentId, linkedEnrollmentId, amount, payDate: payDate.value, payMethod, paymentKind, description }, source);
+    return { status: 200, body: { ...rows[0], allocations: rows.length } };
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return { status: err.status, body: { error: err.message } };
     throw err;
   }
+}
+
+app.post('/api/payments', asyncHandler(async (req, res) => {
+  const r = await createPaymentFromRequest(req.body, 'staff');
+  res.status(r.status).json(r.body);
 }));
 
 app.get('/api/payments', async (req, res) => {
@@ -3057,6 +3261,57 @@ app.get('/api/registrations/:code/file/:kind', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// Smart-crop site registration files in place (personal photo 3x4 and national ID). Unwired in the UI.
+// Originals are kept once, beside the file, with a .orig suffix.
+app.post('/api/registrations/:code/smart-crop', async (req, res) => {
+  try {
+    if (!requireRegistrationStore(res)) return;
+    if (!ai) return res.status(503).json({ error: 'سرویس هوش مصنوعی (GEMINI_API_KEY) فعال نیست.' });
+    if (!fs.existsSync(smartCropScriptPath())) return res.status(500).json({ error: 'اسکریپت برش روی سرور پیدا نشد.' });
+    const code = sanitizeString(req.params.code, 50);
+    if (!code) return res.status(400).json({ error: 'کد پیگیری الزامی است.' });
+    const row = await chabokan.getWebsiteRegistrationFiles(code);
+    if (!row) return res.status(404).json({ error: 'ثبت‌نام یافت نشد.' });
+
+    const results: { personal_photo?: boolean; national_card?: boolean; errors: string[] } = { errors: [] };
+    const processDoc = async (storedPath: string | null | undefined, kind: 'personal_photo' | 'national_card') => {
+      const abs = resolveSiteFile(storedPath);
+      if (!abs) return;
+      const stamp = `${code}_${kind}_${Date.now()}`;
+      const tmpOriented = path.join(os.tmpdir(), `crm_orient_${stamp}.jpg`);
+      const tmpCropped = path.join(os.tmpdir(), `crm_crop_${stamp}.jpg`);
+      try {
+        await runSmartCropPy(['orient', abs, tmpOriented]);
+        const box = await detectCropBox(fs.readFileSync(tmpOriented), kind === 'personal_photo' ? 'personal' : 'idCard');
+        if (!box) {
+          results.errors.push(`تشخیص کادر برای ${kind === 'personal_photo' ? 'عکس پرسنلی' : 'کارت ملی'} ناموفق بود.`);
+          return;
+        }
+        const ratio = kind === 'personal_photo' ? '0.75' : 'none';
+        await runSmartCropPy(['crop', tmpOriented, tmpCropped, String(box[0]), String(box[1]), String(box[2]), String(box[3]), ratio]);
+        const origBackup = abs + '.orig';
+        if (!fs.existsSync(origBackup)) fs.copyFileSync(abs, origBackup);
+        fs.copyFileSync(tmpCropped, abs);
+        if (kind === 'personal_photo') results.personal_photo = true;
+        if (kind === 'national_card') results.national_card = true;
+      } catch (err: any) {
+        console.error(`Smart crop error on ${kind}:`, err?.message || err);
+        results.errors.push(err?.message || `خطا در برش ${kind}`);
+      } finally {
+        try { if (fs.existsSync(tmpOriented)) fs.unlinkSync(tmpOriented); } catch { /* temp */ }
+        try { if (fs.existsSync(tmpCropped)) fs.unlinkSync(tmpCropped); } catch { /* temp */ }
+      }
+    };
+
+    if (row.personal_photo_path) await processDoc(row.personal_photo_path, 'personal_photo');
+    if (row.national_card_path) await processDoc(row.national_card_path, 'national_card');
+    res.json({ success: !!(results.personal_photo || results.national_card), ...results });
+  } catch (err: any) {
+    console.error('Smart crop endpoint error:', err?.message || err);
+    res.status(500).json({ error: err?.message || 'خطای سرور در برش خودکار' });
+  }
+});
+
 // Approves a website registration: student (new or reused) + enrollment + photos + status, in one transaction.
 app.post('/api/registrations/:code/approve', async (req, res) => {
   try {
@@ -3098,6 +3353,15 @@ app.post('/api/registrations/:code/approve', async (req, res) => {
     loadCourses()
       .then((courses) => notifyRegistration(result.student, courses.find(c => Number(c.id) === courseId), code))
       .catch((err) => console.warn('Registration SMS skipped:', err?.message || err));
+    {
+      const sid = Number((result as any)?.student?.id ?? (result as any)?.student?.student_id) || null;
+      const enr: any = (result as any)?.enrollment || {};
+      emitAutomation('enrollment_approved', sid, { registration_code: code, tracking_code: code, enrollment_id: Number(enr.id ?? enr.enrollment_id) || undefined, course_id: courseId, amount: finalPrice ?? undefined });
+    }
+    webhooks.emit('enrollment.approved', {
+      tracking_code: code, enrollment: webhookEnrollment(result.enrollment), student: webhookStudent(result.student),
+      student_created: !!result.student_created,
+    });
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
@@ -3113,9 +3377,14 @@ app.post('/api/registrations/:code/reject', async (req, res) => {
     const reason = sanitizeString(req.body?.reason, 300);
     if (reason) console.log(`Registration ${code} rejected by ${(req as any).user?.username}: ${reason}`);
     res.json({ success: true, registration });
+    webhooks.emit('enrollment.rejected', {
+      tracking_code: code, reason: reason || null,
+      registration: registration ? { id: (registration as any).id ?? null, full_name: (registration as any).full_name ?? null, category: (registration as any).category ?? null, status: (registration as any).status ?? 'rejected' } : null,
+    });
     // Fire-and-forget 'registration rejected' SMS. Runs only after a real pending -> rejected transition
     // (rejectWebsiteRegistration throws 409 for already-processed rows), so past rejections are never re-sent.
     void notifyRejection(registration, reason);
+    emitAutomation('enrollment_rejected', null, registrationContext(registration, reason, REG_COURSE_NAMES_FA));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
@@ -3237,6 +3506,7 @@ const COPILOT_TOOL_GUIDE: [string, string][] = [
   ['list_sms', 'سوابق پیامک‌های ارسالی و الگوهای پیامک'],
   ['sms_get_credit', 'اعتبار باقی‌مانده و خط پنل پیامک'], ['sms_delivery_status', 'وضعیت تحویل پیامک‌های ارسالی از پنل'],
   ['sms_list_received', 'پیامک‌های دریافتی (پاسخ‌ها)'], ['sms_send', 'پیش‌نویس ارسال پیامک (فقط پس از تأیید ادمین در ویجت ارسال می‌شود)'],
+  ['sms_send_direct', 'ارسال مستقیم پیامک، فقط وقتی کاربر صریحاً ارسال خواسته'],
   ['list_activity_log', 'سوابق تغییرات و تماس‌ها'], ['search_student', 'جست‌وجوی کارآموز'], ['trainee_count', 'تعداد کل کارآموزان'],
   ['get_student_financial_summary', 'خلاصه مالی یک کارآموز'], ['get_daily_cashflow', 'گردش روزانه'],
   ['get_debtors_list', 'بدهکاران'], ['top_debtors', 'بیشترین بدهکاران'], ['get_course_statistics', 'آمار یک دوره'],
@@ -3258,7 +3528,7 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
   '۵) هرگز کلید API، نام جداول یا جزئیات فنی ابزارها را در پاسخ نمایش ندهید؛ وضعیت‌ها و کدها (مثل new، pending، approved، paid) را همیشه به فارسی بگویید، نه کد انگلیسی.',
-  '۶) شما مستقیماً هیچ پیامی ارسال نمی‌کنید و چیزی را تغییر نمی‌دهید. ابزارهای sms_send، send_telegram_message و send_rubika_message (اگر در دسترس باشند) فقط پیش‌نویس می‌سازند؛ پیش‌نمایش را به کاربر نشان دهید و بگویید برای ارسال، دکمه «تأیید» را در کادر زیر گفتگو بزند. هرگز نگویید پیام ارسال شد. اگر این ابزارها در دسترس نیستند، متن پیشنهادی بنویسید و بگویید از بخش «پیام‌رسان» ارسال کند.',
+  '۶) تلگرام و روبیکا را مستقیم نفرستید. sms_send، send_telegram_message و send_rubika_message فقط پیش‌نویس می‌سازند و کاربر باید دکمه «تأیید» را در ویجت بزند. پیامک استثناست: اگر کاربر صریحاً خواست پیامک ارسال شود، sms_send_direct را صدا بزنید. این ابزار همان لحظه می‌فرستد و منتظر ویجت نمی‌ماند. فقط وقتی نتیجه ابزار ok بود بگویید ارسال شد. الگوی رمز یکبارمصرف را هرگز نفرستید. اگر ابزار ارسال در دسترس نیست، متن را پیشنهاد دهید و بگویید از بخش «پیام‌رسان» بفرستد.',
   copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
   '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
@@ -3683,24 +3953,20 @@ const COPILOT_SMS_TOOLS = [
     template_key: { type: 'string', description: 'کلید الگوی پیامک (اختیاری؛ به‌جای text)' },
     params: { type: 'object', description: 'مقادیر متغیرهای الگو، مثل { "name": "علی", "course": "..." }؛ نام و موبایل هر کارآموز خودکار پر می‌شود', additionalProperties: { type: 'string' } },
     text: { type: 'string', description: 'متن آزاد پیامک (اگر template_key داده نشده)' } }, required: ['recipients'] } } },
+  { type: 'function', function: { name: 'sms_send_direct', description: 'پیامک را همان لحظه می‌فرستد و منتظر تأیید ویجت نمی‌ماند. فقط وقتی کاربر صریحاً ارسال خواسته (بفرست، ارسال کن). گیرنده: student_id یا موبایل، حداکثر ۲۰. محتوا: یا template_key با params، یا text آزاد. الگوی رمز یکبارمصرف ممنوع. بازگرداندن: { ok, sent, failed }؛ فقط اگر ok بود بگو ارسال شد.', parameters: { type: 'object', properties: {
+    recipients: { type: 'array', items: { type: 'string' }, description: 'فهرست student_id یا شماره موبایل (09xxxxxxxxx)؛ حداکثر ۲۰' },
+    template_key: { type: 'string', description: 'کلید الگوی پیامک (اختیاری؛ به‌جای text)' },
+    params: { type: 'object', description: 'مقادیر متغیرهای الگو؛ نام و موبایل هر کارآموز خودکار پر می‌شود', additionalProperties: { type: 'string' } },
+    text: { type: 'string', description: 'متن آزاد پیامک (اگر template_key داده نشده)' } }, required: ['recipients'] } } },
 ];
 
-const SMSIR_DELIVERY_FA: Record<number, string> = { 1: 'رسیده به گوشی', 2: 'نرسیده به گوشی', 3: 'پردازش در مخابرات', 4: 'نرسیده به مخابرات', 5: 'رسیده به اپراتور', 6: 'ناموفق', 7: 'لیست سیاه' };
 let smsirLastCall = 0;
 /** Read-only GET against sms.ir (key from env, never returned). Spaces calls ~2s apart. */
 async function smsirGet(path: string): Promise<{ ok: boolean; data?: any; error?: string }> {
-  const apiKey = process.env.SMS_API_KEY || '';
-  if (!apiKey) return { ok: false, error: 'درگاه پیامک تنظیم نشده است.' };
   const wait = smsirLastCall + 2000 - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   smsirLastCall = Date.now();
-  try {
-    const r = await fetch(`https://api.sms.ir${path}`, { headers: { 'x-api-key': apiKey, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-    const t = await r.text(); let b: any = null; try { b = JSON.parse(t); } catch { /* non-JSON */ }
-    if (b && b.status === 1) return { ok: true, data: b.data };
-    if (b && b.status === 20) return { ok: false, error: 'محدودیت تعداد درخواست پنل پیامک؛ چند ثانیه دیگر دوباره تلاش کنید.' };
-    return { ok: false, error: String((b && b.message) || `HTTP ${r.status}`).split(apiKey).join('***').slice(0, 200) };
-  } catch (e: any) { return { ok: false, error: e?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : 'خطا در اتصال به سرویس پیامک' }; }
+  return smsirRead(process.env.SMS_API_KEY || '', path);
 }
 /** OTP codes must never reach the model: mask digits in verification-code texts. */
 const redactSmsText = (t: unknown) => { const s = String(t ?? ''); return /کد\s*(تایید|تأیید|ورود)|code|رمز/i.test(s) ? s.replace(/\d{3,8}/g, '****') : s; };
@@ -3778,6 +4044,46 @@ async function auditCopilotSql(username: string, e: { db: string; sql: string; a
   } catch (err: any) { console.warn('copilot sql audit failed:', err?.message || err); }
 }
 
+/** Recipient check shared by the SMS draft and the direct send. OTP templates stay blocked. */
+async function resolveCopilotSms(a: any): Promise<{ error: string } | { items: { mobile: string; label: string; studentId?: number | null; text: string }[]; errors: string[]; key: string; vars: Record<string, string>; tpl: any }> {
+  const raw: string[] = (Array.isArray(a.recipients) ? a.recipients : [a.recipients ?? a.recipient ?? a.mobile ?? a.student_id]).filter((x: any) => x != null && String(x).trim()).map((x: any) => sanitizeString(String(x), 40));
+  if (!raw.length) return { error: 'حداقل یک گیرنده لازم است.' };
+  if (raw.length > 20) return { error: 'حداکثر ۲۰ گیرنده در هر درخواست مجاز است.' };
+  const key = sanitizeString(a.template_key, 60);
+  const freeText = sanitizeString(a.text, 1000);
+  if (!key && !freeText) return { error: 'template_key یا text الزامی است.' };
+  if (key && freeText) return { error: 'فقط یکی از template_key یا text را بدهید.' };
+  let tpl: any = null;
+  if (key) {
+    if (/^otp/i.test(key)) return { error: 'این الگو از طریق دستیار قابل ارسال نیست.' };
+    tpl = await sharedSms.getTemplate(key);
+    if (!tpl) return { error: 'الگوی پیامک با این کلید پیدا نشد.' };
+    if (!tpl.enabled) return { error: 'این الگو غیرفعال است.' };
+  }
+  const vars: Record<string, string> = {};
+  if (a.params && typeof a.params === 'object') for (const [k, v] of Object.entries(a.params)) if (/^\w{1,40}$/.test(k)) vars[k] = sanitizeString(String(v ?? ''), 200);
+  const items: { mobile: string; label: string; studentId?: number | null; text: string }[] = [];
+  const errors: string[] = [];
+  for (const r0 of raw) {
+    const q = toLatinDigits(r0).trim(); const mob = normalizeMobile(q);
+    let st: any = null;
+    if (/^\d{1,9}$/.test(q)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE student_id = ? LIMIT 1', [Number(q)]))[0];
+    else if (/^09\d{9}$/.test(mob)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE phone_number = ? LIMIT 1', [mob]))[0] || { phone_number: mob };
+    else { errors.push(`${r0}: شناسه یا موبایل نامعتبر`); continue; }
+    if (!st) { errors.push(`${r0}: کارآموز پیدا نشد`); continue; }
+    const mobile = normalizeMobile(st.phone_number);
+    if (!/^09\d{9}$/.test(mobile)) { errors.push(`${r0}: شماره موبایل معتبر ندارد`); continue; }
+    if (items.some((x) => x.mobile === mobile)) continue;
+    const nm = `${String(st.first_name || '').trim()} ${String(st.last_name || '').trim()}`.trim();
+    const v = { ...vars }; if (nm && !v.name) v.name = nm; if (!v.mobile) v.mobile = mobile;
+    const text = tpl ? sharedSms.render(tpl.body_fa || tpl.fallback_body_fa || '', v).replace(/\n+$/, '') : freeText;
+    if (tpl && tpl.channel_kind === 'verify') { const { missing } = sharedSms.buildVerifyParams(tpl, v); if (missing.length) { errors.push(`${r0}: متغیر خالی الگو (${missing.join('، ')})`); continue; } }
+    items.push({ mobile, label: nm || 'شماره آزاد', studentId: st.student_id ?? null, text });
+  }
+  if (!items.length) return { error: `هیچ گیرنده معتبری نماند. ${errors.join('؛ ')}` };
+  return { items, errors, key, vars, tpl };
+}
+
 async function runCopilotTool(name: string, args: any, ctx: { username: string; role: string } = { username: '', role: '' }): Promise<any> {
   const a = args && typeof args === 'object' ? args : {};
 
@@ -3805,7 +4111,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
     const c = await smsirGet('/v1/credit');
     const l = await smsirGet('/v1/line');
-    let cfgLine = ''; try { cfgLine = String((await sharedSms.getConfig()).lineNumber || ''); } catch { /* ignore */ }
+    let cfgLine = ''; try { cfgLine = resolveSenderLine((await sharedSms.getConfig()).lineNumber); } catch { /* ignore */ }
     if (!c.ok) return { error: c.error };
     return { credit: c.data, credit_unit: 'اعتبار پنل sms.ir', lines: l.ok ? l.data : [], configured_line: cfgLine || null };
   }
@@ -3836,43 +4142,36 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     return { scope, count: list.length, messages: list };
   }
 
-  if (name === 'sms_send') {
+  if (name === 'sms_send' || name === 'sms_send_direct') {
     if (ctx.role !== 'admin') return { error: 'این ابزار فقط برای ادمین فعال است.' };
-    const raw: string[] = (Array.isArray(a.recipients) ? a.recipients : [a.recipients ?? a.recipient ?? a.mobile ?? a.student_id]).filter((x: any) => x != null && String(x).trim()).map((x: any) => sanitizeString(String(x), 40));
-    if (!raw.length) return { error: 'حداقل یک گیرنده لازم است.' };
-    if (raw.length > 20) return { error: 'حداکثر ۲۰ گیرنده در هر درخواست مجاز است.' };
-    const key = sanitizeString(a.template_key, 60);
-    const freeText = sanitizeString(a.text, 1000);
-    if (!key && !freeText) return { error: 'template_key یا text الزامی است.' };
-    if (key && freeText) return { error: 'فقط یکی از template_key یا text را بدهید.' };
-    let tpl: any = null;
-    if (key) {
-      if (/^otp/i.test(key)) return { error: 'این الگو از طریق دستیار قابل ارسال نیست.' };
-      tpl = await sharedSms.getTemplate(key);
-      if (!tpl) return { error: 'الگوی پیامک با این کلید پیدا نشد.' };
-      if (!tpl.enabled) return { error: 'این الگو غیرفعال است.' };
+    const draft = await resolveCopilotSms(a);
+    if ('error' in draft) return { error: draft.error };
+    const { items, errors, key, vars, tpl } = draft;
+    if (name === 'sms_send_direct') {
+      const sent: string[] = []; const failed: string[] = [];
+      for (const it of items) {
+        let r: { ok: boolean; status: string; detail?: string };
+        try {
+          r = key
+            ? await sharedSms.sendTemplate(key, it.mobile, { ...vars, ...(it.studentId && !vars.name ? { name: it.label } : {}), mobile: it.mobile })
+            : await sharedSms.sendText(it.mobile, it.text);
+        } catch (e: any) { r = { ok: false, status: 'failed', detail: e?.message || 'error' }; }
+        (r.ok ? sent : failed).push(it.mobile);
+        const db = readDb(); const t = Date.now();
+        const outbox = ((db as any).outbox ||= []) as any[];
+        outbox.push({ id: `MSG-${t}-${crypto.randomBytes(2).toString('hex')}`, recipient: it.mobile, channel: 'sms', message: it.text, student_id: it.studentId ?? undefined,
+          sent_at: new Date(t).toISOString(), status: r.ok ? 'sent' : (r.status === 'disabled' ? 'failed' : r.status), note: `copilot direct${key ? ` tpl=${key}` : ''}${r.detail ? ` ${r.detail}` : ''}`.slice(0, 300) });
+        if (outbox.length > MAX_STORED_MESSAGES) outbox.splice(0, outbox.length - MAX_STORED_MESSAGES);
+        writeDb(db);
+      }
+      void chabokan.insertAudit({
+        username: ctx.username, role: 'admin', method: 'POST',
+        path: `/copilot/sms_send_direct?n=${items.length}&ok=${failed.length ? 0 : 1}&text=${items[0].text.slice(0, 80).replace(/\s+/g, ' ')}`.slice(0, 255),
+        entity: 'copilot_sms', entity_id: key || 'text', status: failed.length ? 502 : 200, ip: null,
+      });
+      return { ok: failed.length === 0, sent: sent.length, failed: failed.length, skipped: errors.length ? errors : undefined,
+        note: failed.length === 0 ? 'پیامک ارسال شد.' : `${sent.length} ارسال شد، ${failed.length} ناموفق` };
     }
-    const vars: Record<string, string> = {};
-    if (a.params && typeof a.params === 'object') for (const [k, v] of Object.entries(a.params)) if (/^\w{1,40}$/.test(k)) vars[k] = sanitizeString(String(v ?? ''), 200);
-    const items: { mobile: string; label: string; studentId?: number | null; text: string }[] = [];
-    const errors: string[] = [];
-    for (const r0 of raw) {
-      const q = toLatinDigits(r0).trim(); const mob = normalizeMobile(q);
-      let st: any = null;
-      if (/^\d{1,9}$/.test(q)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE student_id = ? LIMIT 1', [Number(q)]))[0];
-      else if (/^09\d{9}$/.test(mob)) st = (await chabokan.sql<any>('SELECT student_id, first_name, last_name, phone_number FROM students WHERE phone_number = ? LIMIT 1', [mob]))[0] || { phone_number: mob };
-      else { errors.push(`${r0}: شناسه یا موبایل نامعتبر`); continue; }
-      if (!st) { errors.push(`${r0}: کارآموز پیدا نشد`); continue; }
-      const mobile = normalizeMobile(st.phone_number);
-      if (!/^09\d{9}$/.test(mobile)) { errors.push(`${r0}: شماره موبایل معتبر ندارد`); continue; }
-      if (items.some((x) => x.mobile === mobile)) continue;
-      const nm = `${String(st.first_name || '').trim()} ${String(st.last_name || '').trim()}`.trim();
-      const v = { ...vars }; if (nm && !v.name) v.name = nm; if (!v.mobile) v.mobile = mobile;
-      const text = tpl ? sharedSms.render(tpl.body_fa || tpl.fallback_body_fa || '', v).replace(/\n+$/, '') : freeText;
-      if (tpl && tpl.channel_kind === 'verify') { const { missing } = sharedSms.buildVerifyParams(tpl, v); if (missing.length) { errors.push(`${r0}: متغیر خالی الگو (${missing.join('، ')})`); continue; } }
-      items.push({ mobile, label: nm || 'شماره آزاد', studentId: st.student_id ?? null, text });
-    }
-    if (!items.length) return { error: `هیچ گیرنده معتبری نماند. ${errors.join('؛ ')}` };
     const parts = items.reduce((n, x) => n + smsParts(x.text), 0);
     const pendingId = `sms_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const now = Date.now();
@@ -4643,6 +4942,26 @@ app.post('/api/settings/rubika-account/active', requireAdmin, (req, res) => {
   res.json({ ok: true, active: g.rubika_account_active });
 });
 
+// Public REST API v1 + outbound webhooks (publicApi.ts / webhooks.ts / openapiSpec.ts). Writes reuse the
+// staff cores (createStudentCore / createEnrollmentCore / createPaymentFromRequest), which also emit webhooks.
+registerPublicApi(app, {
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  isAdmin: (req) => currentRole(req) === 'admin',
+  username: (req) => String((req as any).user?.username || ''),
+  loadStudents,
+  loadEnrollments,
+  loadCourses,
+  loadPayments: async () => (chabokan.isMysqlEnabled() ? chabokan.listPayments() : readDb().payments),
+  createStudent: (body) => createStudentCore(body),
+  createEnrollment: (body) => createEnrollmentCore(body),
+  createPayment: (body) => createPaymentFromRequest(body, 'api'),
+  openApiSpec: (req) => buildOpenApiSpec(publicBaseFromRequest(req)),
+  docsHtml: (req) => publicApiDocsHtml(buildOpenApiSpec(publicBaseFromRequest(req)), '/api/v1/openapi.json'),
+  webhooks,
+  log: (msg) => console.warn(`[public-api] ${msg}`),
+});
+
 // Dashboard to-do list and calendar events: shared by all admins (they used to live in each browser).
 registerCourseTerms(app, { isAdmin: (req) => currentRole(req) === 'admin' });
 // Instructor pay (حق‌التدریس): admin-only; falls back to db_store.json ("instructor_pay") when MySQL is off.
@@ -4656,7 +4975,14 @@ registerInstructorPay(app, {
 // flow below and the legacy installment-link store stays available for links sent before this change.
 const installmentStore = createInstallmentStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
 const debtLinkStore = createDebtLinkStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
-const publicBaseFromRequest = (req: express.Request) => String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`);
+function publicBaseFromRequest(req: express.Request) { return String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`); }
+
+/** The portal UI is served by the CRM host. A code opened on the public site must leave that site. */
+function portalEntryBase(req: express.Request) {
+  const host = String(req.get('host') || '').split(':')[0].toLowerCase();
+  if (host === 'kermanshahcart.ir' || host === 'www.kermanshahcart.ir') return 'https://management.kermanshahcart.ir';
+  return publicBaseFromRequest(req).replace(/\/$/, '');
+}
 registerOnlinePayments(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
@@ -4666,7 +4992,7 @@ registerOnlinePayments(app, {
   jalaliToday: () => jalaliNow(),
   signToken: (payload, ttlMs) => signToken(payload, ttlMs),
   verifyToken: (token) => verifyToken(token),
-  createPayment: (input) => createPaymentCore(input),
+  createPayment: (input) => createPaymentCore(input, 'online'),
   zarinpalMerchantId: () => {
     try { return String((readDb().settings as any)?.gateways?.zarinpal_merchant_id || ''); } catch { return ''; }
   },
@@ -4676,7 +5002,69 @@ registerOnlinePayments(app, {
   log: (msg) => console.warn(`[online-payments] ${msg}`),
 });
 
+// Trainee portal PWA (traineePortal.ts): OTP login (flag-gated SMS), my lessons, installments, enrollment status.
+// Payment reuses /api/trainee-payments/zarinpal/request with the same trainee token.
+registerTraineePortal(app, {
+  normalizeMobile,
+  signToken: (payload, ttlMs) => signToken(payload, ttlMs),
+  verifyToken: (token) => verifyToken(token),
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  sms: { sendTemplate: (key, mobile, vars, fallback) => sharedSms.sendTemplate(key, mobile, vars, fallback) },
+  log: (msg) => console.warn(`[trainee-portal] ${msg}`),
+});
+
+// Official invoices (فاکتور رسمی), finance reports/refunds and the accounting journal export.
+const financeSession = (req: express.Request) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; };
+const loadPaymentsForFinance = async (): Promise<any[]> => (chabokan.isMysqlEnabled() ? chabokan.listPayments() : (readDb() as any).payments || []);
+const invoiceApi = registerInvoices(app, {
+  session: financeSession,
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  loadStudents, loadCourses, loadEnrollments,
+  jalaliToday: () => jalaliNow(),
+  log: (msg) => console.warn(`[invoices] ${msg}`),
+});
+const financeApi = registerFinanceReports(app, {
+  session: financeSession,
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  loadStudents, loadCourses, loadEnrollments,
+  loadPayments: loadPaymentsForFinance,
+  jalaliToday: () => jalaliNow(),
+  log: (msg) => console.warn(`[finance] ${msg}`),
+});
+registerAccounting(app, {
+  session: financeSession,
+  readJsonDb: () => readDb(),
+  writeJsonDb: (store) => writeDb(store),
+  loadPayments: loadPaymentsForFinance,
+  loadStudents,
+  refunds: (from, to) => financeApi.refunds(from, to),
+  invoices: (from, to) => invoiceApi.list({ from, to, status: 'issued' }),
+  log: (msg) => console.warn(`[accounting] ${msg}`),
+});
+
 // Remaining-debt SMS with a payment link: preview / single send / bulk send / settings / log.
+registerBranches(app, {
+  isAdmin: (req) => currentRole(req) === 'admin',
+  currentUser: (req) => {
+    const u = (req as any).user;
+    return u && currentRole(req) ? { username: String(u.username || ''), role: String(currentRole(req)) } : null;
+  },
+  listStaff: async () => {
+    const list: { username: string; full_name?: string; role?: string }[] = [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin' }];
+    for (const u of readDb().staff_users) list.push({ username: u.username, full_name: u.full_name, role: u.role });
+    if (chabokan.isMysqlEnabled()) {
+      try {
+        const rows = await chabokan.sql('SELECT username, full_name, role FROM staff_users WHERE is_active = 1');
+        for (const r of rows as any[]) list.push({ username: String(r.username), full_name: r.full_name || '', role: r.role || '' });
+      } catch { /* staff_users is optional */ }
+    }
+    return list;
+  },
+});
+
 registerDebtSms(app, {
   session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
   sanitize: (v, max) => sanitizeString(v, max),
@@ -4699,6 +5087,19 @@ registerDebtSms(app, {
   log: (msg: string) => console.warn(`[debt-sms] ${msg}`),
 });
 
+// Practical-lesson calendar (lessonCalendar.ts): bookings, vehicles, availability; SMS reminder is flag-gated.
+const lessonCalendar = registerLessonCalendar(app, {
+  role: (req) => currentRole(req) || null,
+  username: (req) => { const s = sessionFromRequest(req); return String(s?.username || ''); },
+  normalizeMobile,
+  // Class-time reminder goes through the shared helper (sms_templates key class_time -> sms.ir verify 926976).
+  sms: {
+    sendTemplate: (key, mobile, vars, fallback) => sharedSms.sendTemplate(key, mobile, vars, fallback),
+    configured: () => !!resolveApiKey(smsCfg?.apiKeyRef || 'env:SMS_API_KEY'),
+  },
+  log: (msg: string) => console.warn(`[lessons] ${msg}`),
+});
+
 // Short public payment URL: /p/<code> opens the trainee panel with the amount preset.
 app.get('/p/:code', (req, res) => {
   const code = sanitizeString(req.params.code, 16);
@@ -4706,6 +5107,20 @@ app.get('/p/:code', (req, res) => {
   const base = publicBaseFromRequest(req).replace(/\/$/, '');
   res.redirect(302, `${base}/?trainee=1&code=${encodeURIComponent(code)}`);
 });
+
+// One-time portal login: /e/<code> opens the trainee portal, which burns the code and stores the session.
+app.get('/e/:code', (req, res) => {
+  const code = sanitizeString(req.params.code, 16);
+  const base = portalEntryBase(req);
+  if (!/^[0-9A-Za-z]{12}$/.test(code)) return res.redirect(302, `${base}/?portal=1`);
+  res.redirect(302, `${base}/?portal=1&entry=${encodeURIComponent(code)}`);
+});
+
+function staffDirectory() {
+  const d = readDb();
+  return [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin', is_active: true },
+    ...d.staff_users.map((u: any) => ({ username: u.username, full_name: u.full_name, role: u.role, is_active: !!u.is_active }))];
+}
 
 registerPhase4(app, {
   session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
@@ -4731,11 +5146,64 @@ registerPhase4(app, {
     return { ok: r.ok, error: r.ok ? undefined : (r.detail || r.status) };
   },
   smsConfigured: () => { const g = getGateways(); return !!(g.sms_api_key && g.sms_sender_line); },
-  staffDirectory: () => {
-    const d = readDb();
-    return [{ username: envAdminUsername(), full_name: 'مدیر سیستم', role: 'admin', is_active: true },
-      ...d.staff_users.map((u: any) => ({ username: u.username, full_name: u.full_name, role: u.role, is_active: !!u.is_active }))];
-  },
+  staffDirectory,
+});
+
+registerLeadPipeline(app, {
+  session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  staffDirectory,
+});
+
+// Rule-based automation: admin-only rules / preview / run history (automation.ts). Hard-gated by
+// CRM_AUTOMATION_ENABLED; rules start disabled and in dry-run mode; CRM_AUTOMATION_TEST_MOBILE redirects SMS.
+{
+  automationSources = createAutomationSources({ readJsonDb: () => readDb() });
+  const sources = automationSources;
+  const automationDeps = {
+    session: (req: express.Request) => { const x = sessionFromRequest(req); return x ? { username: String(x.username || ''), role: String(x.role || '') } : null; },
+    sanitize: (v: unknown, max: number) => sanitizeString(v, max),
+    normalizeMobile,
+    readJsonDb: () => readDb(),
+    writeJsonDb: (store: any) => writeDb(store),
+    sms: {
+      sendTemplate: (key: string, mobile: string, vars: Record<string, unknown>) => sharedSms.sendTemplate(key, mobile, vars),
+      sendText: (mobile: string, text: string) => sharedSms.sendText(mobile, text),
+    },
+    notify: {
+      telegram: (chatId: string, text: string) => sendTelegramMessage(chatId, text),
+      rubika: async (chatId: string, text: string) => {
+        try { const r = await sendRubikaMessage(chatId, text); return r?.status === 'OK' ? { ok: true } : { ok: false, error: String(r?.status || 'خطا').slice(0, 120) }; }
+        catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 120) }; }
+      },
+    },
+    createTask: async (t: { title: string; description: string; assignee: string | null; due_at: string | null; priority: string; student_id: number | null; created_by: string }) => {
+      if (!chabokan.isMysqlEnabled()) return { ok: false, error: 'تسک‌ها به MySQL نیاز دارند' };
+      const r: any = await chabokan.sqlExec(
+        'INSERT INTO crm_tasks (title, description, assignee_username, created_by, due_at, priority, status, entity_type, entity_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [t.title, t.description || null, t.assignee, t.created_by, t.due_at, t.priority, 'open', t.student_id ? 'student' : null, t.student_id]);
+      return { ok: true, id: Number(r?.insertId) || undefined };
+    },
+    addNote: async (studentId: number, text: string, by: string) => {
+      if (!chabokan.isMysqlEnabled()) return { ok: false, error: 'یادداشت‌ها به MySQL نیاز دارند' };
+      await chabokan.sqlExec("INSERT INTO crm_activities (entity_type, entity_id, kind, outcome, body, staff_username) VALUES ('student', ?, 'note', 'automation', ?, ?)", [studentId, text, by]);
+      return { ok: true };
+    },
+    scheduledContexts: (event: AutomationEvent, rule: any) => sources.scheduledContexts(event, rule),
+    sampleContexts: (event: AutomationEvent, limit: number) => sources.sampleContexts(event, limit),
+    jalaliToday: () => jalaliNow(),
+    log: (msg: string) => console.warn(`[automation] ${msg}`),
+  };
+  automation = createAutomationEngine(automationDeps);
+  registerAutomation(app, automationDeps, automation);
+}
+
+registerEmail(app, {
+  session: (req) => { const x = sessionFromRequest(req); return x ? { username: String(x.username), role: x.role } : null; },
+  sanitize: (v, max) => sanitizeString(v, max),
+  academyName: () => academyDisplayName(),
+  publicBaseUrl: publicBaseFromRequest,
+  log: (msg) => console.log(`[email] ${msg}`),
 });
 
 app.get('/api/settings/audit-log', requireAdmin, asyncHandler(async (req, res) => {
@@ -4752,7 +5220,7 @@ app.get('/api/settings/backups', requireAdmin, (_req, res) => {
   const dir = process.env.CRM_BACKUP_DIR || '/project/_archive/db-backups';
   try {
     const files = fs.readdirSync(dir)
-      .filter((f) => /^carla-\d{8}-\d{4}\.sql\.gz$/.test(f))
+      .filter((f) => /^(?:ham-taraz|carla)-\d{8}-\d{4}\.sql\.gz$/.test(f))
       .map((f) => { const st = fs.statSync(path.join(dir, f)); return { name: f, size: st.size, mtime: st.mtime.toISOString() }; })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
     res.json({ dir_configured: true, files });
@@ -4815,12 +5283,28 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function startServer() {
   await chabokan.initMysql();
   await ensurePhase4Schema();
+  await ensureLeadPipelineSchema();
   await ensureCourseTermsSchema();
   await ensureThemeSettingsSchema();
   await ensureInstructorPaySchema();
   await ensureOnlinePaymentsSchema();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
+  await ensurePortalEntrySchema();
+  await ensureLessonCalendarSchema();
+  startLessonReminderJob(lessonCalendar, (m) => console.warn(`[lessons] ${m}`));
+  await ensureAutomationSchema();
+  automation?.startScheduler();
+  await ensureApiKeysSchema();
+  await ensureWebhooksSchema();
+  webhooks.start();
+  await ensureInvoicesSchema();
+  await ensureFinanceSchema();
+  // Multi-branch: only with CRM_MULTI_BRANCH=1 (additive DDL + backfill to the default branch); dormant otherwise.
+  await ensureBranchSchema();
+  startBranchReconcileJob();
+  await ensureFieldPolicySchema();
+  await ensureEmailSchema();
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

@@ -1,5 +1,5 @@
 // ============================================================
-// Carla CRM — Shared TypeScript types
+// Ham-Taraz CRM — Shared TypeScript types
 // Aligned with eco_v4 MySQL backend (C:\dev\eco_v4\apps\crm\backend)
 // ============================================================
 

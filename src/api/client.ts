@@ -1,5 +1,5 @@
 // ============================================================
-// Carla CRM — API Client (aligned with eco_v4 MySQL backend)
+// Ham-Taraz CRM — API Client (aligned with eco_v4 MySQL backend)
 // Backend base: http://localhost:3001
 // All field names match the actual MySQL schema used by
 // C:\dev\eco_v4\apps\crm\backend\server.ts
@@ -33,15 +33,17 @@ function resolveApiOrigin(): string {
 
 const API_ORIGIN = resolveApiOrigin();
 const API_BASE = `${API_ORIGIN}/api`;
-const TOKEN_KEY = 'carla_crm_token';
+const TOKEN_KEY = 'ham_taraz_crm_token';
+const LEGACY_TOKEN_KEY = 'carla_crm_token'; // read-only fallback for sessions created before the rebrand
 
 export function getAuthToken(): string | null {
-  try { return sessionStorage.getItem(TOKEN_KEY); } catch { return null; }
+  try { return sessionStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(LEGACY_TOKEN_KEY); } catch { return null; }
 }
 export function setAuthToken(token: string | null) {
   try {
     if (token) sessionStorage.setItem(TOKEN_KEY, token);
     else sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(LEGACY_TOKEN_KEY);
   } catch {}
 }
 
@@ -55,7 +57,7 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (res.status === 401 && !path.startsWith('/auth/')) {
     setAuthToken(null);
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event('carla-auth-lost'));
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event('ham-taraz-auth-lost'));
   }
   return res;
 }
@@ -106,7 +108,7 @@ export function logout() {
 // before it expires; FILE_TOKEN_EVENT tells the app to put the new token into the URLs it holds.
 // ─────────────────────────────────────────────────────────
 
-export const FILE_TOKEN_EVENT = 'carla-file-token';
+export const FILE_TOKEN_EVENT = 'ham-taraz-file-token';
 const FILE_TOKEN_RENEW_BEFORE_MS = 2 * 60_000; // with a 10 min token: renewed about every 8 min
 let fileToken: { token: string; expires: number } | null = null;
 let fileTokenRequest: Promise<void> | null = null;
@@ -465,12 +467,19 @@ export async function setRegistrationReviewed(trackingCode: string, reviewed: bo
 
 export async function fetchRegistrationFileUrl(trackingCode: string, kind: 'national_card' | 'personal_photo'): Promise<string | null> {
   try {
-    const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/file/${kind}`);
+    const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/file/${kind}?t=${Date.now()}`);
     if (!res.ok) return null;
     return URL.createObjectURL(await res.blob());
   } catch {
     return null;
   }
+}
+
+export async function smartCropRegistration(trackingCode: string): Promise<{ success: boolean; personal_photo?: boolean; national_card?: boolean; errors?: string[] }> {
+  const res = await apiFetch(`/registrations/${encodeURIComponent(trackingCode)}/smart-crop`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'برش هوشمند ناموفق بود.');
+  return data;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1068,10 +1077,19 @@ export async function getBackups(): Promise<{ dir_configured: boolean; files: Ba
 }
 
 
-export type MessageTemplate = { id: string; title: string; body: string; color: string; updated_at?: string };
+export type MessageTemplate = {
+  id: string; title: string; body: string; color: string; updated_at?: string;
+  source?: 'smsir' | 'local'; readonly?: boolean;
+  provider_template_id?: string; provider_status?: number | null; enabled?: boolean; params?: string;
+};
 export async function fetchMessageTemplates(): Promise<MessageTemplate[]> {
   const res = await apiFetch('/message-templates');
   if (!res.ok) throw await serverError(res, 'دریافت الگوها ناموفق بود.');
+  return res.json();
+}
+export async function syncSmsTemplates(): Promise<{ updated: number; inserted: number; remote: number }> {
+  const res = await apiFetch('/sms/templates/sync', { method: 'POST' });
+  if (!res.ok) throw await serverError(res, 'همگام‌سازی با sms.ir ناموفق بود.');
   return res.json();
 }
 export async function saveMessageTemplate(t: { id?: string; title: string; body: string; color: string }): Promise<void> {
