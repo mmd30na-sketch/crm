@@ -28,7 +28,8 @@
     "test:zarinpal-settings": "node --import tsx scripts/test-zarinpal-settings.mjs",
     "test:hamraz-settings": "node --import tsx scripts/test-hamraz-settings.mjs",
     "test:payment-tools": "node --import tsx scripts/test-payment-tools.mjs",
-    "test:access-levels": "node --import tsx scripts/test-access-levels.mjs"
+    "test:access-levels": "node --import tsx scripts/test-access-levels.mjs",
+    "test:copilot-speaker": "node --import tsx scripts/test-copilot-speaker.mjs"
   },
   "dependencies": {
     "@fontsource/vazirmatn": "^5.3.0",
