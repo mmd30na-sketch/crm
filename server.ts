@@ -40,6 +40,7 @@ import { registerInstructorPay, ensureInstructorPaySchema } from './instructorPa
 import { registerOnlinePayments, ensureOnlinePaymentsSchema } from './onlinePayments';
 import { ensureInstallmentsSchema, createInstallmentStore } from './installments';
 import { registerDebtSms, ensureDebtSmsSchema, createDebtLinkStore } from './debtSms';
+import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './zarinpalSettings';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
 import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
 import { createAutomationSources, registrationContext } from './automationSources';
@@ -4975,7 +4976,23 @@ registerInstructorPay(app, {
 // flow below and the legacy installment-link store stays available for links sent before this change.
 const installmentStore = createInstallmentStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
 const debtLinkStore = createDebtLinkStore({ readJsonDb: () => readDb(), writeJsonDb: (store) => writeDb(store) });
-function publicBaseFromRequest(req: express.Request) { return String(process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`); }
+/** Saved gateway settings (gateways.*); {} when the store is unreadable so env fallbacks apply. */
+function savedGateways(): any { try { return (readDb().settings as any)?.gateways || {}; } catch { return {}; } }
+/** Settings → درگاه پرداخت public base, then env PUBLIC_BASE_URL, then the request host. */
+function publicBaseFromRequest(req: express.Request) { return String(resolveZarinpal(savedGateways()).publicBaseUrl || `${req.protocol}://${req.get('host')}`); }
+
+// Settings → درگاه پرداخت (zarinpalSettings.ts): admin-only, secrets never returned, read-only GraphQL sync.
+registerZarinpalSettings(app, {
+  readGateways: savedGateways,
+  writeZarinpal: (next) => {
+    const db = readDb();
+    const g: any = { ...((db.settings as any)?.gateways || {}), zarinpal: next };
+    db.settings = { ...(db.settings as any), gateways: g };
+    writeDb(db);
+  },
+  isAdmin: (req) => currentRole(req) === 'admin',
+  log: (msg) => console.warn(`[zarinpal-settings] ${msg}`),
+});
 
 /** The portal UI is served by the CRM host. A code opened on the public site must leave that site. */
 function portalEntryBase(req: express.Request) {
@@ -4996,6 +5013,7 @@ registerOnlinePayments(app, {
   zarinpalMerchantId: () => {
     try { return String((readDb().settings as any)?.gateways?.zarinpal_merchant_id || ''); } catch { return ''; }
   },
+  zarinpalConfig: () => toZarinpalConfig(resolveZarinpal(savedGateways())),
   publicBaseUrl: publicBaseFromRequest,
   installments: installmentStore,
   debtLinks: debtLinkStore,

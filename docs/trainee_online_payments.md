@@ -54,7 +54,30 @@ enrollment and the link is burned on a successful verify (idempotently).
 
 ## Zarinpal
 
-See `zarinpal.ts`. Sandbox by default (`ZARINPAL_SANDBOX !== '0'`), merchant id from
-`ZARINPAL_MERCHANT_ID` or `settings.gateways.zarinpal_merchant_id`. Amounts are stored in Toman and sent as
+See `zarinpal.ts` and `zarinpalSettings.ts`. Sandbox by default (`ZARINPAL_SANDBOX !== '0'`).
+
+### Settings → درگاه پرداخت
+
+Admin-only page (`GET/POST /api/settings/zarinpal`, `POST /api/settings/zarinpal/test`,
+`GET /api/settings/zarinpal/transactions`). Values are stored in the JSON settings store under
+`settings.gateways.zarinpal` (no SQL migration). Each field: saved value > env > default:
+
+| Field | Env fallback |
+|---|---|
+| merchant id | `ZARINPAL_MERCHANT_ID` (then legacy `settings.gateways.zarinpal_merchant_id`) |
+| sandbox | `ZARINPAL_SANDBOX` (anything but `0` = sandbox) |
+| currency | `ZARINPAL_CURRENCY` (`IRR` default) |
+| public base | `PUBLIC_BASE_URL` (else request host) |
+| payment link base | `CRM_PAYMENT_LINK_BASE` (else `https://kermanshahcart.ir/p/`) |
+| access token | `ZARINPAL_ACCESS_TOKEN` |
+
+With nothing saved the behavior is identical to the env-only setup. The browser only ever gets the last 4
+chars of the merchant id and `access_token_set`. «تست اتصال» checks the merchant UUID format and, when a
+token is set, runs `query { Me { id } }` on `https://next.zarinpal.com/api/v4/graphql/` (a leading `Bearer `
+and whitespace are stripped). «همگام‌سازی تراکنش‌های زرین‌پال» is read-only: `Terminals` + `Session`
+(limit/offset, amounts in Rial shown as Toman, card masked to the last 4); nothing is stored. Only GraphQL
+`query` operations are sent — the helper rejects `mutation`.
+
+Amounts are stored in Toman and sent as
 Rial (`ZARINPAL_CURRENCY=IRT` to send Toman directly). No key is hardcoded and nothing calls the gateway at
 build/boot time.

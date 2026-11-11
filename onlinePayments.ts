@@ -20,7 +20,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import * as db from './mysql-socks';
 import { owedByEnrollment } from './src/utils/finance';
-import { zarinpalConfigFromEnv, requestPayment, verifyPayment } from './zarinpal';
+import { zarinpalConfigFromEnv, requestPayment, verifyPayment, type ZarinpalConfig } from './zarinpal';
 import type { InstallmentStore } from './installments';
 import type { DebtLinkStore } from './debtSms';
 
@@ -43,6 +43,8 @@ export type OnlinePaymentDeps = {
   }) => Promise<any[]>;
   /** Merchant id from settings (env ZARINPAL_MERCHANT_ID wins inside zarinpal.ts). */
   zarinpalMerchantId: () => string;
+  /** Effective gateway config (Settings → درگاه پرداخت, env fallback). When absent: env + zarinpalMerchantId. */
+  zarinpalConfig?: () => ZarinpalConfig;
   /** Public origin for callback/return links (PUBLIC_BASE_URL or the request host). */
   publicBaseUrl: (req: express.Request) => string;
   /** Installment schedule + per-installment links (installments.ts); enables the /link/:code routes. */
@@ -325,7 +327,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
         ? `مبلغ از مانده این دوره (${enrollment.remaining.toLocaleString('fa-IR')} تومان) بیشتر است.`
         : 'مانده‌ای برای پرداخت روی این دوره وجود ندارد.' });
     }
-    const cfg = zarinpalConfigFromEnv(deps.zarinpalMerchantId());
+    const cfg = deps.zarinpalConfig ? deps.zarinpalConfig() : zarinpalConfigFromEnv(deps.zarinpalMerchantId());
     if (!cfg.merchantId) return res.status(503).json({ error: 'درگاه پرداخت آنلاین هنوز تنظیم نشده است. با آموزشگاه تماس بگیرید.' });
 
     const id = await insertOnline({ student_id: studentId, enrollment_id: enrollmentId, amount, method: 'zarinpal', status: 'pending' });
@@ -365,7 +367,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
       await updateOnline(row.id, { status: 'rejected', admin_note: 'پرداخت در درگاه لغو یا ناموفق شد.' });
       return back('failed');
     }
-    const cfg = zarinpalConfigFromEnv(deps.zarinpalMerchantId());
+    const cfg = deps.zarinpalConfig ? deps.zarinpalConfig() : zarinpalConfigFromEnv(deps.zarinpalMerchantId());
     try {
       const result = await verifyPayment(cfg, { amountToman: Number(row.amount) || 0, authority });
       if (result.ok) {
@@ -465,7 +467,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
 
   app.post('/api/trainee-payments/link/:code/zarinpal', wrap(async (req, res) => {
     const code = String(req.params.code || '');
-    const cfg = zarinpalConfigFromEnv(deps.zarinpalMerchantId());
+    const cfg = deps.zarinpalConfig ? deps.zarinpalConfig() : zarinpalConfigFromEnv(deps.zarinpalMerchantId());
     if (!cfg.merchantId) return res.status(503).json({ error: 'درگاه پرداخت آنلاین هنوز تنظیم نشده است. با آموزشگاه تماس بگیرید.' });
     const callbackUrl = `${requestBase(req)}/api/trainee-payments/zarinpal/callback`;
 

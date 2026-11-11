@@ -69,7 +69,8 @@ Names only — see `.env.example`. Never paste values into chat, tickets or git.
 
 | Name | Purpose | Safe first value |
 |---|---|---|
-| `ZARINPAL_MERCHANT_ID` | Zarinpal merchant UUID (can also be set in Settings → gateways) | real merchant id |
+| `ZARINPAL_MERCHANT_ID` | Zarinpal merchant UUID (a value saved in Settings → درگاه پرداخت overrides it) | real merchant id |
+| `ZARINPAL_ACCESS_TOKEN` | Zarinpal GraphQL token, read-only use (test + transaction sync); Settings can override | — |
 | `ZARINPAL_SANDBOX` | `1` sandbox, `0` real money | **`1` first**, `0` after a sandbox round-trip |
 | `ZARINPAL_CURRENCY` | `IRR` (Toman×10, default) or `IRT` | `IRR` |
 | `PUBLIC_BASE_URL` | origin used in gateway callback + trainee links | `https://<crm public host>` |
