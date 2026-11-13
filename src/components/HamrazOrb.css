@@ -1,0 +1,490 @@
+/* Ham-Raz orb — self-contained styles. Colors come from the custom properties on .hamraz-orb;
+   every inner measurement is in em, so the whole face scales with the `size` prop (font-size = size). */
+
+.hamraz-orb {
+  --hamraz-orb-color: #10b981;
+  --hamraz-orb-color-2: #2dd4bf;
+  --hamraz-orb-core: color-mix(in srgb, var(--hamraz-orb-color) 58%, #022c22);
+  --hamraz-orb-deep: color-mix(in srgb, var(--hamraz-orb-color) 40%, #021b17);
+  --hamraz-orb-bright: color-mix(in srgb, var(--hamraz-orb-color-2) 60%, #ffffff);
+  --hamraz-orb-glow: color-mix(in srgb, var(--hamraz-orb-color) 55%, transparent);
+  --hamraz-orb-glow-soft: color-mix(in srgb, var(--hamraz-orb-color-2) 42%, transparent);
+
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  line-height: 1;
+  vertical-align: middle;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Soft ambient halo behind the orb. */
+.hamraz-orb__aura {
+  position: absolute;
+  inset: -0.22em;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--hamraz-orb-glow-soft) 0%, transparent 68%);
+  filter: blur(0.08em);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Ripple ring shown while listening. */
+.hamraz-orb__ripple {
+  position: absolute;
+  inset: -0.06em;
+  border: 0.045em solid var(--hamraz-orb-glow);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The living body: irregular glassy silhouette, translucent so the swirl reads through it. */
+.hamraz-orb__body {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 58% 42% 53% 47% / 46% 54% 46% 54%;
+  background:
+    radial-gradient(
+      circle at 32% 24%,
+      color-mix(in srgb, var(--hamraz-orb-bright) 85%, transparent) 0%,
+      color-mix(in srgb, var(--hamraz-orb-color-2) 55%, transparent) 26%,
+      color-mix(in srgb, var(--hamraz-orb-color) 62%, transparent) 60%,
+      color-mix(in srgb, var(--hamraz-orb-core) 92%, transparent) 100%
+    );
+  box-shadow:
+    0 0 0.28em var(--hamraz-orb-glow-soft),
+    0 0 0.85em var(--hamraz-orb-glow),
+    0 0 1.7em color-mix(in srgb, var(--hamraz-orb-glow) 55%, transparent),
+    inset 0 -0.12em 0.3em color-mix(in srgb, var(--hamraz-orb-deep) 70%, transparent),
+    inset 0 0.09em 0.24em rgba(255, 255, 255, 0.32),
+    inset 0 0 0.05em rgba(255, 255, 255, 0.55);
+}
+
+/* Glass rim — a bright thin edge so it reads as a translucent bubble. */
+.hamraz-orb__body::after {
+  content: '';
+  position: absolute;
+  inset: 0.02em;
+  border-radius: inherit;
+  border: 0.028em solid rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+}
+
+/* Drifting internal swirl — two soft colored blobs that slowly move, like liquid inside glass. */
+.hamraz-orb__swirl {
+  position: absolute;
+  inset: -12%;
+  border-radius: 50%;
+  background:
+    radial-gradient(42% 38% at 30% 70%, color-mix(in srgb, var(--hamraz-orb-bright) 78%, transparent) 0%, transparent 70%),
+    radial-gradient(40% 44% at 72% 38%, color-mix(in srgb, var(--hamraz-orb-color) 72%, transparent) 0%, transparent 72%),
+    radial-gradient(50% 46% at 55% 85%, color-mix(in srgb, var(--hamraz-orb-deep) 82%, transparent) 0%, transparent 74%);
+  filter: blur(0.06em);
+  opacity: 0.9;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+/* Rotating sheen used by the thinking state (clipped to the blob). */
+.hamraz-orb__sheen {
+  position: absolute;
+  inset: -30%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(255, 255, 255, 0.34) 42deg,
+    transparent 96deg,
+    transparent 170deg,
+    rgba(255, 255, 255, 0.18) 224deg,
+    transparent 280deg
+  );
+  opacity: 0;
+  transition: opacity 0.45s ease;
+  pointer-events: none;
+}
+
+/* Glossy upper-left highlight. */
+.hamraz-orb__highlight {
+  position: absolute;
+  top: 11%;
+  left: 14%;
+  width: 36%;
+  height: 24%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0));
+  transform: rotate(-20deg);
+  filter: blur(0.03em);
+  pointer-events: none;
+}
+
+/* Eyes ------------------------------------------------------------------ */
+
+.hamraz-orb__eyes {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 0.24em;
+  transition: opacity 0.3s ease;
+}
+
+.hamraz-orb__eye {
+  position: relative;
+  width: 0.2em;
+  height: 0.3em;
+  border-radius: 50% / 54% 54% 46% 46%;
+  background: radial-gradient(
+    circle at 42% 32%,
+    #ffffff 0%,
+    #ffffff 42%,
+    color-mix(in srgb, var(--hamraz-orb-bright) 70%, #ffffff) 80%,
+    color-mix(in srgb, var(--hamraz-orb-color-2) 60%, #ffffff) 100%
+  );
+  box-shadow:
+    0 0 0.08em rgba(255, 255, 255, 0.9),
+    0 0 0.26em var(--hamraz-orb-glow-soft);
+  transition: height 0.2s ease, border-radius 0.2s ease, transform 0.2s ease;
+}
+
+/* Smile (happy) --------------------------------------------------------- */
+.hamraz-orb__smile {
+  position: absolute;
+  top: 56%;
+  left: 50%;
+  width: 0.34em;
+  height: 0.2em;
+  transform: translateX(-50%);
+  border: 0.045em solid #ffffff;
+  border-top: 0 solid transparent;
+  border-radius: 0 0 0.3em 0.3em;
+  box-shadow: 0 0 0.12em var(--hamraz-orb-glow-soft);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+/* Mouth (soundwave bars) — only visible while talking. */
+.hamraz-orb__mouth {
+  position: absolute;
+  top: 60%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.075em;
+  height: 0.24em;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.hamraz-orb__mouth > span {
+  display: block;
+  width: 0.06em;
+  height: 100%;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 0 0.1em var(--hamraz-orb-glow-soft);
+  transform-origin: center;
+}
+
+/* Sprout (seedling) ----------------------------------------------------- */
+.hamraz-orb__sprout {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0.5em;
+  height: 0.5em;
+  transform: translate(-50%, -46%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.hamraz-orb__stem {
+  position: absolute;
+  left: 50%;
+  bottom: 16%;
+  width: 0.034em;
+  height: 0.3em;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 0 0.1em var(--hamraz-orb-glow-soft);
+}
+
+/* Two leaves splaying up-and-out from the top of the stem, like a seedling. */
+.hamraz-orb__leaf {
+  position: absolute;
+  bottom: 44%;
+  width: 0.12em;
+  height: 0.16em;
+  background: #ffffff;
+  box-shadow: 0 0 0.12em var(--hamraz-orb-glow-soft);
+}
+
+.hamraz-orb__leaf--l {
+  right: 50%;
+  transform-origin: bottom right;
+  transform: rotate(-52deg);
+  border-radius: 100% 0 100% 0;
+}
+
+.hamraz-orb__leaf--r {
+  left: 50%;
+  transform-origin: bottom left;
+  transform: rotate(52deg);
+  border-radius: 0 100% 0 100%;
+}
+
+/* Sparkles (sprout) ----------------------------------------------------- */
+.hamraz-orb__sparkles {
+  position: absolute;
+  inset: -0.25em;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.hamraz-orb__sparkles > span {
+  position: absolute;
+  width: 0.1em;
+  height: 0.1em;
+  background:
+    radial-gradient(closest-side, #ffffff 0%, transparent 72%),
+    conic-gradient(from 0deg, transparent 0 85deg, #ffffff 90deg, transparent 95deg 175deg, #ffffff 180deg, transparent 185deg 265deg, #ffffff 270deg, transparent 275deg 355deg, #ffffff 360deg);
+  -webkit-mask: radial-gradient(closest-side, #000 0%, #000 100%);
+  filter: drop-shadow(0 0 0.05em var(--hamraz-orb-glow-soft));
+  transform: scale(0);
+}
+.hamraz-orb__sparkles > span:nth-child(1) { top: 8%; right: 6%; }
+.hamraz-orb__sparkles > span:nth-child(2) { top: 30%; right: -4%; width: 0.07em; height: 0.07em; }
+.hamraz-orb__sparkles > span:nth-child(3) { top: -2%; right: 26%; width: 0.065em; height: 0.065em; }
+.hamraz-orb__sparkles > span:nth-child(4) { top: 52%; right: 2%; width: 0.055em; height: 0.055em; }
+
+/* State-driven looks ----------------------------------------------------- */
+
+.hamraz-orb[data-state='listening'] .hamraz-orb__eye {
+  height: 0.16em;
+  border-radius: 0.3em 0.3em 0 0;
+}
+
+.hamraz-orb[data-state='thinking'] .hamraz-orb__eye {
+  height: 0.2em;
+  transform: scaleX(0.92);
+}
+
+.hamraz-orb[data-state='thinking'] .hamraz-orb__sheen {
+  opacity: 1;
+}
+
+.hamraz-orb[data-state='talking'] .hamraz-orb__eyes {
+  top: 34%;
+}
+
+.hamraz-orb[data-state='talking'] .hamraz-orb__mouth {
+  opacity: 1;
+}
+
+.hamraz-orb[data-state='talking'] .hamraz-orb__body,
+.hamraz-orb[data-state='happy'] .hamraz-orb__body {
+  box-shadow:
+    0 0 0.35em var(--hamraz-orb-glow-soft),
+    0 0 1.2em var(--hamraz-orb-glow),
+    0 0 2.3em color-mix(in srgb, var(--hamraz-orb-glow) 75%, transparent),
+    inset 0 -0.12em 0.3em color-mix(in srgb, var(--hamraz-orb-deep) 70%, transparent),
+    inset 0 0.09em 0.24em rgba(255, 255, 255, 0.34),
+    inset 0 0 0.05em rgba(255, 255, 255, 0.6);
+}
+
+/* Happy: eyes become upward arcs (^^) and the smile appears. */
+.hamraz-orb[data-state='happy'] .hamraz-orb__eye {
+  height: 0.12em;
+  border-radius: 0.3em 0.3em 0 0;
+}
+.hamraz-orb[data-state='happy'] .hamraz-orb__smile {
+  opacity: 1;
+}
+
+/* Sprout: hide the face, grow the seedling + sparkles. */
+.hamraz-orb[data-state='sprout'] .hamraz-orb__eyes {
+  opacity: 0;
+}
+.hamraz-orb[data-state='sprout'] .hamraz-orb__sprout,
+.hamraz-orb[data-state='sprout'] .hamraz-orb__sparkles {
+  opacity: 1;
+}
+
+/* Motion ----------------------------------------------------------------- */
+
+@keyframes hamraz-float {
+  0%, 100% { transform: translateY(-3%) rotate(-2.5deg); }
+  50% { transform: translateY(3%) rotate(2.5deg); }
+}
+
+@keyframes hamraz-blob {
+  0%, 100% { border-radius: 58% 42% 53% 47% / 46% 54% 46% 54%; }
+  25% { border-radius: 46% 54% 44% 56% / 58% 44% 56% 42%; }
+  50% { border-radius: 52% 48% 58% 42% / 44% 58% 42% 56%; }
+  75% { border-radius: 44% 56% 48% 52% / 54% 46% 56% 44%; }
+}
+
+@keyframes hamraz-swirl {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.08); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+@keyframes hamraz-breathe {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.045, 1.045); }
+}
+
+@keyframes hamraz-breathe-think {
+  0%, 100% { transform: scale(1.02, 1.02); }
+  50% { transform: scale(0.965, 0.965); }
+}
+
+@keyframes hamraz-breathe-talk {
+  0%, 100% { transform: scale(1, 1); }
+  40% { transform: scale(1.07, 1.07); }
+}
+
+@keyframes hamraz-breathe-happy {
+  0%, 100% { transform: scale(1, 1); }
+  35% { transform: scale(1.09, 0.94); }
+  70% { transform: scale(0.97, 1.05); }
+}
+
+@keyframes hamraz-ripple {
+  0% { transform: scale(0.9); opacity: 0.75; }
+  70% { opacity: 0.15; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+@keyframes hamraz-aura {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50% { opacity: 0.9; transform: scale(1.12); }
+}
+
+@keyframes hamraz-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes hamraz-eq {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes hamraz-sparkle {
+  0%, 100% { transform: scale(0); opacity: 0; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes hamraz-grow {
+  0% { transform: translate(-50%, -30%) scale(0.4); opacity: 0; }
+  60% { transform: translate(-50%, -46%) scale(1.08); opacity: 1; }
+  100% { transform: translate(-50%, -46%) scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hamraz-orb {
+    animation: hamraz-float 5.5s ease-in-out infinite;
+  }
+
+  .hamraz-orb__body {
+    animation:
+      hamraz-blob 9s ease-in-out infinite,
+      hamraz-breathe 4.6s ease-in-out infinite;
+  }
+
+  .hamraz-orb__swirl {
+    animation: hamraz-swirl 14s linear infinite;
+  }
+
+  .hamraz-orb[data-state='listening'] .hamraz-orb__body {
+    animation:
+      hamraz-blob 8s ease-in-out infinite,
+      hamraz-breathe 3.2s ease-in-out infinite;
+  }
+
+  .hamraz-orb[data-state='thinking'] .hamraz-orb__body {
+    animation:
+      hamraz-blob 12s ease-in-out infinite,
+      hamraz-breathe-think 3.8s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='thinking'] .hamraz-orb__swirl {
+    animation: hamraz-swirl 7s linear infinite;
+  }
+  .hamraz-orb[data-state='thinking'] .hamraz-orb__sheen {
+    animation: hamraz-spin 3.2s linear infinite;
+  }
+
+  .hamraz-orb[data-state='talking'] .hamraz-orb__body {
+    animation:
+      hamraz-blob 6s ease-in-out infinite,
+      hamraz-breathe-talk 1.15s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='talking'] .hamraz-orb__swirl {
+    animation: hamraz-swirl 9s linear infinite;
+  }
+  .hamraz-orb[data-state='talking'] .hamraz-orb__aura {
+    animation: hamraz-aura 1.2s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='talking'] .hamraz-orb__mouth > span {
+    animation: hamraz-eq 0.85s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='talking'] .hamraz-orb__mouth > span:nth-child(1) { animation-delay: 0s; }
+  .hamraz-orb[data-state='talking'] .hamraz-orb__mouth > span:nth-child(2) { animation-delay: 0.14s; }
+  .hamraz-orb[data-state='talking'] .hamraz-orb__mouth > span:nth-child(3) { animation-delay: 0.28s; }
+  .hamraz-orb[data-state='talking'] .hamraz-orb__mouth > span:nth-child(4) { animation-delay: 0.07s; }
+
+  .hamraz-orb[data-state='listening'] .hamraz-orb__ripple {
+    animation: hamraz-ripple 2.6s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+  }
+
+  .hamraz-orb[data-state='happy'] .hamraz-orb__body {
+    animation:
+      hamraz-blob 7s ease-in-out infinite,
+      hamraz-breathe-happy 1.8s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='happy'] .hamraz-orb__aura {
+    animation: hamraz-aura 2.4s ease-in-out infinite;
+  }
+
+  .hamraz-orb[data-state='sprout'] .hamraz-orb__sprout {
+    animation: hamraz-grow 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .hamraz-orb[data-state='sprout'] .hamraz-orb__aura {
+    animation: hamraz-aura 3s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='sprout'] .hamraz-orb__sparkles > span {
+    animation: hamraz-sparkle 1.8s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='sprout'] .hamraz-orb__sparkles > span:nth-child(1) { animation-delay: 0s; }
+  .hamraz-orb[data-state='sprout'] .hamraz-orb__sparkles > span:nth-child(2) { animation-delay: 0.45s; }
+  .hamraz-orb[data-state='sprout'] .hamraz-orb__sparkles > span:nth-child(3) { animation-delay: 0.9s; }
+  .hamraz-orb[data-state='sprout'] .hamraz-orb__sparkles > span:nth-child(4) { animation-delay: 1.3s; }
+
+  /* Blink only in calm states (not when eyes are arcs/hidden). */
+  .hamraz-orb[data-state='idle'] .hamraz-orb__eye,
+  .hamraz-orb[data-state='thinking'] .hamraz-orb__eye {
+    animation: hamraz-blink 5.2s ease-in-out infinite;
+  }
+  .hamraz-orb[data-state='idle'] .hamraz-orb__eye:nth-child(2),
+  .hamraz-orb[data-state='thinking'] .hamraz-orb__eye:nth-child(2) {
+    animation-delay: 0.12s;
+  }
+}
+
+@keyframes hamraz-blink {
+  0%, 91%, 98%, 100% { transform: scaleY(1); }
+  94.5% { transform: scaleY(0.08); }
+}

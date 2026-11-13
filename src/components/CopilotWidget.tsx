@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Bot, Send, Loader2, PanelRightOpen, ChevronDown, ChevronUp } from 'lucide-react';
+import { Send, Loader2, PanelRightOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getAuthToken } from '../api/client';
+import { HamrazOrb, type HamrazOrbState } from './HamrazOrb';
 
 /** Assistant replies as Markdown (GFM tables); raw HTML is not rendered (no rehype-raw), links open safely. */
 const MD_COMPONENTS: Components = {
@@ -88,6 +89,32 @@ function useCopilot(): CopilotContextValue {
   const ctx = useContext(CopilotContext);
   if (!ctx) throw new Error('Copilot view rendered outside CopilotProvider');
   return ctx;
+}
+
+/** True for ~1.6s after a fresh assistant reply arrives (drives the orb's talking state).
+ *  Only triggers when a reply lands after isLoading flips true→false, so restoring
+ *  chat history on mount does not make the orb talk. */
+function useAssistantTalking(messages: Message[], isLoading: boolean): boolean {
+  const [talking, setTalking] = useState(false);
+  const wasLoadingRef = useRef(false);
+
+  useEffect(() => {
+    if (isLoading) {
+      wasLoadingRef.current = true;
+      setTalking(false);
+      return;
+    }
+    const last = messages[messages.length - 1];
+    if (wasLoadingRef.current && last?.role === 'assistant') {
+      wasLoadingRef.current = false;
+      setTalking(true);
+      const timer = window.setTimeout(() => setTalking(false), 1600);
+      return () => window.clearTimeout(timer);
+    }
+    wasLoadingRef.current = false;
+  }, [messages, isLoading]);
+
+  return talking;
 }
 
 export function CopilotProvider({
@@ -217,12 +244,15 @@ function MessageList({
   isLoading,
   limit,
   empty,
+  orbState = 'idle',
 }: {
   messages: Message[];
   isLoading: boolean;
   limit?: number;
   empty: React.ReactNode;
+  orbState?: HamrazOrbState;
 }) {
+  const avatarState: HamrazOrbState = isLoading ? 'thinking' : orbState;
   const shown = typeof limit === 'number' ? messages.slice(-limit) : messages;
   if (shown.length === 0 && !isLoading) return <>{empty}</>;
   return (
@@ -233,8 +263,8 @@ function MessageList({
           className={`flex items-start gap-2 ${msg.role === 'user' ? 'ml-auto max-w-[85%]' : 'mr-auto max-w-[85%]'}`}
         >
           {msg.role === 'assistant' && (
-            <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
-              <Bot size={14} strokeWidth={2} />
+            <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center">
+              <HamrazOrb size={24} state={avatarState} />
             </div>
           )}
           <div
@@ -250,8 +280,8 @@ function MessageList({
       ))}
       {isLoading && (
         <div className="mr-auto flex max-w-[85%] items-center gap-2">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
-            <Bot size={14} strokeWidth={2} />
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center">
+            <HamrazOrb size={24} state={avatarState} />
           </div>
           <div className="flex items-center gap-2 rounded-2xl rounded-br-sm bg-slate-100 px-3 py-2 text-slate-500">
             <Loader2 size={16} className="animate-spin" />
@@ -320,8 +350,15 @@ function PendingConfirmations({ confirmations, onConfirm, onCancel, disabled }: 
 export function CopilotBar() {
   const { messages, input, setInput, isLoading, error, sendMessage, retry, openTab, prompts, pendingConfirmations, actOnPending } = useCopilot();
   const [expanded, setExpanded] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
+  const talking = useAssistantTalking(messages, isLoading);
+  const orbState: HamrazOrbState = isLoading ? 'thinking' : talking ? 'talking' : inputFocused ? 'listening' : 'idle';
   const last = messages[messages.length - 1];
   const showErrorInBar = Boolean(error) && !expanded;
+
+  useEffect(() => {
+    if (!expanded) setInputFocused(false);
+  }, [expanded]);
   const preview = showErrorInBar
     ? error
     : isLoading
@@ -346,8 +383,8 @@ export function CopilotBar() {
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-lg text-right focus:outline-none focus:ring-2 focus:ring-sky-400"
         >
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
-            <Bot size={16} />
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center">
+            <HamrazOrb size={28} state={orbState} />
           </span>
           <span className="shrink-0 text-sm font-bold text-slate-800">همراز</span>
           {preview && (
@@ -383,6 +420,7 @@ export function CopilotBar() {
             <MessageList
               messages={messages}
               isLoading={isLoading}
+              orbState={orbState}
               limit={3}
               empty={
                 <button
@@ -409,6 +447,8 @@ export function CopilotBar() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
               placeholder="پرسش خود را بنویسید..."
               disabled={isLoading}
               dir="rtl"
@@ -432,7 +472,9 @@ export function CopilotBar() {
 export function CopilotPage() {
   const { messages, input, setInput, isLoading, error, sendMessage, retry, prompts, pendingConfirmations, actOnPending } = useCopilot();
   const listRef = useRef<HTMLDivElement>(null);
-
+  const [inputFocused, setInputFocused] = useState(false);
+  const talking = useAssistantTalking(messages, isLoading);
+  const orbState: HamrazOrbState = isLoading ? 'thinking' : talking ? 'talking' : inputFocused ? 'listening' : 'idle';
 
   React.useEffect(() => {
     const el = listRef.current;
@@ -442,8 +484,8 @@ export function CopilotPage() {
   return (
     <section dir="rtl" className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="همراز">
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-100 px-4">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-50 text-sky-600">
-          <Bot size={16} />
+        <span className="flex h-8 w-8 items-center justify-center">
+          <HamrazOrb size={32} state={orbState} />
         </span>
         <div className="min-w-0 text-right">
           <h2 className="text-sm font-bold text-slate-800">همراز</h2>
@@ -455,6 +497,7 @@ export function CopilotPage() {
         <MessageList
           messages={messages}
           isLoading={isLoading}
+          orbState={orbState}
           empty={
             <div className="space-y-2">
               <p className="text-xs text-slate-500">یک سؤال را انتخاب کنید یا بنویسید.</p>
@@ -490,6 +533,8 @@ export function CopilotPage() {
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
