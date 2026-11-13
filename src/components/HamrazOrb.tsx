@@ -1,7 +1,13 @@
 import React from 'react';
 import './HamrazOrb.css';
 
-export type HamrazOrbState = 'idle' | 'listening' | 'thinking' | 'talking' | 'happy';
+export type HamrazOrbState =
+  | 'idle'
+  | 'listening'
+  | 'thinking'
+  | 'talking'
+  | 'happy'
+  | 'sprout';
 
 export interface HamrazOrbProps {
   state?: HamrazOrbState;
@@ -23,15 +29,25 @@ type HamrazOrbStyle = React.CSSProperties & {
 
 /**
  * Ham-Raz (هم‌راز) assistant orb — a self-contained, dependency-free CSS avatar.
- * Organic wobbly blob, glowing eyes, and state-driven motion (no WebGL / no libs).
+ *
+ * A translucent, glassy green orb with a slowly-drifting internal swirl, an
+ * organic (not perfectly round) wobbling silhouette, big glowing eyes, and
+ * state-driven motion. No WebGL, no libraries.
+ *
+ * STATES
+ *   idle      calm, blinking oval eyes
+ *   listening attentive ^^ eyes + a ripple ring, faster breathing
+ *   thinking  narrowed eyes + a rotating inner sheen
+ *   talking   soundwave mouth, energetic pulse
+ *   happy     closed smiling eyes + a smile, bouncy
+ *   sprout    a glowing seedling grows inside, with sparkles
  *
  * RECOLORING
- *   a) CSS custom properties (they inherit, so they can be set on the orb root or any ancestor):
+ *   a) CSS custom properties (they inherit):
  *        --hamraz-orb-color   base / core color   (default #10b981 emerald)
  *        --hamraz-orb-color-2 bright highlight     (default #2dd4bf teal)
- *      e.g. <HamrazOrb style={{ '--hamraz-orb-color': '#8b5cf6' }} />  (plus color-2)
- *   b) Or pass the `color` prop with any CSS color; the second gradient stop is derived
- *      automatically as color-mix(in srgb, <color> 76%, #ffffff).
+ *   b) Or pass the `color` prop with any CSS color; the second gradient stop is
+ *      derived as color-mix(in srgb, <color> 76%, #ffffff).
  *
  * Honors prefers-reduced-motion: no looping animation, still a static organic orb.
  */
@@ -67,17 +83,31 @@ export function HamrazOrb({
       <span className="hamraz-orb__aura" aria-hidden="true" />
       <span className="hamraz-orb__ripple" aria-hidden="true" />
       <span className="hamraz-orb__body" aria-hidden="true">
+        <span className="hamraz-orb__swirl" />
+        <span className="hamraz-orb__sheen" />
         <span className="hamraz-orb__highlight" />
         <span className="hamraz-orb__eyes">
           <span className="hamraz-orb__eye" />
           <span className="hamraz-orb__eye" />
         </span>
+        <span className="hamraz-orb__smile" />
         <span className="hamraz-orb__mouth">
           <span />
           <span />
           <span />
           <span />
         </span>
+        <span className="hamraz-orb__sprout">
+          <span className="hamraz-orb__stem" />
+          <span className="hamraz-orb__leaf hamraz-orb__leaf--l" />
+          <span className="hamraz-orb__leaf hamraz-orb__leaf--r" />
+        </span>
+      </span>
+      <span className="hamraz-orb__sparkles" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
       </span>
     </span>
   );
