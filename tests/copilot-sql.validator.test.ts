@@ -41,6 +41,10 @@ const cases: C[] = [
  ['site','SELECT COUNT(*) AS count FROM directus_users',false],
  ['site','SELECT CAST(id AS TEXT) AS date FROM registrations',true],
  ['crm','DELETE FROM students WHERE student_id IN (SELECT student_id AS count FROM students)',false],
+  // SMS reports / credit log
+  ['crm','SELECT message_id, delivery_state FROM sms_reports',true],
+  ['crm','SELECT message_id FROM sms_reports WHERE delivery_state = 1 ORDER BY message_id DESC LIMIT 10',true],
+  ['crm','SELECT * FROM sms_credit_log',true],
 ];
 let fail=0;
 for (const [db,q,exp] of cases){ const r:any=v(db,q); const ok=r.ok===exp; if(!ok)fail++;

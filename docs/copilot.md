@@ -78,7 +78,18 @@ PATH=/root/.nvm/versions/node/v20.20.2/bin:$PATH pm2 restart carla-crm --update-
 
 غیر از سه متغیر Copilot، `TELEGRAM_BOT_TOKEN` از `site/app/.env` داخل `.env` همین CRM کپی شده تا `send_notification` تلگرام از خود CRM کار کند. توکن را در لاگ و ریپو نگذار. `.env` روی سرور `0600` است.
 
+## پایگاه دادهٔ هم‌راز (`COPILOT_DB_BACKEND`)
+
+| مقدار | رفتار |
+|---|---|
+| `directus` | ابزارهای `directus_schema` / `directus_read_items` / `directus_write_items` از MCP داخلی Directus (`COPILOT_DIRECTUS_URL`, پیش‌فرض `http://127.0.0.1:8055/mcp`، توکن `COPILOT_DIRECTUS_TOKEN`). اگر MCP پایین باشد، در صورت تنظیم بودن DBHub به آن برمی‌گردد، وگرنه به SQL داخلی. نوشتن در جداول مالی و هر گونه حذف رد می‌شود و در `crm_audit_log` ثبت می‌گردد. |
+| `dbhub` | ابزارهای فقط‌خواندنی DBHub (`COPILOT_DBHUB_URL` / `COPILOT_DBHUB_TOKEN`). اگر DBHub پایین باشد، SQL داخلی. |
+| `builtin` (پیش‌فرض) | `run_sql_query` فقط SELECT، با allowlist (از جمله `sms_reports` و `sms_credit_log`). |
+
+توکن Directus را در git نگذارید. تعویض بک‌اند بعد از تغییر `.env` نیاز به `pm2 restart carla-crm --update-env` دارد. نقش و مجوزهای کاربر `hamraz-agent` در مخزن `ham-admin` است و تا تأیید مالک روی سرور اعمال نمی‌شود.
+
 ## تنظیمات > تنظیمات هم‌راز (Settings, admin only)
+
 
 All copilot knobs are editable in the CRM (`GET/POST /api/settings/hamraz`, `POST /api/settings/hamraz/test`) and
 stored in `settings.gateways.hamraz` (JSON store, never sent to the browser; no SQL migration). Precedence per
