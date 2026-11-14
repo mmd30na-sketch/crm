@@ -18,6 +18,7 @@ import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
 import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
+import { directusSelected, getDirectusTools, isDirectusTool, callDirectusTool } from './copilot-directus';
 import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
 import { registerLeadPipeline, ensureLeadPipelineSchema } from './leadPipeline';
 import { registerEmail, ensureEmailSchema } from './emailService';
@@ -3639,6 +3640,9 @@ const COPILOT_TOOL_GUIDE: [string, string][] = [
   ['get_site_analytics', 'آمار بازدید سایت (بازدیدکننده، صفحه‌ها، ارجاع‌ها، دستگاه‌ها)'],
   ['execute_sql_crm', 'پرس‌وجوی SELECT دلخواه روی پایگاه CRM (فقط اگر ابزار دیگری کافی نیست)'],
   ['run_sql_query', 'پرس‌وجوی SELECT دلخواه (فقط اگر ابزار دیگری کافی نیست)'],
+  ['directus_schema', 'ساختار جدول‌های Directus'],
+  ['directus_read_items', 'خواندن داده از Directus'],
+  ['directus_write_items', 'ایجاد یا به‌روزرسانی در جدول‌های عملیاتی Directus (نه مالی، بدون حذف)'],
 ];
 function copilotToolGuide(tools: any[]): string {
   const offered = new Set(tools.map((t: any) => t?.function?.name));
@@ -3673,7 +3677,10 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   copilotToolGuide(tools),
   '۸) هر ابزار را با همان ورودی تکرار نکنید؛ وقتی داده کافی است مستقیم پاسخ دهید.',
   '۹) تاریخ‌ها شمسی و به وقت تهران هستند؛ تاریخ ورودی ابزارها را به شکل YYYY/MM/DD شمسی بدهید.',
-].join('\n');
+  tools.some((t: any) => t?.function?.name === 'directus_write_items')
+    ? '۱۰) نوشتن در جداول مالی (پرداخت‌ها، اقساط، هزینه‌ها، حساب‌های بانکی، تسویه‌ها، فاکتورها، استردادها و viewهای مالی) ممنوع است. دفتر مالی فقط بعد از تأیید درگاه ردیف می‌گیرد و استرداد یا برگشت وجه نیاز به تأیید مدیر دارد. حذف هیچ رکوردی مجاز نیست.'
+    : '',
+].filter(Boolean).join('\n');
 
 const COPILOT_TOOLS = [
   {
@@ -4115,7 +4122,7 @@ const smsirTime = (sec: unknown) => { const n = Number(sec); return n > 0 ? copi
 const smsirMobile = (m: unknown) => maskPhone(String(m ?? '').replace(/^(?=9\d{9}$)/, '0'));
 const smsParts = (t: string) => { const uni = /[^\x00-\x7F]/.test(t); const one = uni ? 70 : 160; const multi = uni ? 67 : 153; return t.length <= one ? 1 : Math.ceil(t.length / multi); };
 
-/** Tools offered to this user (admin-only extras): SQL via DBHub (COPILOT_DB_BACKEND=dbhub, falls back to builtin when down) or builtin run_sql_query, plus get_site_analytics. */
+/** Tools offered to this user (admin-only extras): SQL via Directus MCP (COPILOT_DB_BACKEND=directus, falls back to DBHub then builtin), DBHub (dbhub, falls back to builtin), or builtin run_sql_query, plus get_site_analytics. */
 /** Admin-only read-only tools (exams, documents, SMS); offered only to admin and re-checked in runCopilotTool. */
 const COPILOT_ADMIN_READ_TOOLS = [
   {
@@ -4187,8 +4194,21 @@ async function copilotToolsForRole(role: string) {
   let sqlTools: any[] = [];
   const h = hamraz();
   if (h.sqlEnabled) {
-    const dbhub = dbhubSelected() ? await getDbhubTools() : null;
-    sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
+    if (directusSelected()) {
+      const directus = await getDirectusTools();
+      if (directus) {
+        sqlTools = [...directus, COPILOT_SITE_SQL_TOOL];
+      } else {
+        // Fallback: DBHub when configured, otherwise the builtin SELECT-only tool.
+        const dbhub = (dbhubSelected() || Boolean(String(process.env.COPILOT_DBHUB_URL || '').trim()))
+          ? await getDbhubTools()
+          : null;
+        sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
+      }
+    } else {
+      const dbhub = dbhubSelected() ? await getDbhubTools() : null;
+      sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
+    }
   }
   const smsTools = h.smsDirect ? COPILOT_SMS_TOOLS : COPILOT_SMS_TOOLS.filter((t: any) => t?.function?.name !== 'sms_send_direct');
   const payTools = h.paymentTools ? paymentToolDefinitions() : [];
@@ -4201,6 +4221,22 @@ async function auditCopilotSql(username: string, e: { db: string; sql: string; a
       'INSERT INTO crm_copilot_queries (username, db, sql_text, allowed, reason, row_count, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [username || null, e.db.slice(0, 10), e.sql.slice(0, 8000), e.allowed ? 1 : 0, e.reason ? e.reason.slice(0, 500) : null, e.rows, e.ms]);
   } catch (err: any) { console.warn('copilot sql audit failed:', err?.message || err); }
+}
+
+/** Persist Directus write attempts (allowed or denied) to crm_audit_log. Never throws. */
+async function auditDirectusWrite(username: string, e: { action: string; collection: string; entity_id: string | null; allowed: boolean; reason: string | null; status: number | null }) {
+  const method = e.action === 'update' ? 'PATCH' : e.action === 'delete' ? 'DELETE' : 'POST';
+  const path = `/copilot/directus/${e.action}/${e.collection}${e.allowed ? '' : '?denied=1'}`.slice(0, 255);
+  void chabokan.insertAudit({
+    username: username || null,
+    role: 'admin',
+    method,
+    path,
+    entity: String(e.collection || '').slice(0, 40) || null,
+    entity_id: e.entity_id,
+    status: e.status ?? (e.allowed ? 200 : 403),
+    ip: null,
+  });
 }
 
 /** Recipient check shared by the SMS draft and the direct send. OTP templates stay blocked. */
@@ -4264,6 +4300,11 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   if (name === 'run_sql_query') {
     if (!copilotSqlEnabled() || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
     return runCopilotSql(a.database, a.sql, (e) => auditCopilotSql(ctx.username, e));
+  }
+
+  if (isDirectusTool(name)) {
+    if (!copilotSqlEnabled() || ctx.role !== 'admin') return { error: 'این ابزار برای شما فعال نیست.' };
+    return callDirectusTool(name, a, (e) => auditCopilotSql(ctx.username, e), (w) => auditDirectusWrite(ctx.username, w));
   }
 
   if (isDbhubTool(name)) {
@@ -4924,8 +4965,9 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const ctx = { username: String(sessionUser.username || ''), role: String(sessionUser.role || ''), perms };
   const tools = await copilotToolsFor(ctx.role, perms);
   const sqlNames = tools.map((t: any) => t.function?.name).filter((n: string) => n === 'run_sql_query' || n === 'execute_sql_crm');
+  const hasDirectusWrite = tools.some((t: any) => t?.function?.name === 'directus_write_items');
   const sqlRule = sqlNames.length
-    ? `\n۱۰) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
+    ? `\n${hasDirectusWrite ? '۱۱' : '۱۰'}) ابتدا از ابزارهای آماده استفاده کنید؛ فقط وقتی هیچ ابزاری پاسخ نمی‌دهد ابزار SQL (${sqlNames.join(' یا ')}) را با یک SELECT دقیق و ستون‌های مشخص اجرا کنید. اگر پرس‌وجو رد شد، دلیل را بخوانید و اصلاح کنید.`
     : '';
   const payRule = tools.some((t: any) => isPaymentTool(String(t?.function?.name || ''))) ? paymentSkillsPrompt() : '';
   const speakerRule = speaker ? '\n' + speakerPrompt(speaker) : '';
