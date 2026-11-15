@@ -42,12 +42,14 @@ export interface ZpTransactions { terminals: ZpTerminal[]; terminal_id: string |
 export type HamrazConfirmKey = 'sms_send' | 'telegram' | 'rubika';
 export interface HamrazSettingsView {
   enabled: boolean; configured: boolean; api_url: string; api_key_set: boolean; model: string;
+  model_fallbacks: string[];
   max_iterations: number; sql_enabled: boolean; sms_direct: boolean; payment_tools: boolean;
   confirm: Record<HamrazConfirmKey, boolean>;
   sources: Record<string, ZpSource>;
 }
 export interface HamrazPatch {
   enabled?: boolean; api_url?: string; api_key?: string; clear_api_key?: boolean; model?: string;
+  model_fallbacks?: string | string[] | null;
   max_iterations?: number | null; sql_enabled?: boolean; sms_direct?: boolean; payment_tools?: boolean; confirm?: Partial<Record<HamrazConfirmKey, boolean>>;
 }
 export interface HamrazTestResult { ok: boolean; status: number | null; model: string; ms: number; message: string; settings: HamrazSettingsView }

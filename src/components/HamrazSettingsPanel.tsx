@@ -32,6 +32,7 @@ function CopilotSettingsForm() {
   const [apiUrl, setApiUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
+  const [fallbacks, setFallbacks] = useState('');
   const [steps, setSteps] = useState(6);
   const [sql, setSql] = useState(false);
   const [smsDirect, setSmsDirect] = useState(true);
@@ -42,7 +43,7 @@ function CopilotSettingsForm() {
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
   const apply = (x: zp.HamrazSettingsView) => {
-    setV(x); setEnabled(x.enabled); setApiUrl(x.api_url); setModel(x.model); setSteps(x.max_iterations);
+    setV(x); setEnabled(x.enabled); setApiUrl(x.api_url); setModel(x.model); setFallbacks((x.model_fallbacks || []).join(', ')); setSteps(x.max_iterations);
     setSql(x.sql_enabled); setSmsDirect(x.sms_direct); setPayTools(x.payment_tools); setConfirm({ ...x.confirm });
   };
   useEffect(() => { zp.getHamrazSettings().then(apply).catch((e) => setErr(e?.message || 'خطا در دریافت تنظیمات')); }, []);
@@ -57,6 +58,8 @@ function CopilotSettingsForm() {
       if (keep('enabled', enabled !== v.enabled)) p.enabled = enabled;
       if (apiUrl !== v.api_url) p.api_url = apiUrl; // the view URL is redacted, so never echo it back unchanged
       if (keep('model', model !== v.model)) p.model = model;
+      const fallbackList = fallbacks.split(',').map((m) => m.trim()).filter(Boolean);
+      if (keep('model_fallbacks', fallbackList.join(',') !== (v.model_fallbacks || []).join(','))) p.model_fallbacks = fallbackList;
       if (keep('max_iterations', steps !== v.max_iterations)) p.max_iterations = steps;
       if (keep('sql_enabled', sql !== v.sql_enabled)) p.sql_enabled = sql;
       if (keep('sms_direct', smsDirect !== v.sms_direct)) p.sms_direct = smsDirect;
@@ -112,6 +115,11 @@ function CopilotSettingsForm() {
               <label className="block text-[11px] font-semibold text-slate-600 mb-1">حداکثر گام‌ها{src('max_iterations')}</label>
               <input type="number" min={1} max={20} dir="ltr" value={steps} onChange={e => setSteps(Number(e.target.value) || 1)} className={inputCls} />
             </div>
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-600 mb-1">مدل‌های جایگزین (با کاما){src('model_fallbacks')}</label>
+            <input type="text" dir="ltr" placeholder="cline/poolside/laguna-s-2.1:free, cline/nvidia/nemotron-3.5-lightning:free" value={fallbacks} onChange={e => setFallbacks(e.target.value)} className={inputCls} />
+            <p className="text-[10px] text-slate-400 mt-1">اگر مدل اصلی خطای موقت (سهمیه، ۴۲۹، ۵xx، پاسخ خالی) بدهد، به‌ترتیب همین مدل‌ها امتحان می‌شوند. خالی یعنی فهرست پیش‌فرض.</p>
           </div>
         </div>
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-1">

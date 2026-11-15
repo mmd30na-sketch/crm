@@ -8,6 +8,7 @@
  *   api_url            COPILOT_API_URL          ''  (copilot answers 503 while empty)
  *   api_key            COPILOT_API_KEY          ''  (write-only; never returned)
  *   model              COPILOT_MODEL            'gpt-4o-mini'
+ *   model_fallbacks    COPILOT_MODEL_FALLBACKS  the three free OmniRoute models from docs/copilot.md
  *   max_iterations     (no env)                 6   (clamped 1..20)
  *   sql_enabled        COPILOT_SQL_ENABLED=1    off
  *   sms_direct         (no env)                 on  (sms_send_direct offered and allowed)
@@ -26,6 +27,7 @@ export type SavedHamraz = {
   api_url?: string;
   api_key?: string;
   model?: string;
+  model_fallbacks?: string[];
   max_iterations?: number;
   sql_enabled?: boolean;
   sms_direct?: boolean;
@@ -38,19 +40,34 @@ export type EffectiveHamraz = {
   apiUrl: string;
   apiKey: string;
   model: string;
+  modelFallbacks: string[];
   maxIterations: number;
   sqlEnabled: boolean;
   smsDirect: boolean;
   paymentTools: boolean;
   confirm: Record<ConfirmKey, boolean>;
-  sources: Record<'enabled' | 'api_url' | 'api_key' | 'model' | 'max_iterations' | 'sql_enabled' | 'sms_direct' | 'payment_tools' | ConfirmKey, Source>;
+  sources: Record<'enabled' | 'api_url' | 'api_key' | 'model' | 'model_fallbacks' | 'max_iterations' | 'sql_enabled' | 'sms_direct' | 'payment_tools' | ConfirmKey, Source>;
 };
 
 export const DEFAULT_MODEL = 'gpt-4o-mini';
 export const DEFAULT_MAX_ITERATIONS = 6;
+/** Free OmniRoute models documented in docs/copilot.md as returning tool_calls. */
+export const DEFAULT_MODEL_FALLBACKS = [
+  'cline/poolside/laguna-s-2.1:free',
+  'cline/nvidia/nemotron-3.5-lightning:free',
+  'cline/xiaomi/mimo-v2.6-flash',
+];
+const MAX_FALLBACKS = 20;
+const MODEL_RE = /^[\w.:/@+-]+$/;
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 const cleanBase = (v: string) => v.trim().replace(/\/+$/, '');
 const clampSteps = (n: unknown) => Math.min(20, Math.max(1, Math.round(Number(n)) || DEFAULT_MAX_ITERATIONS));
+const list = (v: unknown): string[] => (Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : []).map(str).filter(Boolean);
+const dedupe = (items: string[]) => [...new Set(items)];
+/** Primary first, then the fallbacks, de-duplicated. */
+export function modelChain(primary: string, fallbacks: string[]): string[] {
+  return dedupe([primary, ...fallbacks].map((m) => str(m).slice(0, 120)).filter(Boolean)).slice(0, MAX_FALLBACKS + 1);
+}
 
 export function resolveHamraz(gateways: any, env: NodeJS.ProcessEnv = process.env): EffectiveHamraz {
   const g = gateways && typeof gateways === 'object' ? gateways : {};
@@ -62,6 +79,12 @@ export function resolveHamraz(gateways: any, env: NodeJS.ProcessEnv = process.en
   const [apiUrl, uSrc] = txt(s.api_url, env.COPILOT_API_URL, '');
   const [apiKey, kSrc] = txt(s.api_key, env.COPILOT_API_KEY, '');
   const [model, mSrc] = txt(s.model, env.COPILOT_MODEL, DEFAULT_MODEL);
+  const savedFallbacks = list(s.model_fallbacks);
+  const envFallbacks = list(env.COPILOT_MODEL_FALLBACKS);
+  const fallbacks = savedFallbacks.length ? savedFallbacks : envFallbacks.length ? envFallbacks : [...DEFAULT_MODEL_FALLBACKS];
+  const fSrc: Source = savedFallbacks.length ? 'saved' : envFallbacks.length ? 'env' : 'default';
+  // The primary is always first; duplicates (including a fallback equal to the primary) are dropped.
+  const modelFallbacks = modelChain(model, fallbacks).slice(1);
   const steps: [number, Source] = Number.isFinite(Number(s.max_iterations)) && s.max_iterations !== undefined && s.max_iterations !== null
     ? [clampSteps(s.max_iterations), 'saved'] : [DEFAULT_MAX_ITERATIONS, 'default'];
   const envSql = str(env.COPILOT_SQL_ENABLED) ? str(env.COPILOT_SQL_ENABLED) === '1' : undefined;
@@ -74,8 +97,8 @@ export function resolveHamraz(gateways: any, env: NodeJS.ProcessEnv = process.en
   const cSrc = {} as Record<ConfirmKey, Source>;
   for (const k of CONFIRM_KEYS) [confirm[k], cSrc[k]] = bool((c as any)[k], undefined, true);
   return {
-    enabled, apiUrl: cleanBase(apiUrl), apiKey, model, maxIterations: steps[0], sqlEnabled, smsDirect, paymentTools, confirm,
-    sources: { enabled: eSrc, api_url: uSrc, api_key: kSrc, model: mSrc, max_iterations: steps[1], sql_enabled: qSrc, sms_direct: dSrc, payment_tools: pSrc, ...cSrc },
+    enabled, apiUrl: cleanBase(apiUrl), apiKey, model, modelFallbacks, maxIterations: steps[0], sqlEnabled, smsDirect, paymentTools, confirm,
+    sources: { enabled: eSrc, api_url: uSrc, api_key: kSrc, model: mSrc, model_fallbacks: fSrc, max_iterations: steps[1], sql_enabled: qSrc, sms_direct: dSrc, payment_tools: pSrc, ...cSrc },
   };
 }
 
@@ -87,6 +110,7 @@ export function publicHamraz(e: EffectiveHamraz) {
     api_url: redactUrl(e.apiUrl),
     api_key_set: !!e.apiKey,
     model: e.model,
+    model_fallbacks: [...e.modelFallbacks],
     max_iterations: e.maxIterations,
     sql_enabled: e.sqlEnabled,
     sms_direct: e.smsDirect,
@@ -123,7 +147,15 @@ export function applyHamrazPatch(current: SavedHamraz | undefined, b: any): Save
   }
   if (b?.model !== undefined) {
     const m = str(b.model).slice(0, 120);
-    if (!m) delete next.model; else if (!/^[\w.:/@+-]+$/.test(m)) throw bad('نام مدل نامعتبر است.'); else next.model = m;
+    if (!m) delete next.model; else if (!MODEL_RE.test(m)) throw bad('نام مدل نامعتبر است.'); else next.model = m;
+  }
+  if (b?.model_fallbacks !== undefined) {
+    const models = b.model_fallbacks === null ? [] : dedupe(list(b.model_fallbacks).map((m) => m.slice(0, 120)));
+    if (!models.length) delete next.model_fallbacks;
+    else {
+      for (const m of models) if (!MODEL_RE.test(m)) throw bad('نام مدل جایگزین نامعتبر است.');
+      next.model_fallbacks = models.slice(0, MAX_FALLBACKS);
+    }
   }
   if (b?.max_iterations === null || b?.max_iterations === '') delete next.max_iterations;
   else if (b?.max_iterations !== undefined) {
@@ -173,6 +205,137 @@ export async function testCopilotEndpoint(e: EffectiveHamraz, fetchImpl: FetchLi
   } catch (err: any) {
     return { ok: false, status: null, model: e.model, ms: Date.now() - t0, message: `اتصال ناموفق: ${scrub(String(err?.message || ''), [e.apiKey]).slice(0, 160)}` };
   }
+}
+
+export type CopilotFetchResponse = { ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<any> };
+export type CopilotFetchLike = (url: string, init: any) => Promise<CopilotFetchResponse>;
+
+export type CopilotCompletionOptions = {
+  messages: any[];
+  withTools?: boolean;
+  tools?: any[];
+  temperature?: number;
+  maxTokens?: number;
+  timeoutMs?: number;
+};
+
+export type CopilotAttempt = { model: string; status: number | null; ok: boolean; retryable: boolean; reason?: string };
+export type CopilotCompletionOutcome = { completion: any; model: string; attempts: CopilotAttempt[] };
+
+export class CopilotCompletionError extends Error {
+  status: number | null;
+  model: string;
+  retryable: boolean;
+  attempts: CopilotAttempt[];
+  constructor(message: string, opts: { status: number | null; model: string; retryable: boolean; attempts: CopilotAttempt[] }) {
+    super(message);
+    this.name = 'CopilotCompletionError';
+    this.status = opts.status;
+    this.model = opts.model;
+    this.retryable = opts.retryable;
+    this.attempts = opts.attempts;
+    Object.setPrototypeOf(this, CopilotCompletionError.prototype);
+  }
+}
+
+const RETRYABLE_STATUS = new Set([402, 408, 429, 500, 502, 503, 529]);
+const RETRYABLE_TEXT = /quota|rate[\s_-]*limit|resource[\s_-]*exhausted|too many requests/i;
+
+export const isRetryableStatus = (status: number) => RETRYABLE_STATUS.has(status);
+export const mentionsRetryableFailure = (text: string) => RETRYABLE_TEXT.test(String(text || ''));
+
+function providerDetail(body: string): string {
+  try {
+    const j = JSON.parse(body);
+    return String(j?.error?.message || j?.message || j?.error || body || '');
+  } catch { return String(body || ''); }
+}
+
+/**
+ * Calls an OpenAI-compatible `/chat/completions` endpoint, walking primary -> fallbacks for retryable
+ * failures (402/408/429/5xx/529, quota/rate-limit text, network/timeout, empty assistant content).
+ * 401/403 and other non-retryable provider errors stop immediately: another model will not fix them.
+ */
+export async function callCopilotCompletionWithFallback(
+  e: EffectiveHamraz,
+  opts: CopilotCompletionOptions,
+  fetchImpl: CopilotFetchLike = fetch as any,
+): Promise<CopilotCompletionOutcome> {
+  const models = modelChain(e.model, e.modelFallbacks);
+  const attempts: CopilotAttempt[] = [];
+  const url = `${e.apiUrl}/chat/completions`;
+  const baseBody: Record<string, any> = {
+    messages: opts.messages,
+    ...(opts.withTools === false ? {} : { tools: opts.tools || [], tool_choice: 'auto' }),
+    temperature: opts.temperature ?? 0.2,
+    max_tokens: opts.maxTokens ?? 2000,
+  };
+  let lastEmpty: { completion: any; model: string } | null = null;
+
+  for (const model of models) {
+    let response: CopilotFetchResponse;
+    try {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${e.apiKey}` },
+        body: JSON.stringify({ ...baseBody, model }),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 60000),
+      });
+    } catch (err: any) {
+      const reason = scrub(String(err?.message || err || 'network error'), [e.apiKey]).slice(0, 200);
+      attempts.push({ model, status: null, ok: false, retryable: true, reason });
+      console.warn(`[copilot] model ${model} failed (network); trying next model if available`);
+      continue;
+    }
+
+    if (!response.ok) {
+      const raw = await response.text().catch(() => '');
+      const detail = scrub(providerDetail(raw), [e.apiKey]).slice(0, 300);
+      const retryable = response.status !== 401 && response.status !== 403
+        && (isRetryableStatus(response.status) || mentionsRetryableFailure(raw));
+      attempts.push({ model, status: response.status, ok: false, retryable, reason: detail });
+      if (!retryable) {
+        console.warn(`[copilot] model ${model} failed ${response.status}; not trying another model`);
+        throw new CopilotCompletionError(`Copilot API error ${response.status} (model=${model}): ${detail}`, {
+          status: response.status, model, retryable: false, attempts,
+        });
+      }
+      console.warn(`[copilot] model ${model} failed ${response.status}; trying next model if available`);
+      continue;
+    }
+
+    let completion: any;
+    try {
+      completion = await response.json();
+    } catch (err: any) {
+      const reason = scrub(String(err?.message || err || 'invalid JSON'), [e.apiKey]).slice(0, 200);
+      attempts.push({ model, status: response.status, ok: false, retryable: true, reason });
+      console.warn(`[copilot] model ${model} returned invalid JSON; trying next model if available`);
+      continue;
+    }
+
+    const message = completion?.choices?.[0]?.message;
+    const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+    const content = typeof message?.content === 'string' ? message.content.trim() : '';
+    if (!toolCalls.length && !content) {
+      attempts.push({ model, status: response.status, ok: false, retryable: true, reason: 'empty assistant content' });
+      console.warn(`[copilot] model ${model} returned empty content; trying next model if available`);
+      lastEmpty = { completion, model };
+      continue;
+    }
+
+    attempts.push({ model, status: response.status, ok: true, retryable: false });
+    if (model !== e.model) console.info(`[copilot] using fallback model ${model}`);
+    return { completion, model, attempts };
+  }
+
+  // Empty replies are not thrown here: the chat handler already turns a still-empty reply into a 502 message.
+  if (lastEmpty) return { completion: lastEmpty.completion, model: lastEmpty.model, attempts };
+  const last = attempts[attempts.length - 1];
+  throw new CopilotCompletionError(
+    `Copilot API error: all models failed${last ? ` (${last.model}${last.status ? ` ${last.status}` : ''})` : ''}`,
+    { status: last?.status ?? null, model: last?.model ?? e.model, retryable: true, attempts },
+  );
 }
 
 export type HamrazSettingsDeps = {
