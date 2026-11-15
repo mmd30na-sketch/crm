@@ -29,7 +29,8 @@
     "test:hamraz-settings": "node --import tsx scripts/test-hamraz-settings.mjs",
     "test:payment-tools": "node --import tsx scripts/test-payment-tools.mjs",
     "test:access-levels": "node --import tsx scripts/test-access-levels.mjs",
-    "test:copilot-speaker": "node --import tsx scripts/test-copilot-speaker.mjs"
+    "test:copilot-speaker": "node --import tsx scripts/test-copilot-speaker.mjs",
+    "test:copilot-directus": "node --import tsx tests/copilot-directus.test.ts"
   },
   "dependencies": {
     "@fontsource/vazirmatn": "^5.3.0",
