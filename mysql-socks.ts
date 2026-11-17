@@ -3,6 +3,7 @@ import net from 'net';
 import mysql from 'mysql2/promise';
 import { jalaliToday as tehranJalaliToday, nationalCodeVariants, normalizeNationalCode, cleanText } from './src/utils/normalize';
 import { owedByEnrollment, allocatePayment, payableAmount } from './src/utils/finance';
+import { applyVerifiedSitePaymentsForRegistration, ensureSiteTuitionLedgerSchema, syncVerifiedSiteTuitionPayments } from './siteTuitionLedger';
 
 /**
  * Read at connection time, not at import time: this module is imported before server.ts runs
@@ -844,12 +845,18 @@ export async function approveWebsiteRegistration(input: ApproveRegistrationInput
       [studentId, approvedBy, reg.registration_id]
     );
 
+    const ledger = await applyVerifiedSitePaymentsForRegistration(conn, {
+      trackingCode: String(reg.tracking_code || input.trackingCode || ''),
+      studentId,
+      enrollmentId,
+    });
+
     await conn.commit();
     committed = true;
     result = { studentId, enrollmentId, photos: Boolean(copied.idCard || copied.personal), isNewStudent, student };
     const out = result;
     // The approval is committed: a failing read-back must not turn it into an error for the client.
-    let enrollmentOut: any = { id: enrollmentId, student_id: studentId, course_id: input.courseId, course_number: courseNumber, signup_date_jalali: input.signupDate || jalaliToday(), final_price: finalPrice, amount_paid: 0 };
+    let enrollmentOut: any = { id: enrollmentId, student_id: studentId, course_id: input.courseId, course_number: courseNumber, signup_date_jalali: input.signupDate || jalaliToday(), final_price: finalPrice, amount_paid: ledger.amountPaid };
     let registrationOut: any = { id: reg.registration_id, tracking_code: reg.tracking_code, status: 'approved', student_id: studentId };
     let studentOut: any = { ...student, id: studentId };
     try {
@@ -1080,4 +1087,38 @@ export async function listAudit(opts: { limit?: number; offset?: number; usernam
      FROM crm_audit_log ${w} ORDER BY id DESC LIMIT ${limit} OFFSET ${offset}`, params);
   const [cnt] = await sql<{ n: number }>(`SELECT COUNT(*) AS n FROM crm_audit_log ${w}`, params);
   return { rows, total: Number(cnt?.n || 0) };
+}
+
+
+export async function ensureSiteTuitionLedger(): Promise<void> {
+  if (!mysqlEnabled) return;
+  try {
+    await ensureSiteTuitionLedgerSchema({ sql, sqlExec });
+  } catch (err: any) {
+    console.warn('[site-tuition-ledger] schema ensure failed:', err?.message || err);
+  }
+}
+
+export async function syncSiteTuitionLedger(): Promise<{ applied: number; skipped: number; amountPaid: number }> {
+  if (!mysqlEnabled) return { applied: 0, skipped: 0, amountPaid: 0 };
+  return syncVerifiedSiteTuitionPayments({ sql, sqlExec });
+}
+
+export function startSiteTuitionLedgerSync(intervalMs = 60_000): () => void {
+  let running = false;
+  const tick = async () => {
+    if (running || !mysqlEnabled) return;
+    running = true;
+    try {
+      const r = await syncSiteTuitionLedger();
+      if (r.applied) console.info(`[site-tuition-ledger] synced applied=${r.applied} skipped=${r.skipped}`);
+    } catch (err: any) {
+      console.warn('[site-tuition-ledger] sync failed:', err?.message || err);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(tick, intervalMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
