@@ -4109,7 +4109,7 @@ const COPILOT_SMS_TOOLS = [
 ];
 
 let smsirLastCall = 0;
-/** Read-only GET against sms.ir (key from env, never returned). Spaces calls ~2s apart. */
+/** Read-only sms.ir reports via the official SDK (smsirRead dispatcher; key from env, never returned). Spaces calls ~2s apart. */
 async function smsirGet(path: string): Promise<{ ok: boolean; data?: any; error?: string }> {
   const wait = smsirLastCall + 2000 - Date.now();
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
