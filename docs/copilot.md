@@ -17,8 +17,11 @@
 | `COPILOT_API_URL` | `http://127.0.0.1:20130/v1` روی سرور ایران |
 | `COPILOT_API_KEY` | کلید OmniRoute (همان کلید `openclaw` در sqlite گیت‌وی). در ریپو نیست. |
 | `COPILOT_MODEL` | `cline/poolside/laguna-s-2.1:free` |
+| `COPILOT_MODEL_FALLBACKS` | اختیاری، با کاما: `cline/poolside/laguna-s-2.1:free,cline/nvidia/nemotron-3.5-lightning:free,cline/xiaomi/mimo-v2.6-flash` |
 
 اندپوینت OpenAI-compatible است: `POST /v1/chat/completions`. مدل باید `tool_calls` برگرداند. سه مدل رایگان که این را پاس کردند: `cline/poolside/laguna-s-2.1:free`، `cline/nvidia/nemotron-3.5-lightning:free`، `cline/xiaomi/mimo-v2.6-flash`.
+
+اگر مدل اصلی با خطای موقت روبه‌رو شود، هم‌راز به‌ترتیب مدل‌های جایگزین را روی همان `COPILOT_API_URL` و با همان کلید امتحان می‌کند: `429`، `402`، `408`، `500`، `502`، `503`، `529`، متن پاسخ شامل quota / rate limit / resource exhausted، خطای شبکه/تایم‌اوت، و پاسخ خالی مدل. خطای `401`/`403` (کلید یا آدرس اشتباه) و سایر خطاهای غیرموقت اصلاً مدل عوض نمی‌کنند. مدل اصلی همیشه اول است و فهرست تکراری‌ها حذف می‌شود. پیش‌فرض همین سه مدل است؛ مقدار ذخیره‌شده در تنظیمات بر `.env` و `.env` بر پیش‌فرض اولویت دارد. نام مدل ناموفق/موفق در لاگ می‌آید، ولی کلید و هدر Authorization هرگز لاگ نمی‌شوند.
 
 ## تونل OmniRoute
 
@@ -101,6 +104,7 @@ field: saved > env > default; values are read per request, so saving needs no re
 | API URL | `COPILOT_API_URL` | — |
 | API key (write-only, `api_key_set` only) | `COPILOT_API_KEY` | — |
 | model | `COPILOT_MODEL` | `gpt-4o-mini` |
+| fallback models (comma-separated) | `COPILOT_MODEL_FALLBACKS` | the three free OmniRoute models above |
 | max steps (1..20) | — | 6 |
 | read-only SQL | `COPILOT_SQL_ENABLED=1` | off |
 | `sms_send_direct` allowed | — | on |
@@ -120,5 +124,5 @@ system prompt rule ۶ is rebuilt to match; with the defaults rule ۶ is the orig
 
 - سرور از نشست ورود (نه از بدنهٔ درخواست) نام، نام کاربری، نقش پایه، سطح، دسترسی‌ها و «صاحب کسب‌وکار بودن» را می‌سازد (مدیر کل، یا تطبیق نام/تلفن با «صاحب کسب‌وکار») و بند ۱۱ پرامپت را اضافه می‌کند. هم‌راز کاربر را با نامش صدا می‌زند و ادعای هویت داخل گفتگو را نمی‌پذیرد.
 - تاریخچه: `copilot_conversations[username]` در db_store (حداکثر ۱۰۰ نوبت). `GET /api/copilot/history` و `POST /api/copilot/history/clear` فقط برای خود کاربر؛ ویجت به ازای هر کاربر از نو mount می‌شود.
-- پاسخ خالی مدل یک‌بار تکرار می‌شود و بعد خطای فارسی 502 برمی‌گردد (به‌جای پاسخ خالی).
+- پاسخ خالی مدل باعث رفتن به مدل بعدی می‌شود؛ اگر همهٔ مدل‌ها خالی برگردانند خطای فارسی 502 برمی‌گردد (به‌جای پاسخ خالی).
 - تست: `npm run test:copilot-speaker`.

@@ -45,7 +45,7 @@ import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './z
 import { PERMISSIONS, FULL_ADMIN_ID, ensureAccessLevels, levelForSession, listLevels, permissionsForRequest, missingPermissions, permissionForCopilotTool, validateLevelInput, type AccessLevel } from './accessLevels';
 import { validateOwner, ownerLinks } from './ownerContact';
 import { buildSpeaker, speakerPrompt, appendTurn, turnsFor, clearTurns, type Speaker } from './copilotSpeaker';
-import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, type EffectiveHamraz } from './hamrazSettings';
+import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, callCopilotCompletionWithFallback, type EffectiveHamraz } from './hamrazSettings';
 import { createZarinpalClient, executePaymentAction, isPaymentTool, runPaymentTool, skillsPrompt as paymentSkillsPrompt, toolDefinitions as paymentToolDefinitions, type PaymentAction, type PaymentToolDeps } from './agent/payment_tools';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
 import { registerAutomation, ensureAutomationSchema, createAutomationEngine, type AutomationEngine } from './automation';
@@ -4896,26 +4896,8 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
 }
 
 async function callCopilotCompletion(messages: any[], withTools = true, tools: any[] = COPILOT_TOOLS, h: EffectiveHamraz = hamraz()) {
-  const response = await fetch(`${h.apiUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${h.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: h.model,
-      messages,
-      ...(withTools ? { tools, tool_choice: 'auto' } : {}),
-      temperature: 0.2,
-      max_tokens: 2000,
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`Copilot API error ${response.status}: ${scrubSecret(detail, [h.apiKey]).slice(0, 300)}`);
-  }
-  return response.json() as Promise<any>;
+  const { completion } = await callCopilotCompletionWithFallback(h, { messages, withTools, tools });
+  return completion;
 }
 
 // Settings → تنظیمات هم‌راز (hamrazSettings.ts): admin-only, API key write-only, read at request time.
@@ -4978,8 +4960,6 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
     try { const db = readDb(); appendTurn(db as any, ctx.username, { at: new Date().toISOString(), q: lastQuestion, a, tools: usedTools, ok }); writeDb(db); }
     catch (e: any) { console.warn('[copilot] history write failed:', e?.message || e); }
   };
-  let emptyRetries = 0;
-
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   const pendingConfirmations: Array<{ pending_id: string; preview: string }> = [];
   try {
@@ -4995,10 +4975,8 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
       if (!toolCalls.length) {
         const reply = String(message.content || '').trim();
         if (!reply) {
-          // Seen live: the model router fell back to a model that returned empty content. Retry once, then say so.
-          console.warn(`[copilot] empty reply (model=${String(completion?.model || hz.model || '').slice(0, 60)}, try=${emptyRetries + 1})`);
-          messages.pop();
-          if (emptyRetries++ < 1) continue;
+          // callCopilotCompletionWithFallback already advanced through every model on empty content.
+          console.warn(`[copilot] empty reply (model=${String(completion?.model || hz.model || '').slice(0, 60)})`);
           const msg = 'سرویس هوش مصنوعی پاسخ خالی برگرداند (احتمالاً سهمیهٔ مدل تمام شده)؛ چند دقیقه بعد دوباره بپرسید یا مدل را در «تنظیمات هم‌راز» عوض کنید.';
           logTurn(msg, false);
           return res.status(502).json({ error: msg, pendingConfirmations });

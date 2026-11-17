@@ -27,6 +27,7 @@
     "test:field-policy": "node --import tsx scripts/test-field-policy.mjs",
     "test:zarinpal-settings": "node --import tsx scripts/test-zarinpal-settings.mjs",
     "test:hamraz-settings": "node --import tsx scripts/test-hamraz-settings.mjs",
+    "test:copilot-model-fallback": "node --import tsx scripts/test-copilot-model-fallback.mjs",
     "test:payment-tools": "node --import tsx scripts/test-payment-tools.mjs",
     "test:access-levels": "node --import tsx scripts/test-access-levels.mjs",
     "test:copilot-speaker": "node --import tsx scripts/test-copilot-speaker.mjs"
