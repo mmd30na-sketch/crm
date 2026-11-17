@@ -54,6 +54,7 @@ import type { AutomationEvent, EventContext } from './automationConditions';
 import { registerTraineePortal, ensurePortalEntrySchema, mintPortalEntry } from './traineePortal';
 import { registerBranches, ensureBranchSchema, branchMiddleware, startBranchReconcileJob, branchSmsLine } from './branches';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
+import { DEFAULT_GEMINI_OCR_MODELS, ocrWithGeminiClients, ocrWithOpenAiVision, resolveVisionEndpoint, visionModelsFromEnv } from './ocrProviders';
 import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
 import { registerInvoices, ensureInvoicesSchema } from './invoices';
@@ -2979,41 +2980,36 @@ const OCR_FOCUSED_PROMPT = `در این تصویر کارت ملی هوشمند 
 /** One Gemini read of the card. `pass` picks the prompt; the focused pass tries the stronger model first. */
 async function ocrWithGemini(fileBuffer: Buffer, mimeType: string, pass: 'full' | 'focused' = 'full', deadlineMs = Infinity): Promise<Record<string, any> | null> {
   if (!ai) return null;
-  const models = [...new Set([...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), 'gemini-2.5-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'])];
+  const models = [...new Set([...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []), ...DEFAULT_GEMINI_OCR_MODELS])];
   const prompt = pass === 'focused' ? OCR_FOCUSED_PROMPT : OCR_FIELDS_PROMPT;
-  for (let k = 0; k < geminiClients.length; k++) {
-    if (Date.now() < geminiCooldownUntil[k]) continue;
-    for (const model of models) {
-      if (Date.now() > deadlineMs) return null;
-      try {
-        const response = await geminiClients[k].models.generateContent({
-          model,
-          contents: [
-            { inlineData: { data: fileBuffer.toString('base64'), mimeType } },
-            { text: prompt },
-          ],
-          config: { responseMimeType: 'application/json', temperature: 0 },
-        });
-        const responseText = response.text || '';
-        const jsonStart = responseText.indexOf('{');
-        const jsonEnd = responseText.lastIndexOf('}');
-        if (jsonStart === -1 || jsonEnd === -1) continue;
-        const parsed = JSON.parse(responseText.slice(jsonStart, jsonEnd + 1));
-        parsed.provider = `gemini:${model}`;
-        return parsed;
-      } catch (err: any) {
-        const msg = String(err?.message || err);
-        console.warn('Gemini OCR failed', `key#${k + 1}`, model, msg.slice(0, 160));
-        // Quota / invalid key: park this key for a while and try the next one.
-        if (/429|RESOURCE_EXHAUSTED|quota|API key|\b(401|403)\b/i.test(msg)) {
-          geminiCooldownUntil[k] = Date.now() + 10 * 60 * 1000;
-          break;
-        }
-      }
-    }
-  }
-  return null;
+  return ocrWithGeminiClients({
+    clients: geminiClients,
+    cooldownUntil: geminiCooldownUntil,
+    models,
+    prompt,
+    fileBuffer,
+    mimeType,
+    deadlineMs,
+    log: console.warn,
+  });
 }
+
+/** OpenAI-compatible vision fallback (OCR_VISION_* or COPILOT_API_*). Used after Gemini fails. */
+async function ocrWithFreeVision(fileBuffer: Buffer, mimeType: string, pass: 'full' | 'focused' = 'full', deadlineMs = Infinity): Promise<Record<string, any> | null> {
+  const endpoint = resolveVisionEndpoint();
+  if (!endpoint) return null;
+  const prompt = pass === 'focused' ? OCR_FOCUSED_PROMPT : OCR_FIELDS_PROMPT;
+  return ocrWithOpenAiVision({
+    ...endpoint,
+    models: visionModelsFromEnv(),
+    prompt,
+    fileBuffer,
+    mimeType,
+    deadlineMs,
+    log: console.warn,
+  });
+}
+
 
 app.get('/api/ocr/status', async (_req, res) => {
   const vision = !!(process.env.GCP_CLIENT_ID && process.env.GCP_REFRESH_TOKEN && process.env.GCP_PROJECT_ID);
@@ -3046,7 +3042,7 @@ app.post('/api/ocr', upload.fields([{ name: 'card', maxCount: 1 }, { name: 'nati
   try {
     const mime = uploaded.mimetype || 'image/jpeg';
     const result = await runCardOcr({
-      gemini: (pass, deadline) => ocrWithGemini(fileBuffer, mime, pass, deadline),
+      gemini: async (pass, deadline) => (await ocrWithGemini(fileBuffer, mime, pass, deadline)) || (await ocrWithFreeVision(fileBuffer, mime, pass, Infinity)),
       vision: () => ocrWithCloudVision(fileBuffer),
       today: jalaliNow(),
     });
