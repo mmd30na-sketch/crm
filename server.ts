@@ -971,6 +971,8 @@ app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/trainee-payments')) return next();
   // Trainee portal (PWA) routes: public OTP login + views guarded by the same signed trainee token.
   if (req.path.startsWith('/trainee-portal')) return next();
+  // Internal ledger nudge authenticates with X-Internal-Ledger-Secret + loopback peer (not a staff session).
+  if (req.path === '/internal/site-tuition-ledger') return next();
   if (req.path === '/health') return next();
   // The theme (and with it the login logo) is read by the public login screen, so it needs no session.
   if (req.path === '/settings/theme' && req.method === 'GET') return next();
@@ -984,7 +986,7 @@ app.use('/api', (req, res, next) => {
 
 app.use('/api', (req, res, next) => {
   if (isPublicApiPath(req.path)) return next();
-  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/email/unsubscribe' || req.method === 'OPTIONS') return next();
+  if (req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/internal/site-tuition-ledger' || req.path === '/health' || (req.path === '/settings/theme' && req.method === 'GET') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest' || req.path === '/email/unsubscribe' || req.method === 'OPTIONS') return next();
   const role = currentRole(req);
   if (!role) return res.status(401).json({ error: 'Unauthorized' });
   if (!canAccessApi(role, req.method, req.path)) return res.status(403).json({ error: 'Forbidden' });
@@ -1018,7 +1020,7 @@ const fieldPolicy = registerFieldPolicy(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
   log: (msg) => console.warn(`[field-policy] ${msg}`),
-  skip: (req) => req.method === 'OPTIONS' || req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/health'
+  skip: (req) => req.method === 'OPTIONS' || req.path.startsWith('/auth') || req.path.startsWith('/trainee-payments') || req.path.startsWith('/trainee-portal') || req.path === '/internal/site-tuition-ledger' || req.path === '/health'
     || req.path.startsWith('/settings/theme') || req.path === '/messenger/webhook' || req.path === '/messenger/account-ingest'
     || req.path.startsWith('/settings/field-policy') || req.path.startsWith('/settings/field-access-log') || req.path === '/email/unsubscribe' || req.path.startsWith('/v1/'),
 });
@@ -5305,7 +5307,7 @@ function portalEntryBase(req: express.Request) {
   if (host === 'kermanshahcart.ir' || host === 'www.kermanshahcart.ir') return 'https://management.kermanshahcart.ir';
   return publicBaseFromRequest(req).replace(/\/$/, '');
 }
-registerOnlinePayments(app, {
+const onlinePaymentsApi = registerOnlinePayments(app, {
   readJsonDb: () => readDb(),
   writeJsonDb: (store) => writeDb(store),
   session: (req) => { const s = sessionFromRequest(req); return s ? { username: String(s.username || ''), role: String(s.role || '') } : null; },
@@ -5324,6 +5326,29 @@ registerOnlinePayments(app, {
   debtLinks: debtLinkStore,
   log: (msg) => console.warn(`[online-payments] ${msg}`),
 });
+
+// ── Internal ledger nudge (one-liner for ops; not part of the public API docs) ────────────────────────
+// POST /api/internal/site-tuition-ledger lets the site (http://127.0.0.1:3001) trigger the existing
+// idempotent syncVerifiedSiteTuitionPayments pass. Auth = X-Internal-Ledger-Secret (INTERNAL_LEDGER_SECRET,
+// constant-time compare) + loopback peer only; disabled (503) when the env is empty. Body {authority?,
+// tracking_code?} is accepted but never logged in full; only counts are logged. No SMS, no new money logic.
+app.post('/api/internal/site-tuition-ledger', asyncHandler(async (req, res) => {
+  const secret = String(process.env.INTERNAL_LEDGER_SECRET || '');
+  if (!secret) return res.status(503).json({ error: 'Internal ledger endpoint is not configured.' });
+  const ip = String(req.socket.remoteAddress || '');
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip) || req.headers['x-forwarded-for']) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const given = Buffer.from(String(req.headers['x-internal-ledger-secret'] || ''));
+  const expected = Buffer.from(secret);
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const bodyKeys = Object.keys(req.body || {}).length; // authority/tracking_code values are never logged
+  const r = await chabokan.syncSiteTuitionLedger();
+  console.warn(`[internal-ledger] sync applied=${r.applied} skipped=${r.skipped} body_keys=${bodyKeys}`);
+  res.json({ ok: true, applied: r.applied, skipped: r.skipped });
+}));
 
 // Trainee portal PWA (traineePortal.ts): OTP login (flag-gated SMS), my lessons, installments, enrollment status.
 // Payment reuses /api/trainee-payments/zarinpal/request with the same trainee token.
@@ -5613,13 +5638,15 @@ async function startServer() {
   } catch (err: any) {
     console.warn('[site-tuition-ledger] startup sync failed:', err?.message || err);
   }
-  chabokan.startSiteTuitionLedgerSync();
+  // No 60s ledger polling: the internal ledger endpoint and the 3-hour unverified sweep (below) keep it current.
   await ensurePhase4Schema();
   await ensureLeadPipelineSchema();
   await ensureCourseTermsSchema();
   await ensureThemeSettingsSchema();
   await ensureInstructorPaySchema();
   await ensureOnlinePaymentsSchema();
+  // Missed-payment sweep: SDK unverified.list() every 3h, only pending -> paid for local rows (no SMS).
+  onlinePaymentsApi.startUnverifiedSweep();
   await ensureInstallmentsSchema();
   await ensureDebtSmsSchema();
   await ensurePortalEntrySchema();

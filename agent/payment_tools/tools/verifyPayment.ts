@@ -1,6 +1,5 @@
 import type { PaymentTool } from './types';
 import { maskCard, num, str } from './util';
-import { toGatewayAmount } from '../../../zarinpal';
 
 export const zarinpalVerifyPayment: PaymentTool = {
   name: 'zarinpal_verify_payment',
@@ -17,7 +16,8 @@ export const zarinpalVerifyPayment: PaymentTool = {
     const toman = num(a?.amount_toman);
     if (!/^[A-Za-z0-9]{10,64}$/.test(authority) || !(toman > 0)) return { error: 'authority یا مبلغ نامعتبر است.' };
     const cfg = deps.client.config();
-    const d = await deps.client.verify(authority, toGatewayAmount(toman, { merchantId: '', sandbox: cfg.sandbox, currency: cfg.currency }));
+    // The client converts Toman to the gateway unit (IRR *10 / IRT as-is) inside the SDK wrapper.
+    const d = await deps.client.verify(authority, toman);
     const code = Number(d?.code);
     return { ok: code === 100 || code === 101, code, already_verified: code === 101, ref_id: d?.ref_id != null ? String(d.ref_id) : null, card: maskCard(d?.card_pan) || null, fee_type: d?.fee_type || null, sandbox: cfg.sandbox };
   },

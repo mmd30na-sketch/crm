@@ -7,7 +7,7 @@
  * Precedence for every field: saved value (non-empty) > env var > built-in default. With nothing saved the
  * behavior is exactly the env-based one that runs today:
  *   merchant id     ZARINPAL_MERCHANT_ID   (legacy gateways.zarinpal_merchant_id stays the last fallback)
- *   sandbox         ZARINPAL_SANDBOX       (anything but '0' = sandbox, as before)
+ *   sandbox         ZARINPAL_SANDBOX       (sandbox ONLY for '1'/'true'; '0', unset or anything else = production)
  *   currency        ZARINPAL_CURRENCY      (IRR default)
  *   public base     PUBLIC_BASE_URL        (else the request host)
  *   payment link    CRM_PAYMENT_LINK_BASE  (else debtSms.ts default)
@@ -18,6 +18,7 @@
  */
 import type express from 'express';
 import type { ZarinpalConfig } from './zarinpal';
+import { sandboxFromEnv, minGatewayAmount, feeCalculation } from './zarinpal';
 
 export type Source = 'saved' | 'env' | 'default';
 
@@ -76,7 +77,9 @@ export function resolveZarinpal(gateways: any, env: NodeJS.ProcessEnv = process.
   const [merchantEnv, mSrc] = pick(s.merchant_id, env.ZARINPAL_MERCHANT_ID, str(g.zarinpal_merchant_id));
   const sandbox: [boolean, Source] = typeof s.sandbox === 'boolean'
     ? [s.sandbox, 'saved']
-    : env.ZARINPAL_SANDBOX !== undefined && env.ZARINPAL_SANDBOX !== '' ? [String(env.ZARINPAL_SANDBOX) !== '0', 'env'] : [true, 'default'];
+    : env.ZARINPAL_SANDBOX !== undefined && env.ZARINPAL_SANDBOX !== ''
+      ? [sandboxFromEnv(String(env.ZARINPAL_SANDBOX)), 'env']
+      : [false, 'default'];
   const [cur, cSrc] = pick(s.currency, env.ZARINPAL_CURRENCY, 'IRR');
   const [pub, pSrc] = pick(s.public_base_url, env.PUBLIC_BASE_URL, '');
   const [link, lSrc] = pick(s.payment_link_base, env.CRM_PAYMENT_LINK_BASE, '');
@@ -284,7 +287,32 @@ export function registerZarinpalSettings(app: express.Express, deps: ZarinpalSet
         api = { ok: false, message: `اتصال ناموفق: ${String(err?.message || '').slice(0, 120)}` };
       }
     }
-    res.json({ merchant, api, settings: publicZarinpal(e) });
+    // Lightweight gateway check through the official SDK: feeCalculation computes the fee WITHOUT
+    // creating a payment. The amount is the CRM minimum in the effective currency's unit.
+    let gateway: { ok: boolean; skipped?: boolean; message: string; fee?: number | null } = { ok: false, skipped: true, message: 'بررسی درگاه انجام نشد.' };
+    if (isMerchantUuid(e.merchantId)) {
+      try {
+        const cfg = toZarinpalConfig(e);
+        const r = await feeCalculation(cfg, minGatewayAmount(cfg));
+        gateway = r.fee != null
+          ? { ok: true, message: 'اتصال به درگاه زرین‌پال برقرار است.', fee: r.fee }
+          : { ok: true, message: 'اتصال به درگاه زرین‌پال برقرار است.' };
+      } catch (err: any) {
+        log(`zarinpal gateway test failed: ${err?.message}`);
+        gateway = { ok: false, message: `اتصال ناموفق: ${String(err?.message || '').slice(0, 160)}` };
+      }
+    } else {
+      gateway = { ok: false, skipped: true, message: 'کد مرچنت معتبر نیست؛ بررسی درگاه انجام نشد.' };
+    }
+    // No merchant id or access token is ever returned here.
+    res.json({
+      merchant,
+      api,
+      gateway,
+      callback_base: e.publicBaseUrl,
+      callback_path: '/api/trainee-payments/zarinpal/callback',
+      settings: publicZarinpal(e),
+    });
   });
 
   /** Read-only sync: terminals + every session (all statuses, fully paged). Nothing is written. */

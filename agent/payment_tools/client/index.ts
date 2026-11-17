@@ -1,12 +1,16 @@
 /**
  * Thin Zarinpal client for Ham-Raz payment tools.
- * - REST v4 (request/verify/inquiry/unVerified/reverse) on payment.zarinpal.com, or sandbox.zarinpal.com when
- *   the effective setting (Settings → درگاه پرداخت, env fallback) says sandbox.
+ * - REST v4 actions (inquiry / unVerified / verify / reverse) go through the official
+ *   `zarinpal-node-sdk` wrapper in zarinpal.ts (currency, metadata, timeout and error parsing live there).
+ *   No hand-rolled POST to payment.zarinpal.com.
  * - GraphQL (next.zarinpal.com) through zarinpalQuery(), which rejects anything but `query`.
  *   The single mutation (AddRefund) has its own function that only the confirmed-action executor calls.
- * Token: leading "Bearer " and whitespace are stripped. All calls time out. Secrets never appear in results.
+ * - `rest` (the REST transport) is injectable for tests: the default builds on the SDK wrapper, tests
+ *   pass a fake so nothing touches the network.
+ * Token: leading "Bearer " and whitespace are stripped. Secrets never appear in results.
  */
-import { resolveZarinpal, normalizeAccessToken, zarinpalQuery, ZARINPAL_GRAPHQL_URL, type EffectiveZarinpal } from '../../../zarinpalSettings';
+import { resolveZarinpal, normalizeAccessToken, zarinpalQuery, ZARINPAL_GRAPHQL_URL, toZarinpalConfig, type EffectiveZarinpal } from '../../../zarinpalSettings';
+import { inquiry as sdkInquiry, unverifiedList as sdkUnverifiedList, verifyPayment as sdkVerifyPayment, reverse as sdkReverse } from '../../../zarinpal';
 import { explainError } from './errors';
 
 export type FetchLike = (url: string, init: any) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
@@ -29,29 +33,56 @@ export function extractCode(body: any): number | null {
   return Number.isFinite(c) ? c : null;
 }
 
-export function createZarinpalClient(getCfg: () => EffectiveZarinpal = () => resolveZarinpal({}), fetchImpl: FetchLike = fetch as any) {
-  async function rest(path: string, payload: Record<string, unknown>): Promise<any> {
-    const cfg = getCfg();
-    if (!cfg.merchantId) throw new ZpError('شناسه پذیرنده زرین‌پال تنظیم نشده است.', -9, 503);
-    const r = await fetchImpl(`${restHost(cfg.sandbox)}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({ merchant_id: cfg.merchantId, ...payload }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    let body: any = null;
-    try { body = await r.json(); } catch { /* non-JSON */ }
-    const code = extractCode(body);
-    if (!r.ok || (code !== null && code !== 100 && code !== 101)) {
-      const info = explainError(code);
-      throw new ZpError(info ? `${info.fa} (کد ${code})` : `خطای زرین‌پال (HTTP ${r.status}${code !== null ? `، کد ${code}` : ''})`, code);
+/** The SDK-backed REST actions this client uses (injectable for tests). */
+export type ZarinpalRestAction = 'inquiry' | 'unverified' | 'verify' | 'reverse';
+export type ZarinpalRest = (action: ZarinpalRestAction, payload: any) => Promise<any>;
+
+/** Default transport: the official-SDK wrapper in zarinpal.ts. */
+function sdkRest(getCfg: () => EffectiveZarinpal): ZarinpalRest {
+  return async (action, payload) => {
+    const cfg = toZarinpalConfig(getCfg());
+    if (!cfg.merchantId) throw Object.assign(new Error('شناسه پذیرنده زرین‌پال تنظیم نشده است.'), { code: -9, status: 503 });
+    switch (action) {
+      case 'inquiry': return sdkInquiry(cfg, String(payload?.authority || ''));
+      case 'unverified': return sdkUnverifiedList(cfg);
+      case 'verify': {
+        // The wrapper converts Toman -> the gateway unit; map back to the REST-style data shape.
+        const r = await sdkVerifyPayment(cfg, { amountToman: Number(payload?.amount_toman) || 0, authority: String(payload?.authority || '') });
+        return { code: r.code, ok: r.ok, message: r.message, ref_id: r.refId, card_pan: r.cardPan, card_hash: r.cardHash, fee: r.fee, fee_type: r.feeType };
+      }
+      case 'reverse': return sdkReverse(cfg, String(payload?.authority || ''));
     }
-    return body?.data ?? {};
+  };
+}
+
+/** Normalizes a wrapper/transport failure into a ZpError with the official code + Persian message. */
+function toZpError(e: any, fallback: string): ZpError {
+  const code = e && typeof e.code === 'number' ? e.code : extractCode(e?.body ?? null);
+  const info = explainError(code);
+  const message = info ? `${info.fa} (کد ${code})` : String(e?.message || fallback);
+  return new ZpError(message, code, Number(e?.status) || 502);
+}
+
+export function createZarinpalClient(
+  getCfg: () => EffectiveZarinpal = () => resolveZarinpal({}),
+  fetchImpl: FetchLike = fetch as any,
+  rest?: ZarinpalRest,
+) {
+  const restCaller: ZarinpalRest = rest || sdkRest(getCfg);
+
+  /** inquiry / unverified / verify / reverse via the SDK wrapper; errors become ZpError (code + Persian). */
+  async function restCall(action: ZarinpalRestAction, payload: Record<string, unknown> = {}): Promise<any> {
+    try {
+      return await restCaller(action, payload);
+    } catch (e: any) {
+      throw toZpError(e, 'خطای زرین‌پال');
+    }
   }
+
   const token = () => normalizeAccessToken(getCfg().accessToken);
   const query = (q: string, variables: Record<string, unknown> = {}) => zarinpalQuery(token(), q, variables, fetchImpl as any);
 
-  /** Only used by the refund executor after an admin «تأیید». */
+  /** Only used by the refund executor after an admin «تأیید». Sandbox still blocks real refunds. */
   async function mutationAddRefund(v: { session_id: string; amount: number; description?: string }): Promise<any> {
     const t = token();
     if (!t) throw new ZpError('توکن دسترسی زرین‌پال تنظیم نشده است.', null, 400);
@@ -72,12 +103,13 @@ export function createZarinpalClient(getCfg: () => EffectiveZarinpal = () => res
 
   return {
     config: getCfg,
-    rest,
+    rest: restCall,
     query,
-    inquiry: (authority: string) => rest('/pg/v4/payment/inquiry.json', { authority }),
-    unverified: () => rest('/pg/v4/payment/unVerified.json', {}),
-    verify: (authority: string, amount: number) => rest('/pg/v4/payment/verify.json', { authority, amount }),
-    reverse: (authority: string) => rest('/pg/v4/payment/reverse.json', { authority }),
+    inquiry: (authority: string) => restCall('inquiry', { authority }),
+    unverified: () => restCall('unverified'),
+    /** verify: the wrapper converts Toman -> the gateway unit (same as the original request). */
+    verify: (authority: string, amountToman: number) => restCall('verify', { authority, amount_toman: amountToman }),
+    reverse: (authority: string) => restCall('reverse', { authority }),
     mutationAddRefund,
   };
 }
