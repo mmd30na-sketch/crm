@@ -5605,6 +5605,15 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Vite Integration middleware & SPA fallback
 async function startServer() {
   await chabokan.initMysql();
+  // Repair verified site tuition into the money ledger before any debt/automation jobs start.
+  await chabokan.ensureSiteTuitionLedger();
+  try {
+    const ledger = await chabokan.syncSiteTuitionLedger();
+    if (ledger.applied) console.info(`[site-tuition-ledger] startup applied=${ledger.applied} skipped=${ledger.skipped}`);
+  } catch (err: any) {
+    console.warn('[site-tuition-ledger] startup sync failed:', err?.message || err);
+  }
+  chabokan.startSiteTuitionLedgerSync();
   await ensurePhase4Schema();
   await ensureLeadPipelineSchema();
   await ensureCourseTermsSchema();
