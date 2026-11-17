@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import {
   normalizeCopilotText, normalizePhoneDigits, maskMobile, maskNationalId,
-  maskPiiForModel, studentSearchPlan, studentMatchesPlan,
+  maskPiiForModel, studentSearchPlan, studentSearchWhere, studentMatchesPlan,
 } from '../copilotPii.ts';
 
 let n = 0;
@@ -67,13 +67,41 @@ t('studentSearchPlan splits full names and accepts Persian-digit phone / nationa
   assert.equal(plan.national, '');
   assert.equal(plan.phone, '');
   assert.equal(plan.phone10, '');
+  assert.equal(plan.kind, 'name');
 
   const phonePlan = studentSearchPlan('۰۹۱۲۳۴۵۶۷۸۹');
   assert.equal(phonePlan.phone, '09123456789');
   assert.equal(phonePlan.phone10, '9123456789');
+  assert.equal(phonePlan.kind, 'phone');
+  assert.equal(studentSearchPlan('+989123456789').kind, 'phone');
+  assert.equal(studentSearchPlan('09123456789').kind, 'phone');
 
   const nationalPlan = studentSearchPlan('1234567890');
   assert.equal(nationalPlan.national, '1234567890');
+  assert.equal(nationalPlan.kind, 'national');
+  assert.equal(studentSearchPlan('۱۲۳۴۵۶۷۸۹۰').kind, 'national');
+  // 10 digits starting with 9 are treated as a national code, not a mobile missing a leading 0
+  const tenNine = studentSearchPlan('9123456789');
+  assert.equal(tenNine.kind, 'national');
+  assert.equal(tenNine.national, '9123456789');
+});
+
+t('studentSearchWhere uses equality only for national/phone and LIKE only for names', () => {
+  const nat = studentSearchWhere(studentSearchPlan('1234567890'));
+  assert.equal(nat.where.length, 1);
+  assert.match(nat.where[0], /s\.national_code IN \(/);
+  assert.ok(nat.params.includes('1234567890'));
+  assert.ok(nat.where.every((w) => !/LIKE/.test(w)));
+
+  const phone = studentSearchWhere(studentSearchPlan('09123456789'));
+  assert.equal(phone.where.length, 1);
+  assert.match(phone.where[0], /s\.phone_number IN \(/);
+  assert.ok(phone.params.includes('09123456789'));
+  assert.ok(phone.where.every((w) => !/LIKE/.test(w)));
+
+  const name = studentSearchWhere(studentSearchPlan('سس ییی'));
+  assert.ok(name.where.some((w) => w.includes('CONCAT') && w.includes('LIKE')));
+  assert.ok(name.where.every((w) => !/national_code|phone_number/.test(w)));
 });
 
 t('studentMatchesPlan matches full name and word-by-word, including Arabic ي', () => {
@@ -91,6 +119,15 @@ t('studentMatchesPlan matches full name and word-by-word, including Arabic ي', 
     { first_name: 'علی', last_name: 'محمدی', phone_number: '09123456789' },
     studentSearchPlan('09123456789'),
   ), true);
+  assert.equal(studentMatchesPlan(
+    { first_name: 'علی', last_name: 'محمدی', national_code: '1234567890' },
+    studentSearchPlan('1234567890'),
+  ), true);
+  // numeric queries must not fall back to name LIKE
+  assert.equal(studentMatchesPlan(
+    { first_name: '1234567890', last_name: 'x' },
+    studentSearchPlan('1234567890'),
+  ), false);
 });
 
 console.log(`\n${n} copilot-pii tests passed`);

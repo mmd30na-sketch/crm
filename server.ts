@@ -45,7 +45,7 @@ import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './z
 import { PERMISSIONS, FULL_ADMIN_ID, ensureAccessLevels, levelForSession, listLevels, permissionsForRequest, missingPermissions, permissionForCopilotTool, validateLevelInput, type AccessLevel } from './accessLevels';
 import { validateOwner, ownerLinks } from './ownerContact';
 import { buildSpeaker, speakerPrompt, appendTurn, turnsFor, clearTurns, type Speaker } from './copilotSpeaker';
-import { maskPiiForModel, studentSearchPlan, phoneDigitVariants } from './copilotPii';
+import { maskPiiForModel, studentSearchPlan, studentSearchWhere } from './copilotPii';
 import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, callCopilotCompletionWithFallback, type EffectiveHamraz } from './hamrazSettings';
 import { createZarinpalClient, executePaymentAction, isPaymentTool, runPaymentTool, skillsPrompt as paymentSkillsPrompt, toolDefinitions as paymentToolDefinitions, type PaymentAction, type PaymentToolDeps } from './agent/payment_tools';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
@@ -56,7 +56,7 @@ import { registerTraineePortal, ensurePortalEntrySchema, mintPortalEntry } from 
 import { registerBranches, ensureBranchSchema, branchMiddleware, startBranchReconcileJob, branchSmsLine } from './branches';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { DEFAULT_GEMINI_OCR_MODELS, ocrWithGeminiClients, ocrWithOpenAiVision, resolveVisionEndpoint, visionModelsFromEnv } from './ocrProviders';
-import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText, nationalCodeVariants } from './src/utils/normalize';
+import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
 import { registerInvoices, ensureInvoicesSchema } from './invoices';
 import { registerFinanceReports, ensureFinanceSchema } from './financeReports';
@@ -4786,31 +4786,7 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
     const q = String(a.query || '').trim();
     if (!q) return { error: 'عبارت جستجو خالی است.' };
     const plan = studentSearchPlan(q);
-    const where: string[] = [];
-    const params: any[] = [];
-    if (plan.nameNorm) {
-      where.push(`REPLACE(REPLACE(TRIM(CONCAT(IFNULL(s.first_name,''),' ',IFNULL(s.last_name,''))),'ي','ی'),'ك','ک') LIKE ?`);
-      params.push(`%${plan.nameNorm}%`);
-    }
-    for (const token of plan.tokens) {
-      where.push(`REPLACE(REPLACE(IFNULL(s.first_name,''),'ي','ی'),'ك','ک') LIKE ?`);
-      where.push(`REPLACE(REPLACE(IFNULL(s.last_name,''),'ي','ی'),'ك','ک') LIKE ?`);
-      params.push(`%${token}%`, `%${token}%`);
-    }
-    if (plan.national.length === 10) {
-      const vars = nationalCodeVariants(plan.national);
-      where.push(`s.national_code IN (${vars.map(() => '?').join(',')})`);
-      params.push(...vars);
-    }
-    if (plan.phone) {
-      const vars = phoneDigitVariants(plan.phone);
-      where.push(`s.phone_number IN (${vars.map(() => '?').join(',')})`);
-      params.push(...vars);
-    }
-    if (plan.phone10) {
-      const vars = phoneDigitVariants(plan.phone10);
-      for (const v of vars) { where.push('s.phone_number LIKE ?'); params.push(`%${v}`); }
-    }
+    const { where, params } = studentSearchWhere(plan);
     if (!where.length) return { query: q, count: 0, students: [] };
     const rows = await chabokan.sql<any>(
       `SELECT s.student_id AS id, s.first_name, s.last_name, s.national_code, s.phone_number,
