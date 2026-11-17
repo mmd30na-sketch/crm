@@ -49,4 +49,13 @@ t('per-user history stays separate and capped', () => {
   S.clearTurns(st, 'ali'); assert.deepEqual(S.turnsFor(st, 'ali'), []); assert.equal(S.turnsFor(st, 'admin').length, 1);
 });
 
+t('appendTurn stores model and request time', () => {
+  const st = {};
+  S.appendTurn(st, 'admin', { at: '2026-11-17T18:00:00.000Z', q: 'q', a: 'a', ok: true, model: 'nvidia/nemotron-3-ultra-550b-a55b', ms: 1234 });
+  const turn = S.turnsFor(st, 'admin')[0];
+  assert.equal(turn.model, 'nvidia/nemotron-3-ultra-550b-a55b');
+  assert.equal(turn.ms, 1234);
+  assert.equal(turn.at, '2026-11-17T18:00:00.000Z');
+});
+
 console.log(`\n${n} copilot-speaker tests passed`);

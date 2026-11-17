@@ -45,6 +45,7 @@ import { registerZarinpalSettings, resolveZarinpal, toZarinpalConfig } from './z
 import { PERMISSIONS, FULL_ADMIN_ID, ensureAccessLevels, levelForSession, listLevels, permissionsForRequest, missingPermissions, permissionForCopilotTool, validateLevelInput, type AccessLevel } from './accessLevels';
 import { validateOwner, ownerLinks } from './ownerContact';
 import { buildSpeaker, speakerPrompt, appendTurn, turnsFor, clearTurns, type Speaker } from './copilotSpeaker';
+import { maskPiiForModel, studentSearchPlan, phoneDigitVariants } from './copilotPii';
 import { registerHamrazSettings, resolveHamraz, scrub as scrubSecret, callCopilotCompletionWithFallback, type EffectiveHamraz } from './hamrazSettings';
 import { createZarinpalClient, executePaymentAction, isPaymentTool, runPaymentTool, skillsPrompt as paymentSkillsPrompt, toolDefinitions as paymentToolDefinitions, type PaymentAction, type PaymentToolDeps } from './agent/payment_tools';
 import { registerLessonCalendar, ensureLessonCalendarSchema, startLessonReminderJob } from './lessonCalendar';
@@ -55,7 +56,7 @@ import { registerTraineePortal, ensurePortalEntrySchema, mintPortalEntry } from 
 import { registerBranches, ensureBranchSchema, branchMiddleware, startBranchReconcileJob, branchSmsLine } from './branches';
 import { IranIdOcr, toLatinDigits as ocrLatinDigits, isValidNationalCode, runCardOcr } from './ocrValidate';
 import { DEFAULT_GEMINI_OCR_MODELS, ocrWithGeminiClients, ocrWithOpenAiVision, resolveVisionEndpoint, visionModelsFromEnv } from './ocrProviders';
-import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText } from './src/utils/normalize';
+import { normalizeJalaliDate as strictJalaliDate, jalaliToday as tehranJalaliToday, normalizeNationalCode, checkNationalCode, cleanText, nationalCodeVariants } from './src/utils/normalize';
 import { safeSegment, registrationPdfRelPath, parseDocKind, isPdfBytes, DOC_PATH_FIELDS, DOC_KINDS, type DocKind } from './src/utils/printDocs';
 import { registerInvoices, ensureInvoicesSchema } from './invoices';
 import { registerFinanceReports, ensureFinanceSchema } from './financeReports';
@@ -3665,6 +3666,7 @@ const copilotSystemPrompt = (tools: any[] = COPILOT_TOOLS) => [
   `شما «دستیار هوشمند»${academyDisplayName() ? ` ${academyDisplayName()}` : ' آموزشگاه'} هستید؛ دستیار عمومی CRM آموزشگاه، فارسی‌زبان، دقیق و حرفه‌ای، برای امور مالی، هنرجویان و فراگیران، سرنخ‌ها، کلاس‌ها و دوره‌ها، کارهای کارکنان، پیام‌رسان، ثبت‌نام‌های سایت و آمار بازدید سایت. مخاطبین این مرکز عموماً رانندگان و مدیران حمل‌ونقل هستند و دوره‌ها آموزش کارت هوشمند است، نه آموزش رانندگی.`,
   'قوانین کار:',
   '۱) برای هر عدد، آمار، موجودی، بدهی یا گردش مالی حتماً از ابزارهای در دسترس استفاده کنید و هرگز عددی را حدس نزنید.',
+  '۱-ب) برای آخرین ثبت‌نام، تعداد، آمار بازدید، وضعیت ارسال پیامک و هر واقعیت ذخیره‌شده حتماً همان لحظه ابزار را صدا بزنید (مثلاً list_site_registrations با status=all؛ برای «ارسال شد؟» از list_sms یا sms_delivery_status). از حافظهٔ گفتگو یا حدس استفاده نکنید.',
   '۲) اگر پرسش کاربر نیازمند داده‌ای است که ابزاری برای آن وجود ندارد، صادقانه بگویید داده در دسترس نیست.',
   '۳) همه مبالغ را به تومان و با جداکننده هزارگان بنویسید؛ مثلا ۱٬۲۵۰٬۰۰۰ تومان.',
   '۴) پاسخ‌ها را کوتاه و ساختاریافته به زبان فارسی بنویسید؛ در صورت نیاز از فهرست کوتاه یا جدول ساده استفاده کنید.',
@@ -4783,14 +4785,41 @@ async function runCopilotTool(name: string, args: any, ctx: { username: string; 
   if (name === 'search_student') {
     const q = String(a.query || '').trim();
     if (!q) return { error: 'عبارت جستجو خالی است.' };
+    const plan = studentSearchPlan(q);
+    const where: string[] = [];
+    const params: any[] = [];
+    if (plan.nameNorm) {
+      where.push(`REPLACE(REPLACE(TRIM(CONCAT(IFNULL(s.first_name,''),' ',IFNULL(s.last_name,''))),'ي','ی'),'ك','ک') LIKE ?`);
+      params.push(`%${plan.nameNorm}%`);
+    }
+    for (const token of plan.tokens) {
+      where.push(`REPLACE(REPLACE(IFNULL(s.first_name,''),'ي','ی'),'ك','ک') LIKE ?`);
+      where.push(`REPLACE(REPLACE(IFNULL(s.last_name,''),'ي','ی'),'ك','ک') LIKE ?`);
+      params.push(`%${token}%`, `%${token}%`);
+    }
+    if (plan.national.length === 10) {
+      const vars = nationalCodeVariants(plan.national);
+      where.push(`s.national_code IN (${vars.map(() => '?').join(',')})`);
+      params.push(...vars);
+    }
+    if (plan.phone) {
+      const vars = phoneDigitVariants(plan.phone);
+      where.push(`s.phone_number IN (${vars.map(() => '?').join(',')})`);
+      params.push(...vars);
+    }
+    if (plan.phone10) {
+      const vars = phoneDigitVariants(plan.phone10);
+      for (const v of vars) { where.push('s.phone_number LIKE ?'); params.push(`%${v}`); }
+    }
+    if (!where.length) return { query: q, count: 0, students: [] };
     const rows = await chabokan.sql<any>(
       `SELECT s.student_id AS id, s.first_name, s.last_name, s.national_code, s.phone_number,
               CAST(COALESCE(SUM(b.balance_due),0) AS DECIMAL(15,2)) AS remaining_debt
        FROM students s
        LEFT JOIN v_enrollment_balances b ON b.student_id = s.student_id
-       WHERE s.first_name LIKE ? OR s.last_name LIKE ? OR s.national_code=? OR s.phone_number=?
+       WHERE (${where.join(' OR ')})
        GROUP BY s.student_id LIMIT 10`,
-      [`%${q}%`, `%${q}%`, q, q]
+      params
     );
     return {
       query: q,
@@ -4960,15 +4989,22 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
   const messages: any[] = [{ role: 'system', content: copilotSystemPrompt(tools) + sqlRule + '\n' + copilotDateRule() + speakerRule + payRule }, ...history];
   const lastQuestion = String(history[history.length - 1]?.content || '');
   const usedTools: string[] = [];
-  const logTurn = (a: string, ok: boolean) => {
-    try { const db = readDb(); appendTurn(db as any, ctx.username, { at: new Date().toISOString(), q: lastQuestion, a, tools: usedTools, ok }); writeDb(db); }
+  const startedMs = Date.now();
+  let lastModel = '';
+  const logTurn = (a: string, ok: boolean, model?: string) => {
+    const at = new Date().toISOString();
+    const modelName = String(model || lastModel || '').slice(0, 80);
+    const ms = Date.now() - startedMs;
+    try { const db = readDb(); appendTurn(db as any, ctx.username, { at, q: lastQuestion, a, tools: usedTools, ok, model: modelName || undefined, ms }); writeDb(db); }
     catch (e: any) { console.warn('[copilot] history write failed:', e?.message || e); }
+    console.info(`[copilot] reply at=${at} model=${modelName || '-'} ms=${ms} tools=${usedTools.join(',') || '-'} ok=${ok}`);
   };
   const toolCache = new Map<string, any>(); // identical repeated calls reuse the first result
   const pendingConfirmations: Array<{ pending_id: string; preview: string }> = [];
   try {
     for (let iteration = 0; iteration < hz.maxIterations; iteration++) {
       const completion = await callCopilotCompletion(messages, true, tools, hz);
+      lastModel = String(completion?.model || hz.model || lastModel || '').slice(0, 80);
       const message = completion?.choices?.[0]?.message;
       if (!message) {
         return res.status(502).json({ error: 'پاسخ نامعتبر از سرویس هوش مصنوعی دریافت شد.' });
@@ -4982,10 +5018,10 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
           // callCopilotCompletionWithFallback already advanced through every model on empty content.
           console.warn(`[copilot] empty reply (model=${String(completion?.model || hz.model || '').slice(0, 60)})`);
           const msg = 'سرویس هوش مصنوعی پاسخ خالی برگرداند (احتمالاً سهمیهٔ مدل تمام شده)؛ چند دقیقه بعد دوباره بپرسید یا مدل را در «تنظیمات هم‌راز» عوض کنید.';
-          logTurn(msg, false);
+          logTurn(msg, false, completion?.model || hz.model);
           return res.status(502).json({ error: msg, pendingConfirmations });
         }
-        logTurn(reply, true);
+        logTurn(reply, true, completion?.model || hz.model);
         return res.json({ reply, pendingConfirmations });
       }
 
@@ -5015,16 +5051,17 @@ app.post('/api/copilot/chat', requireAuth, async (req, res) => {
           role: 'tool',
           tool_call_id: toolCall?.id || `${fn.name || 'tool'}`,
           name: String(fn.name || ''),
-          content: JSON.stringify(persianizeCodes(result)),
+          content: JSON.stringify(maskPiiForModel(persianizeCodes(result))),
         });
       }
     }
     // Tool budget spent: ask once more without tools so the user still gets an answer from the data gathered so far.
     messages.push({ role: 'user', content: 'با همین داده‌های به‌دست‌آمده و بدون فراخوانی ابزار دیگر، پاسخ نهایی را کوتاه بنویسید.' });
     const final = await callCopilotCompletion(messages, false, COPILOT_TOOLS, hz);
+    lastModel = String(final?.model || hz.model || lastModel || '').slice(0, 80);
     const finalText = String(final?.choices?.[0]?.message?.content || '').trim();
     const finalReply = finalText || 'پاسخ کامل آماده نشد؛ لطفاً پرسش را دقیق‌تر بپرسید.';
-    logTurn(finalReply, !!finalText);
+    logTurn(finalReply, !!finalText, final?.model || hz.model);
     return res.json({ reply: finalReply, pendingConfirmations });
   } catch (err: any) {
     logTurn('خطا در ارتباط با سرویس هوش مصنوعی', false);
