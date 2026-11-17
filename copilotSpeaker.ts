@@ -44,13 +44,17 @@ export function speakerPrompt(s: Speaker): string {
 
 // ── Per-user chat log (JSON store `copilot_conversations[username]`), newest last ─────────────────────────
 export const MAX_TURNS_PER_USER = 100;
-export type ChatTurn = { at: string; q: string; a: string; tools?: string[]; ok: boolean };
+export type ChatTurn = { at: string; q: string; a: string; tools?: string[]; ok: boolean; model?: string; ms?: number };
 
 export function appendTurn(store: any, username: string, turn: ChatTurn): void {
   if (!username) return;
   const all = (store.copilot_conversations && typeof store.copilot_conversations === 'object') ? store.copilot_conversations : (store.copilot_conversations = {});
   const list: ChatTurn[] = Array.isArray(all[username]) ? all[username] : (all[username] = []);
-  list.push({ at: turn.at, q: String(turn.q).slice(0, 2000), a: String(turn.a).slice(0, 4000), tools: (turn.tools || []).slice(0, 12), ok: !!turn.ok });
+  const rec: ChatTurn = { at: turn.at, q: String(turn.q).slice(0, 2000), a: String(turn.a).slice(0, 4000), tools: (turn.tools || []).slice(0, 12), ok: !!turn.ok };
+  const model = String(turn.model || '').trim().slice(0, 80);
+  if (model) rec.model = model;
+  if (Number.isFinite(turn.ms)) rec.ms = Math.max(0, Math.round(Number(turn.ms)));
+  list.push(rec);
   if (list.length > MAX_TURNS_PER_USER) list.splice(0, list.length - MAX_TURNS_PER_USER);
 }
 
