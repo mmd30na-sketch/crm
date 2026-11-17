@@ -113,21 +113,30 @@ function fakeDeps({ sandbox = true } = {}) {
   assert.equal(v.ok, true); assert.equal(v.card, '****1111'); assert.ok(c2.rest.includes('verify:A00000000000000000000000000000abcd:1000'), 'IRT: toman as-is');
 }
 
-// 6. Client: sandbox host selection, error-code mapping, query-only GraphQL helper.
+// 6. Client: REST actions now go through the official SDK wrapper (transport injectable for tests);
+// error-code mapping; query-only GraphQL helper.
 assert.equal(restHost(true), 'https://sandbox.zarinpal.com'); assert.equal(restHost(false), 'https://payment.zarinpal.com');
-for (const sandbox of [true, false]) {
-  const urls = [];
-  const c = createZarinpalClient(() => ({ merchantId: MID, sandbox, currency: 'IRR', accessToken: `Bearer ${TOKEN}`, publicBaseUrl: '', paymentLinkBase: '', sources: {} }),
-    async (url, init) => { urls.push({ url, init }); return { ok: true, status: 200, json: async () => ({ data: { code: 100, status: 'PAID' } }) }; });
+{
+  const actions = [];
+  const fakeRest = async (action, payload) => { actions.push({ action, payload }); return { code: 100, status: 'PAID' }; };
+  const c = createZarinpalClient(() => ({ merchantId: MID, sandbox: true, currency: 'IRR', accessToken: `Bearer ${TOKEN}`, publicBaseUrl: '', paymentLinkBase: '', sources: {} }),
+    async (url, init) => { actions.push({ action: 'graphql', headers: init.headers }); return { ok: true, status: 200, json: async () => ({ data: { Me: { id: 'me' } } }) }; }, fakeRest);
   await c.inquiry('A0000000000000000001');
-  assert.equal(urls[0].url, `${sandbox ? 'https://sandbox.zarinpal.com' : 'https://payment.zarinpal.com'}/pg/v4/payment/inquiry.json`);
+  assert.deepEqual(actions.at(-1), { action: 'inquiry', payload: { authority: 'A0000000000000000001' } });
+  await c.unverified();
+  assert.equal(actions.at(-1).action, 'unverified');
+  await c.verify('A0000000000000000001', 2000);
+  assert.deepEqual(actions.at(-1).payload, { authority: 'A0000000000000000001', amount_toman: 2000 }, 'verify takes Toman; the wrapper converts');
+  await c.reverse('A0000000000000000001');
+  assert.equal(actions.at(-1).action, 'reverse');
   await c.query('query { Me { id } }');
-  assert.equal(urls[1].init.headers.authorization, `Bearer ${TOKEN}`, 'Bearer prefix stripped once');
+  assert.equal(actions.at(-1).headers.authorization, `Bearer ${TOKEN}`, 'Bearer prefix stripped once');
   await assert.rejects(() => c.query('mutation { AddRefund { id } }'));
 }
 {
   const c = createZarinpalClient(() => ({ merchantId: MID, sandbox: true, currency: 'IRR', accessToken: '', publicBaseUrl: '', paymentLinkBase: '', sources: {} }),
-    async () => ({ ok: false, status: 404, json: async () => ({ message: 'Invalid authority', errors: { authority: ['Invalid authority.', '-54'] } }) }));
+    async () => ({ ok: true, status: 200, json: async () => ({ data: {} }) }),
+    async () => { throw Object.assign(new Error('Invalid authority.'), { code: -54, status: 502 }); });
   await assert.rejects(() => c.inquiry('A0000000000000000001'), (e) => e.code === -54 && /اتوریتی/.test(e.message) && !e.message.includes(MID));
 }
 assert.equal(extractCode({ data: {}, errors: { code: -62 } }), -62);

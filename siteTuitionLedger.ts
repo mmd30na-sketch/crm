@@ -33,6 +33,9 @@ export type SiteTuitionPayment = {
   authority?: string | null;
   ref_id?: string | null;
   card_pan?: string | null;
+  card_hash?: string | null;
+  fee?: number | string | null;
+  fee_type?: string | null;
   verified_at?: string | Date | null;
   course_id?: number | null;
   status?: string;
@@ -160,8 +163,8 @@ export async function applyOneVerifiedSitePayment(
     await conn.query(
       `INSERT INTO payments
         (enrollment_id, student_id, pay_date_jalali, amount, pay_method, payment_kind,
-         gateway_name, authority, ref_id, card_pan, description)
-       VALUES (?, ?, ?, ?, 'آنلاین', ?, 'zarinpal', ?, ?, ?, ?)`,
+         gateway_name, authority, ref_id, card_pan, card_hash, fee, fee_type, description)
+       VALUES (?, ?, ?, ?, 'آنلاین', ?, 'zarinpal', ?, ?, ?, ?, ?, ?, ?)`,
       [
         enrollmentId,
         opts.studentId,
@@ -171,6 +174,9 @@ export async function applyOneVerifiedSitePayment(
         authority,
         refId,
         payment.card_pan ? String(payment.card_pan).slice(0, 30) : null,
+        payment.card_hash ? String(payment.card_hash).slice(0, 64) : null,
+        Number.isFinite(Number(payment.fee)) && Number(payment.fee) > 0 ? Math.round(Number(payment.fee)) : null,
+        payment.fee_type ? String(payment.fee_type).slice(0, 32) : null,
         description.slice(0, 500),
       ],
     );
@@ -192,7 +198,7 @@ export async function applyVerifiedSitePaymentsForRegistration(
   if (!tracking || !opts.studentId || !opts.enrollmentId) return { applied: 0, skipped: 0, amountPaid: 0 };
   const pays = await q(
     conn,
-    `SELECT id, tracking_code, amount_toman, kind, authority, ref_id, card_pan, verified_at, course_id, status
+    `SELECT id, tracking_code, amount_toman, kind, authority, ref_id, card_pan, card_hash, fee, fee_type, verified_at, course_id, status
        FROM site_registration_payments p
       WHERE ${TRACKING_EQ}
         AND p.status = 'paid'
@@ -218,7 +224,7 @@ export async function applyVerifiedSitePaymentsForRegistration(
 export async function syncVerifiedSiteTuitionPayments(db: LedgerDb): Promise<ApplyResult> {
   const rows = await db.sql<any>(
     `SELECT p.id, p.tracking_code, p.amount_toman, p.kind, p.authority, p.ref_id, p.card_pan,
-            p.verified_at, p.course_id, p.status, r.student_id
+            p.card_hash, p.fee, p.fee_type, p.verified_at, p.course_id, p.status, r.student_id
        FROM site_registration_payments p
        JOIN registrations r ON ${REG_TRACKING_JOIN}
       WHERE p.status = 'paid'
@@ -281,5 +287,32 @@ export async function ensureSiteTuitionLedgerSchema(db: LedgerDb): Promise<void>
   }
   if (!names.has('uq_payments_ref_id')) {
     await db.sqlExec('ALTER TABLE payments ADD UNIQUE KEY uq_payments_ref_id (ref_id)');
+  }
+  // Gateway verify details on the money ledger (additive nullable columns, added only when missing).
+  for (const [col, ddl] of [
+    ['card_pan', 'ALTER TABLE payments ADD COLUMN card_pan VARCHAR(32) NULL'],
+    ['card_hash', 'ALTER TABLE payments ADD COLUMN card_hash VARCHAR(64) NULL'],
+    ['fee', 'ALTER TABLE payments ADD COLUMN fee BIGINT NULL'],
+    ['fee_type', 'ALTER TABLE payments ADD COLUMN fee_type VARCHAR(32) NULL'],
+  ] as const) {
+    const cols = await db.sql<any>(
+      `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'payments' AND COLUMN_NAME = ?`,
+      [col],
+    );
+    if (!cols.length) await db.sqlExec(ddl);
+  }
+  for (const [col, ddl] of [
+    ['card_pan', 'ALTER TABLE site_registration_payments ADD COLUMN card_pan VARCHAR(32) NULL'],
+    ['card_hash', 'ALTER TABLE site_registration_payments ADD COLUMN card_hash VARCHAR(64) NULL'],
+    ['fee', 'ALTER TABLE site_registration_payments ADD COLUMN fee BIGINT NULL'],
+    ['fee_type', 'ALTER TABLE site_registration_payments ADD COLUMN fee_type VARCHAR(32) NULL'],
+  ] as const) {
+    const cols = await db.sql<any>(
+      `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'site_registration_payments' AND COLUMN_NAME = ?`,
+      [col],
+    );
+    if (!cols.length) await db.sqlExec(ddl);
   }
 }

@@ -34,6 +34,7 @@
     "test:copilot-speaker": "node --import tsx scripts/test-copilot-speaker.mjs",
     "test:copilot-pii": "node --import tsx scripts/test-copilot-pii.mjs",
     "test:site-tuition-ledger": "node --import tsx scripts/test-site-tuition-ledger.mjs",
+    "test:zarinpal-sdk": "node --import tsx scripts/test-zarinpal-sdk.mjs",
     "test:copilot-directus": "node --import tsx tests/copilot-directus.test.ts"
   },
   "dependencies": {

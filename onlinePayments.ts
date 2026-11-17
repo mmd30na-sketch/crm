@@ -20,7 +20,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import * as db from './mysql-socks';
 import { owedByEnrollment } from './src/utils/finance';
-import { zarinpalConfigFromEnv, requestPayment, verifyPayment, type ZarinpalConfig } from './zarinpal';
+import { zarinpalConfigFromEnv, requestPayment, verifyPayment, unverifiedList, type ZarinpalConfig } from './zarinpal';
+import { maskCard } from './zarinpalSettings';
 import type { InstallmentStore } from './installments';
 import type { DebtLinkStore } from './debtSms';
 
@@ -94,12 +95,25 @@ export async function ensureOnlinePaymentsSchema(): Promise<void> {
     // Additive: an existing install of this branch's parent may already have the table without the column.
     const cols = await db.sql<{ Field: string }>(`SHOW COLUMNS FROM crm_online_payments LIKE 'installment_id'`);
     if (!cols.length) await db.sqlExec('ALTER TABLE crm_online_payments ADD COLUMN installment_id INT UNSIGNED NULL AFTER enrollment_id');
+    // Gateway verify details (additive, nullable): card hash/fee land here after a successful verify.
+    for (const [col, ddl] of [
+      ['card_pan', 'ALTER TABLE crm_online_payments ADD COLUMN card_pan VARCHAR(32) NULL'],
+      ['card_hash', 'ALTER TABLE crm_online_payments ADD COLUMN card_hash VARCHAR(64) NULL'],
+      ['fee', 'ALTER TABLE crm_online_payments ADD COLUMN fee BIGINT NULL'],
+      ['fee_type', 'ALTER TABLE crm_online_payments ADD COLUMN fee_type VARCHAR(32) NULL'],
+    ] as const) {
+      const c = await db.sql<{ Field: string }>(`SHOW COLUMNS FROM crm_online_payments LIKE '${col}'`);
+      if (!c.length) await db.sqlExec(ddl);
+    }
   } catch (err: any) {
     console.warn('crm_online_payments schema setup failed:', err.message);
   }
 }
 
-export function registerOnlinePayments(app: express.Express, deps: OnlinePaymentDeps) {
+/** Starts the 3-hour unverified-payment sweep (non-overlapping, unref'd timer); returns a stop handle. */
+export type OnlinePaymentsApi = { startUnverifiedSweep: () => () => void };
+
+export function registerOnlinePayments(app: express.Express, deps: OnlinePaymentDeps): OnlinePaymentsApi {
   const log = deps.log || (() => {});
   const receiptsDir = path.join(process.cwd(), 'uploads', 'receipts');
   fs.mkdirSync(receiptsDir, { recursive: true });
@@ -132,7 +146,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
     return id;
   }
 
-  const MUTABLE = ['status', 'ref_id', 'authority', 'admin_note', 'reviewed_by', 'reviewed_at', 'receipt_file'];
+  const MUTABLE = ['status', 'ref_id', 'authority', 'admin_note', 'reviewed_by', 'reviewed_at', 'receipt_file', 'card_pan', 'card_hash', 'fee', 'fee_type'];
   async function updateOnline(id: number, patch: Record<string, any>): Promise<void> {
     const keys = Object.keys(patch).filter((k) => MUTABLE.includes(k));
     if (!keys.length) return;
@@ -338,6 +352,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
         description: `پرداخت قسط دوره - ثبت‌نام ${enrollmentId}`,
         callbackUrl,
         mobile: deps.normalizeMobile(ctx.student.phone_number),
+        orderId: `online-${id}`,
       });
       await updateOnline(id, { authority });
       res.json({ payment_url: paymentUrl, authority, online_payment_id: id });
@@ -371,7 +386,16 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
     try {
       const result = await verifyPayment(cfg, { amountToman: Number(row.amount) || 0, authority });
       if (result.ok) {
-        await updateOnline(row.id, { status: 'paid', ref_id: result.refId, admin_note: null });
+        // Keep the gateway's verify details (card PAN arrives already masked; maskCard keeps only the last 4).
+        await updateOnline(row.id, {
+          status: 'paid',
+          ref_id: result.refId,
+          admin_note: null,
+          card_pan: result.cardPan ? (maskCard(result.cardPan) || null) : null,
+          card_hash: result.cardHash,
+          fee: result.fee != null ? result.fee : null,
+          fee_type: result.feeType,
+        });
         // A payment started from a per-installment link settles that installment and burns the link.
         await settleLinkedInstallment(row);
         return back('ok');
@@ -489,6 +513,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
             description: `پرداخت مانده بدهی - کارآموز ${studentId}`,
             callbackUrl,
             mobile: deps.normalizeMobile((await studentContext(studentId))?.student?.phone_number),
+            orderId: `online-${id}`,
           });
           await updateOnline(id, { authority });
           // Attach only once the gateway accepted the request, so a failed request leaves the link free.
@@ -522,6 +547,7 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
         description: `پرداخت قسط ${resolved.installment.seq || ''} - ثبت‌نام ${enrollmentId}`,
         callbackUrl,
         mobile: deps.normalizeMobile((await studentContext(studentId))?.student?.phone_number),
+        orderId: `online-${id}`,
       });
       await updateOnline(id, { authority });
       res.json({ payment_url: paymentUrl, authority, online_payment_id: id, kind: 'installment' });
@@ -634,4 +660,56 @@ export function registerOnlinePayments(app: express.Express, deps: OnlinePayment
     const url = `${requestBase(req)}/?trainee=1&t=${encodeURIComponent(token)}`;
     res.json({ url, token, expires_in_days: 7, student_name: [ctx.student.first_name, ctx.student.last_name].filter(Boolean).join(' ').trim(), phone_masked: maskPhone(ctx.student.phone_number) });
   }));
+
+  // ── missed-payment sweep (every 3 hours) ────────────────────────────────────────────────────────────
+  // Uses the SDK's unverified.list(); every gateway authority is matched against a LOCAL pending
+  // crm_online_payments row. ONLY pending -> paid (after a successful 100/101 verify with the stored
+  // amount); cancelled/rejected rows and unknown authorities are never touched. No SMS, logs carry counts only.
+  const UNVERIFIED_SWEEP_MS = 3 * 3600_000;
+  let sweepRunning = false;
+  async function runUnverifiedSweep(): Promise<{ checked: number; local: number; paid: number; failed: number }> {
+    const counts = { checked: 0, local: 0, paid: 0, failed: 0 };
+    const cfg = deps.zarinpalConfig ? deps.zarinpalConfig() : zarinpalConfigFromEnv(deps.zarinpalMerchantId());
+    if (!cfg.merchantId) return counts;
+    const body = await unverifiedList(cfg);
+    counts.checked = body.authorities.length;
+    for (const item of body.authorities) {
+      const authority = String(item?.authority || '');
+      const row = authority ? await findByAuthority(authority) : null;
+      if (!row || String(row.method) !== 'zarinpal' || String(row.status) !== 'pending') continue;
+      counts.local += 1;
+      const result = await verifyPayment(cfg, { amountToman: Number(row.amount) || 0, authority });
+      if (result.ok) {
+        await updateOnline(row.id, {
+          status: 'paid',
+          ref_id: result.refId,
+          admin_note: null,
+          card_pan: result.cardPan ? (maskCard(result.cardPan) || null) : null,
+          card_hash: result.cardHash,
+          fee: result.fee != null ? result.fee : null,
+          fee_type: result.feeType,
+        });
+        await settleLinkedInstallment(row);
+        counts.paid += 1;
+      } else {
+        log(`unverified sweep: verify failed for online payment ${row.id} (code ${result.code})`);
+        counts.failed += 1;
+      }
+    }
+    return counts;
+  }
+  /** Non-overlapping 3h timer, unref'd; the first run waits one full interval (startup already syncs the ledger). */
+  const startUnverifiedSweep = () => {
+    const timer = setInterval(() => {
+      if (sweepRunning) return;
+      sweepRunning = true;
+      runUnverifiedSweep()
+        .then((c) => log(`unverified sweep: checked=${c.checked} local_pending=${c.local} paid=${c.paid} failed=${c.failed}`))
+        .catch((e: any) => log(`unverified sweep failed: ${e?.message}`))
+        .finally(() => { sweepRunning = false; });
+    }, UNVERIFIED_SWEEP_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  };
+  return { startUnverifiedSweep };
 }

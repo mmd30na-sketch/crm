@@ -1104,21 +1104,6 @@ export async function syncSiteTuitionLedger(): Promise<{ applied: number; skippe
   return syncVerifiedSiteTuitionPayments({ sql, sqlExec });
 }
 
-export function startSiteTuitionLedgerSync(intervalMs = 60_000): () => void {
-  let running = false;
-  const tick = async () => {
-    if (running || !mysqlEnabled) return;
-    running = true;
-    try {
-      const r = await syncSiteTuitionLedger();
-      if (r.applied) console.info(`[site-tuition-ledger] synced applied=${r.applied} skipped=${r.skipped}`);
-    } catch (err: any) {
-      console.warn('[site-tuition-ledger] sync failed:', err?.message || err);
-    } finally {
-      running = false;
-    }
-  };
-  const timer = setInterval(tick, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
-}
+// The old 60s startSiteTuitionLedgerSync() interval is gone: one awaited startup sync in server.ts
+// (ensureSiteTuitionLedger + syncSiteTuitionLedger) plus the internal ledger endpoint and the 3-hour
+// unverified-payment sweep keep the ledger current instead of a constant poll.
