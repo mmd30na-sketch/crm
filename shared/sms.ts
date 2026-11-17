@@ -1,16 +1,20 @@
 /**
  * Shared SMS helper (site + CRM). Keep this file identical to the site copy
- * `/project/kermanshahcart/shared/sms.ts`. No sms.ir SDK; these calls match the panel docs.
+ * `/project/kermanshahcart/shared/sms.ts`. sms.ir HTTP traffic goes through the
+ * official `sms-typescript` SDK (`Smsir`), except GET /v1/templates which the
+ * SDK does not cover yet (thin raw GET below).
  *
  * Config, and nothing else:
- *   SMS_API_KEY                 env only. Header `x-api-key`. Never stored in DB or JSON.
+ *   SMS_API_KEY                 env only. Never stored in DB or JSON; the SDK sends it as `X-API-KEY`.
  *   app_settings['sms.config']  { provider:'smsir', lineNumber, apiKeyRef:'env:SMS_API_KEY', autoRegister, autoExam }
  *   SMS_SENDER_LINE             bulk-send fallback, used only when `lineNumber` is empty. Verify does not use a line.
  *   sms_templates               verify rows need provider_template_id and status 2 (approved) before they can send.
  *
- * Calls: POST /v1/send/verify, POST /v1/send/bulk, GET /v1/credit, GET /v1/line, GET /v1/templates.
+ * SDK calls: sendVerifyCode, sendBulk, getCredit, getLineNumbers, reportMessage,
+ * reportTodayLive / reportArchive, reportReceiveLive / reportReceiveArchive.
  * A verify parameter value is at most 25 characters. Template review status: 1 pending, 2 approved, 3 rejected.
  */
+import { Smsir } from 'sms-typescript';
 export type SqlFn = (query: string, params?: any[]) => Promise<any[]>;
 export type SmsSendResult = { ok: boolean; status: 'sent' | 'not_configured' | 'failed' | 'disabled'; detail?: string };
 export type SmsConfig = { provider: string; lineNumber: string; apiKeyRef: string; autoRegister: boolean; autoExam: boolean };
@@ -39,6 +43,9 @@ export const SMSIR_DELIVERY_FA: Record<number, string> = {
   5: 'رسیده به اپراتور', 6: 'ناموفق', 7: 'لیست سیاه', 8: 'نامشخص',
 };
 
+const SMSIR_RATE_LIMIT = 'محدودیت تعداد درخواست پنل پیامک؛ چند ثانیه دیگر دوباره تلاش کنید.';
+const SMSIR_TIMEOUT_FA = 'پاسخی از سرویس پیامک نرسید.';
+
 const fetchJson = async (url: string, init: any = {}) => {
   const r = await fetch(url, { ...init, signal: AbortSignal.timeout(15000) });
   const txt = await r.text();
@@ -52,40 +59,75 @@ export function resolveSenderLine(configured?: string | null, override?: string 
   return String(override ?? '').trim() || String(configured ?? '').trim() || String(process.env.SMS_SENDER_LINE || '').trim();
 }
 
-async function smsirCall(o: { apiKey: string; method?: string; path: string; body?: unknown }) {
-  const headers: Record<string, string> = { 'x-api-key': o.apiKey, Accept: 'application/json' };
-  const init: any = { method: o.method || 'GET', headers };
-  if (o.body !== undefined) { headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(o.body); }
-  return fetchJson(`${SMSIR_API}${o.path}`, init);
+/* ---- Official SDK client (sms-typescript). All SDK use goes through the factory. ---- */
+export type SmsirClient = Smsir;
+type SmsirFactory = (apiKey: string, lineNumber: number) => SmsirClient;
+let smsirFactory: SmsirFactory | null = null;
+/** Tests inject a mock client here (null restores the real SDK); no real HTTP happens through it. */
+export function setSmsirClientFactory(fn: SmsirFactory | null) { smsirFactory = fn; }
+export function createSmsirClient(apiKey: string, lineNumber: number): SmsirClient {
+  return smsirFactory ? smsirFactory(apiKey, lineNumber) : new Smsir(apiKey, lineNumber);
 }
 
-/** Read-only sms.ir GET. `path` includes the query string. Does not log the key. */
+/** The SDK fetch has no timeout: wrap every SDK call in one. Aborting the fetch itself is optional. */
+const withTimeout = <T>(p: Promise<T>): Promise<T> =>
+  new Promise((resolve, reject) => {
+    const t = setTimeout(() => { const e: any = new Error('sms.ir request timed out'); e.name = 'TimeoutError'; reject(e); }, 15000);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+
+type SdkBody = { status?: number; message?: string; data?: any };
+/** Maps a SDK ResponseModel: status 1 ok, 20 rate limit, else message. Thrown errors propagate (transient). */
+async function sdkBody(apiKey: string, p: Promise<SdkBody>): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const body = await withTimeout(p);
+  if (body && body.status === 1) return { ok: true, data: body.data };
+  if (body && body.status === 20) return { ok: false, error: SMSIR_RATE_LIMIT };
+  return { ok: false, error: scrubKey(body && body.message || 'HTTP error', apiKey) };
+}
+
+/** Read-only sms.ir reports via the SDK, dispatched from the old path+query form so callers stay as-is.
+ *  Supported: /v1/credit, /v1/line, /v1/send/live, /v1/send/archive, /v1/receive/live, /v1/receive/archive, /v1/send/{messageId}. */
 export async function smsirRead(apiKey: string, path: string): Promise<{ ok: boolean; data?: any; error?: string }> {
   if (!apiKey) return { ok: false, error: 'درگاه پیامک تنظیم نشده است.' };
+  const [pathname, query] = String(path || '').split('?');
+  const q = new URLSearchParams(query || '');
+  const page = Number(q.get('pageNumber')) || 0;
+  const size = Number(q.get('pageSize')) || 0;
   try {
-    const { status, body } = await smsirCall({ apiKey, path });
-    if (body && body.status === 1) return { ok: true, data: body.data };
-    if (body && body.status === 20) return { ok: false, error: 'محدودیت تعداد درخواست پنل پیامک؛ چند ثانیه دیگر دوباره تلاش کنید.' };
-    return { ok: false, error: scrubKey(body && body.message || `HTTP ${status}`, apiKey) };
+    const client = createSmsirClient(apiKey, 0); // reads need no line
+    if (pathname === '/v1/credit') return await sdkBody(apiKey, client.getCredit());
+    if (pathname === '/v1/line') return await sdkBody(apiKey, client.getLineNumbers());
+    if (pathname === '/v1/send/live') return await sdkBody(apiKey, client.reportTodayLive(page, size));
+    // Archive has no dates in the CRM today: falsy from/to are omitted by the SDK (paths identical).
+    if (pathname === '/v1/send/archive') return await sdkBody(apiKey, client.reportArchive(0, 0, page, size));
+    if (pathname === '/v1/receive/live') {
+      const sortByNewest = String(q.get('sortByNewest') || '') === 'true';
+      return await sdkBody(apiKey, client.reportReceiveLive(page, size, sortByNewest));
+    }
+    if (pathname === '/v1/receive/archive') return await sdkBody(apiKey, client.reportReceiveArchive(0, 0, page, size));
+    const mid = /^\/v1\/send\/(\d+)$/.exec(pathname || '');
+    if (mid) return await sdkBody(apiKey, client.reportMessage(Number(mid[1])));
+    return { ok: false, error: `unsupported sms.ir path: ${pathname}` };
   } catch (e: any) {
-    return { ok: false, error: e?.name === 'TimeoutError' ? 'پاسخی از سرویس پیامک نرسید.' : 'خطا در اتصال به سرویس پیامک' };
+    return { ok: false, error: e?.name === 'TimeoutError' ? SMSIR_TIMEOUT_FA : scrubKey(e?.message || 'خطا در اتصال به سرویس پیامک', apiKey) };
   }
 }
 
-/** sms.ir sends. Parameter names are camelCase, as in the panel samples. */
+/** sms.ir verify send through the SDK. Thrown SDK errors propagate: sendTemplate treats them as transient. */
 export async function smsirVerify(o: { apiKey: string; mobile: string; templateId: number; parameters: { name: string; value: string }[] }): Promise<{ ok: boolean; error?: string }> {
-  const { body } = await smsirCall({
-    apiKey: o.apiKey, method: 'POST', path: '/v1/send/verify',
-    body: { mobile: o.mobile, templateId: o.templateId, parameters: o.parameters },
-  });
-  return body && body.status === 1 ? { ok: true } : { ok: false, error: scrubKey(body && body.message || body, o.apiKey) };
+  try {
+    const client = createSmsirClient(o.apiKey, 0); // verify needs no line
+    const body = await withTimeout(client.sendVerifyCode(o.mobile, o.templateId, o.parameters));
+    return body && body.status === 1 ? { ok: true } : { ok: false, error: scrubKey(body && body.message || body, o.apiKey) };
+  } catch (e: any) {
+    if (e?.name === 'TimeoutError') throw e; // sendTemplate must not bulk-fallback after a possible delivery
+    return { ok: false, error: scrubKey(e?.message || e, o.apiKey) };
+  }
 }
 export async function smsirBulk(o: { apiKey: string; lineNumber: string; mobile: string; text: string }): Promise<{ ok: boolean; error?: string }> {
-  const { status, body } = await smsirCall({
-    apiKey: o.apiKey, method: 'POST', path: '/v1/send/bulk',
-    body: { lineNumber: Number(o.lineNumber), messageText: o.text, mobiles: [o.mobile] },
-  });
-  return body && body.status === 1 ? { ok: true } : { ok: false, error: scrubKey(body && body.message || `HTTP ${status}`, o.apiKey) };
+  const client = createSmsirClient(o.apiKey, 0);
+  const body = await withTimeout(client.sendBulk(o.text, [o.mobile], undefined, Number(o.lineNumber) || undefined));
+  return body && body.status === 1 ? { ok: true } : { ok: false, error: scrubKey(body && body.message || 'HTTP error', o.apiKey) };
 }
 export async function smsirCredit(apiKey: string): Promise<{ ok: boolean; credit?: number; error?: string }> {
   const r = await smsirRead(apiKey, '/v1/credit');
@@ -121,10 +163,13 @@ export function matchSmsTemplate(rows: any[], key: string, templateId?: string |
       : null);
 }
 
+/** Gap: the SDK has no method for GET /v1/templates yet, so this stays a thin raw paginated GET. */
 export async function smsirListTemplates(apiKey: string): Promise<any[]> {
   const out: any[] = [];
   for (let page = 1; page <= 10; page++) {
-    const { status, body } = await smsirCall({ apiKey, path: `/v1/templates?pageNumber=${page}&pageSize=100` });
+    const { status, body } = await fetchJson(`${SMSIR_API}/v1/templates?pageNumber=${page}&pageSize=100`, {
+      headers: { 'x-api-key': apiKey, Accept: 'application/json' },
+    });
     const data = body && Array.isArray(body.data) ? body.data : null;
     if (status !== 200 || !body || body.status !== 1 || !data) {
       if (page === 1) throw new Error('sms.ir template list failed');
