@@ -132,6 +132,32 @@ export function directusSelected(): boolean {
   return String(process.env.COPILOT_DB_BACKEND || 'builtin').trim().toLowerCase() === 'directus';
 }
 
+/**
+ * Decide the final SQL tool list for the admin copilot (pure: flags + tool results in, list out; no network, no server boot).
+ * - backend=directus: use the Directus tools when available; when Directus is unavailable fall back to DBHub when allowed (selected/URL) and available; else the builtin SELECT-only tool.
+ * - backend=dbhub: use the DBHub tools when available; else the builtin SELECT-only tool.
+ * - otherwise: the builtin SELECT-only tool.
+ */
+export function copilotSqlToolsFor(input: {
+  backend: string;
+  directusTools?: any[] | null;
+  dbhubTools?: any[] | null;
+  dbhubFallback?: boolean;
+  builtinTool: any;
+  siteTool?: any;
+}): any[] {
+  const backend = String(input.backend || '').trim().toLowerCase();
+  const directusTools = Array.isArray(input.directusTools) ? input.directusTools : null;
+  const dbhubTools = Array.isArray(input.dbhubTools) ? input.dbhubTools : null;
+  if (backend === 'directus') {
+    if (directusTools) return [...directusTools, input.siteTool];
+    if (input.dbhubFallback && dbhubTools) return [...dbhubTools, input.siteTool];
+    return [input.builtinTool];
+  }
+  if (backend === 'dbhub' && dbhubTools) return [...dbhubTools, input.siteTool];
+  return [input.builtinTool];
+}
+
 /** SSRF guard: only local Directus or the known admin host may be contacted. */
 export function validateDirectusUrl(raw: string): URL {
   const url = new URL(String(raw || ''));
@@ -248,6 +274,9 @@ type WriteAudit = (e: {
   status: number | null;
 }) => Promise<void> | void;
 
+/** Minimal MCP client surface used by the copilot (injectable for tests; production uses the module singleton). */
+type DirectusClientLike = { callTool: (request: any, options?: any, config?: any) => Promise<any> };
+
 /** Parse an MCP tool result: failed flag/message plus the sanitized payload. */
 export function parseDirectusResult(res: any, collection = ''): { failed: boolean; error: string; rows: number | null; data: any } {
   const text = (Array.isArray(res?.content) ? res.content : [])
@@ -284,7 +313,7 @@ function entityIdFromArgs(p: { id: any; ids: any; data: any }, data?: any): stri
   return raw == null || raw === '' ? null : String(raw).slice(0, 64);
 }
 
-export async function callDirectusTool(name: string, args: any, auditSql?: Audit, auditWrite?: WriteAudit): Promise<any> {
+export async function callDirectusTool(name: string, args: any, auditSql?: Audit, auditWrite?: WriteAudit, clientOverride?: DirectusClientLike | null): Promise<any> {
   const t0 = Date.now();
   const a = args && typeof args === 'object' ? args : {};
   const audit = async (e: { db: string; sql: string; allowed: boolean; reason: string | null; rows: number | null; ms: number | null }) => {
@@ -299,7 +328,7 @@ export async function callDirectusTool(name: string, args: any, auditSql?: Audit
   if (name === 'directus_schema') {
     const sqlText = auditText('schema', {}, '');
     try {
-      const c = await connect();
+      const c = clientOverride ?? await connect();
       const res = await c.callTool({ name: 'schema', arguments: {} }, undefined, { timeout: TIMEOUT_MS });
       const out = parseDirectusResult(res);
       await audit({ db: 'directus', sql: sqlText, allowed: !out.failed, reason: out.failed ? out.error : null, rows: out.rows, ms: Date.now() - t0 });
@@ -329,7 +358,7 @@ export async function callDirectusTool(name: string, args: any, auditSql?: Audit
     if (p.id != null) mcpArgs.id = p.id;
     const sqlText = auditText('read_items', mcpArgs, p.collection);
     try {
-      const c = await connect();
+      const c = clientOverride ?? await connect();
       const res = await c.callTool({ name: 'items', arguments: mcpArgs }, undefined, { timeout: TIMEOUT_MS });
       const out = parseDirectusResult(res, p.collection);
       await audit({ db: 'directus', sql: sqlText, allowed: !out.failed, reason: out.failed ? out.error : null, rows: out.rows, ms: Date.now() - t0 });
@@ -357,7 +386,7 @@ export async function callDirectusTool(name: string, args: any, auditSql?: Audit
   if (p.query != null) mcpArgs.query = p.query;
   const sqlText = auditText(`${p.action}_items`, { ...a, data }, p.collection);
   try {
-    const c = await connect();
+    const c = clientOverride ?? await connect();
     const res = await c.callTool({ name: 'items', arguments: mcpArgs }, undefined, { timeout: TIMEOUT_MS });
     const out = parseDirectusResult(res, p.collection);
     const ok = !out.failed;

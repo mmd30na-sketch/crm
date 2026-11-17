@@ -18,7 +18,7 @@ import { getSiteAnalytics, umamiEnabled } from './copilot-umami';
 import { copilotDateRule } from './src/utils/copilotDate';
 import { persianizeCodes } from './src/utils/labels';
 import { dbhubSelected, getDbhubTools, isDbhubTool, callDbhubTool } from './copilot-mcp';
-import { directusSelected, getDirectusTools, isDirectusTool, callDirectusTool } from './copilot-directus';
+import { directusSelected, getDirectusTools, isDirectusTool, callDirectusTool, copilotSqlToolsFor } from './copilot-directus';
 import { registerPhase4, ensurePhase4Schema, maskPhone } from './phase4';
 import { registerLeadPipeline, ensureLeadPipelineSchema } from './leadPipeline';
 import { registerEmail, ensureEmailSchema } from './emailService';
@@ -4196,18 +4196,26 @@ async function copilotToolsForRole(role: string) {
   if (h.sqlEnabled) {
     if (directusSelected()) {
       const directus = await getDirectusTools();
-      if (directus) {
-        sqlTools = [...directus, COPILOT_SITE_SQL_TOOL];
-      } else {
-        // Fallback: DBHub when configured, otherwise the builtin SELECT-only tool.
-        const dbhub = (dbhubSelected() || Boolean(String(process.env.COPILOT_DBHUB_URL || '').trim()))
-          ? await getDbhubTools()
-          : null;
-        sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
-      }
+      const dbhubFallback = Boolean(dbhubSelected() || String(process.env.COPILOT_DBHUB_URL || '').trim());
+      let dbhubTools: any[] | null = null;
+      // Fallback: DBHub when configured, otherwise the builtin SELECT-only tool.
+      if (!directus && dbhubFallback) dbhubTools = await getDbhubTools();
+      sqlTools = copilotSqlToolsFor({
+        backend: 'directus',
+        directusTools: directus,
+        dbhubTools,
+        dbhubFallback,
+        builtinTool: COPILOT_SQL_TOOL,
+        siteTool: COPILOT_SITE_SQL_TOOL,
+      });
     } else {
       const dbhub = dbhubSelected() ? await getDbhubTools() : null;
-      sqlTools = dbhub ? [...dbhub, COPILOT_SITE_SQL_TOOL] : [COPILOT_SQL_TOOL];
+      sqlTools = copilotSqlToolsFor({
+        backend: dbhubSelected() ? 'dbhub' : 'builtin',
+        dbhubTools: dbhub,
+        builtinTool: COPILOT_SQL_TOOL,
+        siteTool: COPILOT_SITE_SQL_TOOL,
+      });
     }
   }
   const smsTools = h.smsDirect ? COPILOT_SMS_TOOLS : COPILOT_SMS_TOOLS.filter((t: any) => t?.function?.name !== 'sms_send_direct');

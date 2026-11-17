@@ -2,7 +2,7 @@ import {
   MONEY_COLLECTIONS, WRITE_COLLECTIONS, DENY_COLLECTIONS, SECRET_FIELDS,
   directusSelected, validateDirectusUrl, isMoneyCollection, canonicalCollection,
   assertDirectusWriteAllowed, assertDirectusReadAllowed,
-  sanitizeItemFields, parseItemsArgs, callDirectusTool,
+  sanitizeItemFields, parseItemsArgs, callDirectusTool, copilotSqlToolsFor, getDirectusTools,
 } from '../copilot-directus';
 
 let fail = 0;
@@ -87,6 +87,41 @@ const oldUrl = process.env.COPILOT_DIRECTUS_URL;
 delete process.env.COPILOT_DIRECTUS_TOKEN;
 delete process.env.COPILOT_DIRECTUS_URL;
 
+// Fallback / tool assembly: COPILOT_DB_BACKEND=directus -> Directus tools, else DBHub fallback, else builtin SQL.
+const BUILTIN_SQL_TOOL = { type: 'function', function: { name: 'run_sql_query', parameters: { type: 'object', properties: { database: { type: 'string', enum: ['crm', 'site'] } } } } };
+const SITE_SQL_TOOL = { type: 'function', function: { name: 'run_sql_query', parameters: { type: 'object', properties: { database: { type: 'string', enum: ['site'] } } } } };
+const DIRECTUS_TOOLS = [
+  { type: 'function', function: { name: 'directus_schema', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'directus_read_items', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'directus_write_items', parameters: { type: 'object', properties: {} } } },
+];
+const DBHUB_TOOLS = [
+  { type: 'function', function: { name: 'execute_sql_crm', parameters: { type: 'object', properties: { sql: { type: 'string' } } } } },
+];
+const sqlToolNames = (tools: any[]) => tools.map((t) => t?.function?.name);
+const hasTool = (tools: any[], name: string) => sqlToolNames(tools).includes(name);
+
+ok('fallback: directus ok -> directus tools + site sql', (() => { const l = copilotSqlToolsFor({ backend: 'directus', directusTools: DIRECTUS_TOOLS, dbhubFallback: true, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }); return hasTool(l, 'directus_write_items') && hasTool(l, 'directus_schema') && hasTool(l, 'directus_read_items') && hasTool(l, 'run_sql_query') && sqlToolNames(l).length === 4; })());
+ok('fallback: directus ok ignores dbhub fallback', copilotSqlToolsFor({ backend: 'directus', directusTools: DIRECTUS_TOOLS, dbhubFallback: false, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }).length === 4);
+ok('fallback: directus down + dbhubFallback + dbhub tools -> dbhub + site sql', (() => { const l = copilotSqlToolsFor({ backend: 'directus', directusTools: null, dbhubTools: DBHUB_TOOLS, dbhubFallback: true, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }); return hasTool(l, 'execute_sql_crm') && hasTool(l, 'run_sql_query') && !sqlToolNames(l).some((n) => n.startsWith('directus_')); })());
+ok('fallback: directus down + dbhubFallback off -> builtin sql', (() => { const l = copilotSqlToolsFor({ backend: 'directus', directusTools: null, dbhubTools: DBHUB_TOOLS, dbhubFallback: false, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }); return l.length === 1 && l[0]?.function?.name === 'run_sql_query'; })());
+ok('fallback: directus down + dbhubFallback + no dbhub tools -> builtin sql', copilotSqlToolsFor({ backend: 'directus', directusTools: null, dbhubTools: null, dbhubFallback: true, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }).length === 1);
+ok('fallback: dbhub backend with tools -> dbhub + site sql', (() => { const l = copilotSqlToolsFor({ backend: 'dbhub', dbhubTools: DBHUB_TOOLS, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }); return hasTool(l, 'execute_sql_crm') && hasTool(l, 'run_sql_query'); })());
+ok('fallback: dbhub backend down -> builtin sql', copilotSqlToolsFor({ backend: 'dbhub', dbhubTools: null, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }).length === 1);
+ok('fallback: builtin backend -> builtin sql', copilotSqlToolsFor({ backend: 'builtin', builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }).length === 1);
+ok('fallback: backend normalized (Directus -> directus)', copilotSqlToolsFor({ backend: '  Directus ', directusTools: DIRECTUS_TOOLS, dbhubFallback: true, builtinTool: BUILTIN_SQL_TOOL, siteTool: SITE_SQL_TOOL }).length === 4);
+
+// canonicalCollection / parseItemsArgs edge cases.
+ok('canonical empty string', canonicalCollection('') === '');
+ok('canonical whitespace', canonicalCollection('   ') === '');
+ok('canonical trims but preserves case', canonicalCollection('  Students  ') === 'Students');
+ok('canonical tblotp', canonicalCollection('tblotp') === 'TblOTP');
+ok('canonical tblstudents', canonicalCollection('tblstudents') === 'TblStudents');
+ok('canonical crm_tasks kept', canonicalCollection('crm_tasks') === 'crm_tasks');
+const p2 = parseItemsArgs({ collection: '  Students  ', action: ' CREATE ', data: null, ids: null, query: null, fields: null, limit: null });
+ok('parseItemsArgs trims/lowercases collection+action', p2.collection === 'students' && p2.action === 'create');
+ok('parseItemsArgs defaults for missing fields', parseItemsArgs({}).data === null && parseItemsArgs({}).id === null && parseItemsArgs({}).ids === null && parseItemsArgs({}).query === null && parseItemsArgs({}).fields === null && parseItemsArgs({}).limit === null);
+
 (async () => {
   const writes: any[] = [];
   const sqls: any[] = [];
@@ -100,6 +135,40 @@ delete process.env.COPILOT_DIRECTUS_URL;
   ok('callDirectusTool delete denied', typeof r3?.error === 'string' && /حذف/.test(r3.error));
   const r4: any = await callDirectusTool('directus_read_items', { collection: 'staff_users' }, () => {}, () => {});
   ok('callDirectusTool read deny', typeof r4?.error === 'string' && /مجاز نیست/.test(r4.error));
+  ok('getDirectusTools -> null when Directus unconfigured', (await getDirectusTools()) === null);
+
+  if (oldToken === undefined) delete process.env.COPILOT_DIRECTUS_TOKEN; else process.env.COPILOT_DIRECTUS_TOKEN = oldToken;
+  if (oldUrl === undefined) delete process.env.COPILOT_DIRECTUS_URL; else process.env.COPILOT_DIRECTUS_URL = oldUrl;
+
+  // Allowed read through a mocked MCP client (no token, no network).
+  const readCalls: any[] = [];
+  const fakeReadClient: any = { callTool: async (req: any) => { readCalls.push(req); return { content: [{ type: 'text', text: JSON.stringify({ success: true, data: [{ student_id: 7, first_name: 'Ali', authority: 'auth-secret' }] }) }], isError: false }; } };
+  const r5: any = await callDirectusTool('directus_read_items', { collection: 'students', fields: ['student_id', 'first_name'] }, (e) => { sqls.push(e); }, (e) => { writes.push(e); }, fakeReadClient);
+  ok('callDirectusTool allowed read -> rows returned', r5?.data?.[0]?.student_id === 7 && r5?.data?.[0]?.first_name === 'Ali');
+  ok('callDirectusTool allowed read strips secret', r5?.data?.[0]?.authority === undefined);
+  ok('callDirectusTool read request shaped for MCP items call', readCalls.length === 1 && readCalls[0]?.name === 'items' && readCalls[0]?.arguments?.collection === 'students' && readCalls[0]?.arguments?.action === 'read' && JSON.stringify(readCalls[0]?.arguments?.fields) === JSON.stringify(['student_id', 'first_name']));
+  ok('callDirectusTool allowed read audit', sqls.length === 2 && sqls[1].allowed === true && sqls[1].db === 'directus' && sqls[1].rows === 1);
+
+  // Allowed write through a mocked MCP client (no token, no network); secrets never leave the process.
+  const writeCalls: any[] = [];
+  const fakeWriteClient: any = { callTool: async (req: any) => { writeCalls.push(req); return { content: [{ type: 'text', text: JSON.stringify({ success: true, data: { id: 9, first_name: 'New', password: 'secret-pass' } }) }], isError: false }; } };
+  const r6: any = await callDirectusTool('directus_write_items', { collection: 'leads', action: 'create', data: { first_name: 'New', authority: 'auth-secret', phone_number: '09120000000' } }, (e) => { sqls.push(e); }, (e) => { writes.push(e); }, fakeWriteClient);
+  ok('callDirectusTool allowed write -> ok result', r6?.data?.id === 9 && r6?.data?.first_name === 'New' && r6?.data?.password === undefined);
+  ok('callDirectusTool allowed write strips secret before MCP', writeCalls[0]?.arguments?.data?.authority === undefined && writeCalls[0]?.arguments?.data?.first_name === 'New' && writeCalls[0]?.arguments?.data?.phone_number === '09120000000');
+  ok('callDirectusTool write request shaped for MCP items call', writeCalls[0]?.name === 'items' && writeCalls[0]?.arguments?.collection === 'leads' && writeCalls[0]?.arguments?.action === 'create');
+  ok('callDirectusTool allowed write auditW', writes.length === 2 && writes[1].allowed === true && writes[1].status === 200 && writes[1].collection === 'leads' && writes[1].action === 'create');
+
+  // Denied write/read paths never reach the (mocked) MCP client.
+  const deniedCalls: any[] = [];
+  const fakeDeniedClient: any = { callTool: async (req: any) => { deniedCalls.push(req); return { content: [{ type: 'text', text: '{}' }], isError: false }; } };
+  const r7: any = await callDirectusTool('directus_write_items', { collection: 'some_random_table', action: 'create', data: {} }, () => {}, () => {}, fakeDeniedClient);
+  ok('callDirectusTool unknown collection write rejected before MCP', typeof r7?.error === 'string' && /مجاز/.test(r7.error) && deniedCalls.length === 0);
+  const r8: any = await callDirectusTool('directus_write_items', { collection: 'students', action: 'delete', data: {} }, () => {}, () => {}, fakeDeniedClient);
+  ok('callDirectusTool delete rejected before MCP', typeof r8?.error === 'string' && /حذف/.test(r8.error) && deniedCalls.length === 0);
+  const r9: any = await callDirectusTool('directus_write_items', { collection: 'payments', action: 'create', data: { amount: 1 } }, () => {}, () => {}, fakeDeniedClient);
+  ok('callDirectusTool money write rejected before MCP', typeof r9?.error === 'string' && /مالی/.test(r9.error) && deniedCalls.length === 0);
+  const r10: any = await callDirectusTool('not_a_real_tool', {}, () => {}, () => {}, fakeDeniedClient);
+  ok('callDirectusTool unknown tool rejected', typeof r10?.error === 'string' && /نامعتبر/.test(r10.error) && deniedCalls.length === 0);
 
   if (oldToken === undefined) delete process.env.COPILOT_DIRECTUS_TOKEN; else process.env.COPILOT_DIRECTUS_TOKEN = oldToken;
   if (oldUrl === undefined) delete process.env.COPILOT_DIRECTUS_URL; else process.env.COPILOT_DIRECTUS_URL = oldUrl;
