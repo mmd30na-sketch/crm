@@ -56,6 +56,8 @@
 ## یادداشت فنی
 جداول قدیمی مربوط به نسخه Access (`TblStudents`, `TblEnroll`, `TblPeyment`, `TblCourse`) در تاریخ ۲۰۲۶-۱۰-۲۹ از کد خارج و بازنشسته شده‌اند. جزئیات در `docs/migrations/2026-10-tbl-retirement.md` موجود است.
 
+- **پاک‌سازی تاریخچهٔ Git:** برای رویهٔ آیندهٔ حذف داده‌های runtime/احتمالی حساس از تاریخچه، راهنمای `ops/purge-history.md` را ببینید (این سند فقط مرجع است؛ تاریخچه بازنویسی نشده است).
+
 ---
 
 # Ham-Taraz CRM
@@ -115,3 +117,5 @@ This repository contains the dedicated CRM system for **Kermanshah Cart** (a dri
 
 ## Legacy Migration
 As of 2026-10-29, legacy Access-era tables (`TblStudents`, `TblEnroll`, `TblPeyment`, `TblCourse`) have been retired from the codebase. Refer to `docs/migrations/2026-10-tbl-retirement.md` for details.
+
+- **Git history purge:** See `ops/purge-history.md` for the future, owner-approved procedure to remove runtime/possibly-sensitive data from git history (reference only; history not rewritten).
